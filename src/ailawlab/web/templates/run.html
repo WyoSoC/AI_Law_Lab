@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Run <code>{{ (run.id|string)[:8] }}</code></h1>
+<p class="sub">
+  <a href="/experiments/{{ run.experiment_id }}">{{ run.experiment_name }}</a>
+  &middot; <span class="mode">{{ run.mode.replace('_', ' ') }}</span>
+  &middot; <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
+</p>
+
+{% if run.error %}
+<div class="panel" style="border-color:var(--bad)">
+  <strong style="color:var(--bad)">Run failed</strong>
+  <pre>{{ run.error }}</pre>
+</div>
+{% endif %}
+
+<h2>Metrics</h2>
+<div class="grid" id="metrics">
+  {% set p = metrics.performance %}
+  <div class="stat">
+    <div class="label">Model time</div>
+    <div class="value">{{ '%.1fs' % (p.total_eval_ms / 1000) }}</div>
+    <div class="note">{{ p.llm_calls }} calls</div>
+  </div>
+  <div class="stat">
+    <div class="label">Queue wait</div>
+    <div class="value">{{ '%.1fs' % (p.total_queue_wait_ms / 1000) }}</div>
+    <div class="note">{{ (p.queue_share * 100)|round(1) }}% of wall time &middot; max {{ p.max_queue_wait_ms }}ms</div>
+  </div>
+  <div class="stat">
+    <div class="label">Tokens</div>
+    <div class="value">{{ p.output_tokens }}</div>
+    <div class="note">{{ p.prompt_tokens }} in / {{ p.output_tokens }} out</div>
+  </div>
+  <div class="stat">
+    <div class="label">Citations</div>
+    <div class="value">
+      {%- if metrics.citations.total -%}
+        {{ metrics.citations.grounded }}/{{ metrics.citations.total }}
+      {%- else -%}—{%- endif -%}
+    </div>
+    <div class="note">
+      {%- if metrics.citations.unsupported -%}
+        <span style="color:var(--bad)">{{ metrics.citations.unsupported }} unsupported</span>
+      {%- else -%}grounded{%- endif -%}
+    </div>
+  </div>
+  {% if metrics.host_distribution %}
+  <div class="stat">
+    <div class="label">Host distribution</div>
+    <div class="value" style="font-size:1rem">
+      {% for h, n in metrics.host_distribution.items() %}{{ h }}: {{ n }}<br>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if run.result %}
+<h2>Result</h2>
+<div class="panel">
+  {% if run.result.answer %}
+    <div class="answer">{{ run.result.answer }}</div>
+  {% elif run.result.outcome %}
+    <div class="answer">{{ run.result.outcome }}</div>
+  {% endif %}
+
+  {% if run.result.transcript %}
+    <h3 style="font-size:.95rem;margin-top:1.5rem">Transcript</h3>
+    {% for t in run.result.transcript %}
+      <div class="event">
+        <div class="meta"><strong>{{ t.name }}</strong> <span>{{ t.role }}</span> <span>turn {{ t.turn }}</span> <span>{{ t.host }}</span></div>
+        <div class="body">{{ t.content }}</div>
+        {% if t.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ t.thinking }}</div></details>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <details style="margin-top:1rem"><summary>raw result JSON</summary><pre>{{ result_pretty }}</pre></details>
+</div>
+{% endif %}
+
+{% if citations %}
+<h2>Citations</h2>
+<div class="panel table-wrap">
+  <table>
+    <thead><tr><th>Marker</th><th>Source</th><th>Similarity</th><th>Verdict</th></tr></thead>
+    <tbody>
+      {% for c in citations %}
+      <tr>
+        <td><code>{{ c.quoted_text }}</code></td>
+        <td>{{ c.source_label or '—' }}</td>
+        <td>{{ '%.3f' % c.similarity if c.similarity else '—' }}</td>
+        <td>
+          <span class="badge {{ 'succeeded' if c.verdict == 'grounded' else 'failed' }}">{{ c.verdict }}</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2>Trace <span class="hint" style="font-weight:400">(live)</span></h2>
+<div class="panel" id="trace">
+  {% for e in events %}
+  <div class="event {{ e.event_type }}">
+    <div class="meta">
+      <span>#{{ e.seq }}</span>
+      <strong>{{ e.event_type }}</strong>
+      {% if e.node %}<span>node: {{ e.node }}</span>{% endif %}
+      {% if e.agent_id %}<span>agent: {{ e.agent_id }}</span>{% endif %}
+      {% if e.host %}<span>{{ e.host }}</span>{% endif %}
+      {% if e.eval_ms %}<span>{{ e.eval_ms }}ms model</span>{% endif %}
+      {% if e.queue_wait_ms %}<span>{{ e.queue_wait_ms }}ms queued</span>{% endif %}
+      {% if e.output_tokens %}<span>{{ e.output_tokens }} tok</span>{% endif %}
+    </div>
+    {% if e.payload.get('response') %}<div class="body">{{ e.payload['response'][:1200] }}</div>{% endif %}
+    {% if e.payload.get('tool') %}<div class="body"><strong>{{ e.payload['tool'] }}</strong>({{ e.payload.get('args') }}) → {{ e.payload.get('result','')[:600] }}</div>{% endif %}
+    {% if e.payload.get('query') %}<div class="body">query: {{ e.payload['query'][:300] }}<br>{{ e.payload.get('hits')|length }} hits</div>{% endif %}
+    {% if e.payload.get('message') %}<div class="body">{{ e.payload['message'] }}</div>{% endif %}
+    {% if e.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ e.thinking }}</div></details>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  const RUN_ID = "{{ run.id }}";
+  const STATUS = "{{ run.status }}";
+
+  // Only stream while the run is actually in flight; finished runs are fully rendered.
+  if (STATUS === 'running' || STATUS === 'pending') {
+    const trace = document.getElementById('trace');
+    const es = new EventSource(`/api/runs/${RUN_ID}/stream`);
+    const seen = new Set([...trace.querySelectorAll('.event')].map(
+      el => el.querySelector('.meta span').textContent));
+
+    es.addEventListener('trace', ev => {
+      const e = JSON.parse(ev.data);
+      if (seen.has('#' + e.seq)) return;
+      seen.add('#' + e.seq);
+
+      const div = document.createElement('div');
+      div.className = 'event ' + e.event_type;
+      const bits = [`#${e.seq}`, `<strong>${e.event_type}</strong>`];
+      if (e.node) bits.push(`node: ${e.node}`);
+      if (e.agent_id) bits.push(`agent: ${e.agent_id}`);
+      if (e.host) bits.push(e.host);
+      if (e.eval_ms) bits.push(`${e.eval_ms}ms model`);
+      if (e.queue_wait_ms) bits.push(`${e.queue_wait_ms}ms queued`);
+
+      let body = '';
+      const p = e.payload || {};
+      if (p.response) body = p.response.slice(0, 1200);
+      else if (p.tool) body = `${p.tool} → ${(p.result || '').slice(0, 600)}`;
+      else if (p.query) body = `query: ${p.query.slice(0, 300)}`;
+      else if (p.message) body = p.message;
+
+      div.innerHTML = `<div class="meta">${bits.map(b => `<span>${b}</span>`).join('')}</div>` +
+                      (body ? `<div class="body"></div>` : '');
+      if (body) div.querySelector('.body').textContent = body;
+      trace.appendChild(div);
+    });
+
+    es.addEventListener('done', ev => {
+      es.close();
+      // Reload once finished so metrics, citations, and the result render server-side.
+      setTimeout(() => location.reload(), 400);
+    });
+  }
+</script>
+{% endblock %}

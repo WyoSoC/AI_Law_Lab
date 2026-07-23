@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>{{ exp.name }}</h1>
+<p class="sub">
+  <span class="mode">{{ exp.mode.replace('_', ' ') }}</span>
+  &middot; created by {{ exp.created_by }} on {{ exp.created_at.strftime('%Y-%m-%d') }}
+</p>
+{% if exp.description %}<p>{{ exp.description }}</p>{% endif %}
+
+<h2>Configuration</h2>
+<div class="panel"><pre>{{ config_pretty }}</pre></div>
+
+<h2>Launch a run</h2>
+<div class="panel">
+  <form method="post" action="/experiments/{{ exp.id }}/launch">
+    <label for="inputs_json">Run inputs (JSON)</label>
+    <textarea id="inputs_json" name="inputs_json" spellcheck="false">{{ input_template }}</textarea>
+    <p class="hint">Merged over the experiment config for this run only.</p>
+    <button type="submit">Launch run</button>
+  </form>
+</div>
+
+<h2>Runs</h2>
+<div class="panel">
+  {% if runs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Duration</th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td><a href="/runs/{{ r.id }}"><code>{{ (r.id|string)[:8] }}</code></a></td>
+          <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+          <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M:%S') if r.started_at else '—' }}</td>
+          <td>
+            {%- if r.started_at and r.finished_at -%}
+              {{ '%.1fs' % (r.finished_at - r.started_at).total_seconds() }}
+            {%- else -%}—{%- endif -%}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No runs yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // Prefill the inputs box with the shape this mode expects.
+  const INPUT_TEMPLATES = {
+    document_analysis: {
+      document_title: "Master Services Agreement",
+      document_text: "(paste document text here, or ingest it into the corpus first)",
+      question: "What are the principal risks to the Provider in this agreement?"
+    },
+    agentic_workflow: {
+      task: "Search the corpus and summarise how Wyoming treats one-sided termination-for-convenience clauses."
+    },
+    roleplay: {
+      scenario: "Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law."
+    }
+  };
+  const box = document.getElementById('inputs_json');
+  if (box && !box.value.trim()) {
+    box.value = JSON.stringify(INPUT_TEMPLATES["{{ exp.mode }}"] || {}, null, 2);
+  }
+</script>
+{% endblock %}

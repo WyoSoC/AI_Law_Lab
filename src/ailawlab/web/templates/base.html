@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AI Law Lab{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">AI&nbsp;Law&nbsp;Lab</a>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/experiments/new">New experiment</a>
+      <a href="/corpus">Corpus</a>
+    </nav>
+    <span class="cluster-pill" id="cluster-pill" title="Inference cluster">&hellip;</span>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Live cluster capacity in the header: free slots is the number that matters when
+    // deciding whether to launch another run right now.
+    async function refreshCluster() {
+      try {
+        const r = await fetch('/api/cluster');
+        const d = await r.json();
+        const healthy = d.hosts.filter(h => h.healthy);
+        const free = healthy.reduce((a, h) => a + h.free_slots, 0);
+        const pill = document.getElementById('cluster-pill');
+        pill.textContent = `${healthy.length}/${d.hosts.length} hosts · ${free}/${d.total_slots} slots free`;
+        pill.className = 'cluster-pill ' + (healthy.length === d.hosts.length ? 'ok' : 'warn');
+      } catch (e) {
+        const pill = document.getElementById('cluster-pill');
+        pill.textContent = 'cluster unreachable';
+        pill.className = 'cluster-pill bad';
+      }
+    }
+    refreshCluster();
+    setInterval(refreshCluster, 5000);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

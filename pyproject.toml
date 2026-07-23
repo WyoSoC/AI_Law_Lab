@@ -1,0 +1,61 @@
+[project]
+name = "ailawlab"
+version = "0.1.0"
+description = "AI Law Lab — an experiment platform for legal AI research on local LLM infrastructure"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langchain-core>=0.3.28",
+    "langchain-ollama>=0.2.2",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.12",
+    "sse-starlette>=2.1.3",
+    "httpx>=0.27.2",
+    "psycopg[binary,pool]>=3.2.3",
+    "pgvector>=0.3.6",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "pypdf>=5.1.0",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+ailawlab = "ailawlab.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ailawlab"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# The bench script inserts src/ on sys.path before importing the package, so its
+# imports legitimately follow executable statements.
+"scripts/bench_sparks.py" = ["E402"]
+# A failed run is a recorded outcome, not a crash: these handlers deliberately catch
+# anything so the failure lands on the run row and in the trace.
+"src/ailawlab/experiments.py" = ["BLE001"]
+# __aenter__ returning the concrete class is clearer here than typing.Self.
+"src/ailawlab/router.py" = ["PYI034"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# The router and DB pool are process-wide singletons holding loop-bound primitives.
+# A fresh loop per test would rebind them mid-suite; share one loop for the session.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]

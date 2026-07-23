@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>New experiment</h1>
+<p class="sub">Configuration is snapshotted into every run, so later edits never rewrite past results.</p>
+
+<div class="panel">
+  <form method="post" action="/experiments">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required placeholder="Contract risk review — gemma4 baseline">
+
+    <label for="mode">Mode</label>
+    <select id="mode" name="mode" onchange="showTemplate()">
+      {% for m in modes %}<option value="{{ m }}">{{ m.replace('_', ' ') }}</option>{% endfor %}
+    </select>
+
+    <label for="description">Description</label>
+    <input type="text" id="description" name="description" placeholder="What question is this experiment asking?">
+
+    <label for="created_by">Created by</label>
+    <input type="text" id="created_by" name="created_by" placeholder="your name">
+
+    <label for="config_json">Configuration (JSON)</label>
+    <textarea id="config_json" name="config_json" spellcheck="false">{}</textarea>
+    <p class="hint" id="config-hint"></p>
+
+    <button type="submit">Create experiment</button>
+  </form>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // Mode-specific starting configs, so the JSON box is never a blank stare.
+  const TEMPLATES = {
+    document_analysis: {
+      config: { corpus: "default" },
+      hint: "Per-run inputs supply document_title, document_text (or document_id) and question."
+    },
+    agentic_workflow: {
+      config: { corpus: "default", max_iterations: 8, allow_network: false },
+      hint: "Per-run inputs supply task. allow_network gates any tool that reaches outside the corpus."
+    },
+    roleplay: {
+      config: {
+        corpus: "default",
+        max_turns: 12,
+        agents: [
+          { id: "provider", name: "Dana Reyes", role: "counsel for the Provider",
+            goal: "Cap indemnification at 12 months of fees." },
+          { id: "client", name: "Sam Okafor", role: "counsel for the Client",
+            goal: "Keep Provider indemnification uncapped." }
+        ]
+      },
+      hint: "Each agent gets private memory scoped to its id. Per-run inputs supply scenario."
+    }
+  };
+
+  function showTemplate() {
+    const mode = document.getElementById('mode').value;
+    const t = TEMPLATES[mode];
+    document.getElementById('config_json').value = JSON.stringify(t.config, null, 2);
+    document.getElementById('config-hint').textContent = t.hint;
+  }
+  showTemplate();
+</script>
+{% endblock %}

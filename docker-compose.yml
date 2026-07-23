@@ -1,0 +1,23 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: ailawlab-db
+    environment:
+      POSTGRES_USER: ailawlab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ailawlab}
+      POSTGRES_DB: ailawlab
+    ports:
+      # 5433 on the host: avoids collision with any local postgres.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ailawlab -d ailawlab"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Dashboard</h1>
+<p class="sub">Shared local inference on the DGX Spark cluster &middot; experiments, corpus, and run history.</p>
+
+<h2>Inference cluster</h2>
+<div class="grid">
+  {% for h in cluster.hosts %}
+  <div class="stat">
+    <div class="label">{{ h.name }}</div>
+    <div class="value">{{ h.free_slots }}<span style="font-size:.9rem;color:var(--muted)">/{{ cluster.slots_per_host }}</span></div>
+    <div class="note">
+      {% if h.healthy %}slots free{% else %}<span style="color:var(--bad)">unreachable</span>{% endif %}
+      &middot; {{ h.total_requests }} calls
+      {% if h.total_errors %}&middot; <span style="color:var(--bad)">{{ h.total_errors }} errors</span>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  <div class="stat">
+    <div class="label">Total capacity</div>
+    <div class="value">{{ cluster.total_slots }}</div>
+    <div class="note">concurrent model calls</div>
+  </div>
+</div>
+
+<h2>Experiments</h2>
+<div class="panel">
+  {% if experiments %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Mode</th><th>Runs</th><th>Last run</th></tr></thead>
+      <tbody>
+        {% for e in experiments %}
+        <tr>
+          <td><a href="/experiments/{{ e.id }}">{{ e.name }}</a></td>
+          <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
+          <td>{{ e.run_count }}</td>
+          <td>{{ e.last_run.strftime('%Y-%m-%d %H:%M') if e.last_run else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No experiments yet. <a href="/experiments/new">Create one</a>.</p>
+  {% endif %}
+</div>
+
+<h2>Recent runs</h2>
+<div class="panel">
+  {% if runs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>Experiment</th><th>Mode</th><th>Status</th><th>Started</th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td><a href="/runs/{{ r.id }}"><code>{{ r.id.hex[:8] if r.id.hex is defined else (r.id|string)[:8] }}</code></a></td>
+          <td>{{ r.experiment_name }}</td>
+          <td><span class="mode">{{ r.mode.replace('_', ' ') }}</span></td>
+          <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+          <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No runs yet.</p>
+  {% endif %}
+</div>
+
+<h2>Corpus</h2>
+<div class="panel">
+  {% if corpora %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Corpus</th><th>Documents</th><th>Chunks</th></tr></thead>
+      <tbody>
+        {% for c in corpora %}
+        <tr><td>{{ c.corpus }}</td><td>{{ c.documents }}</td><td>{{ c.chunks }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Corpus is empty. <a href="/corpus">Ingest documents</a>.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
