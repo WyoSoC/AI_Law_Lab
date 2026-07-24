@@ -20,15 +20,47 @@ from .state import RoleplayState, ctx_from
 log = logging.getLogger(__name__)
 
 AGENT_PROMPT = """You are {name}, {role}.
-
+{backstory}{demeanor}{tendencies}{priorities}
 Scenario: {scenario}
 
 Your objective: {goal}
 
-You are participating in a live exchange. Stay in character. Speak only as {name}, in the
-first person, and keep each turn under 200 words. Do not narrate the other party's
-actions or speak on their behalf. If you reach agreement or conclude the matter, say so
-explicitly."""
+You are participating in a live exchange. Stay fully in character -- let the background
+above shape not just your position but your temperament, your choice of words, and how
+readily you concede. Speak only as {name}, in the first person, and keep each turn under
+{word_limit} words. Do not narrate the other party's actions or speak on their behalf. If
+you reach agreement or conclude the matter, say so explicitly."""
+
+
+def _compose_agent_prompt(agent: dict, scenario: str, word_limit: int) -> str:
+    """Assemble an agent's system prompt from its structured character fields.
+
+    A hand-written system_prompt, if present, wins outright -- the structured fields are
+    the UI's way of building one for people who do not want to write raw prompts, not a
+    constraint on those who do.
+    """
+    if agent.get("system_prompt"):
+        return agent["system_prompt"]
+
+    def section(label: str, value: str | None) -> str:
+        value = (value or "").strip()
+        return f"\n{label}: {value}\n" if value else ""
+
+    tend = agent.get("tendencies")
+    if isinstance(tend, list):
+        tend = "; ".join(t for t in tend if t)
+
+    return AGENT_PROMPT.format(
+        name=agent.get("name", "the participant"),
+        role=agent.get("role", "a party to this matter"),
+        backstory=section("Background", agent.get("backstory")),
+        demeanor=section("Demeanor", agent.get("demeanor")),
+        tendencies=section("Behavioral tendencies", tend),
+        priorities=section("What you care about most", agent.get("priorities")),
+        scenario=scenario,
+        goal=agent.get("goal", "Represent your side effectively."),
+        word_limit=word_limit,
+    )
 
 MODERATOR_PROMPT = """You are moderating a legal role-play exercise.
 
@@ -64,7 +96,7 @@ async def moderator_node(state: RoleplayState, config: RunnableConfig) -> dict:
     agents = state["agents"]
     turn = state.get("turn", 0)
 
-    if turn >= state.get("max_turns", 12):
+    if turn >= state.get("max_turns", 24):
         return {"done": True, "next_speaker": ""}
 
     # First turn: no transcript to reason about, so just start with the first agent.
@@ -107,10 +139,8 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
 
     memory = Memory(MemoryScope(run_id=ctx.run_id, agent_id=agent["id"]), ctx.router)
 
-    system = agent.get("system_prompt") or AGENT_PROMPT.format(
-        name=agent["name"], role=agent["role"],
-        scenario=state["scenario"], goal=agent.get("goal", "Represent your side effectively."),
-    )
+    system = _compose_agent_prompt(agent, state["scenario"],
+                                   word_limit=int(state.get("word_limit", 200)))
     # What this agent can see: the public transcript, plus its own recollection.
     recent = _format_transcript(state.get("transcript", []), limit=6)
     prompt = (f"Transcript so far:\n{recent}\n\nIt is your turn. Respond as {agent['name']}."

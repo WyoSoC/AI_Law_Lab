@@ -4,15 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}AI Law Lab{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ prefix }}/static/style.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">AI&nbsp;Law&nbsp;Lab</a>
+    <a class="brand" href="{{ prefix }}/">AI&nbsp;Law&nbsp;Lab</a>
     <nav>
-      <a href="/">Dashboard</a>
-      <a href="/experiments/new">New experiment</a>
-      <a href="/corpus">Corpus</a>
+      <a href="{{ prefix }}/">About</a>
+      <a href="{{ prefix }}/experiments/new">New experiment</a>
+      <a href="{{ prefix }}/sources">Legal Sources</a>
+      <a href="{{ prefix }}/dashboard">Dashboard</a>
     </nav>
     <span class="cluster-pill" id="cluster-pill" title="Inference cluster">&hellip;</span>
   </header>
@@ -26,7 +27,7 @@
     // deciding whether to launch another run right now.
     async function refreshCluster() {
       try {
-        const r = await fetch('/api/cluster');
+        const r = await fetch('{{ prefix }}/api/cluster');
         const d = await r.json();
         const healthy = d.hosts.filter(h => h.healthy);
         const free = healthy.reduce((a, h) => a + h.free_slots, 0);

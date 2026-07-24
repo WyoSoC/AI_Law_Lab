@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}AI Law Lab{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <h1>AI Law Lab</h1>
+  <p class="lede">
+    A research platform for running reproducible experiments on how language models reason
+    about law &mdash; contracts, case law, statutes and regulation &mdash; executed on the
+    University of Wyoming's own DGX Spark cluster, so no document or query ever leaves campus.
+  </p>
+  <div class="cta-row">
+    <a class="btn primary" href="{{ prefix }}/experiments/new">Design an experiment</a>
+    <a class="btn" href="{{ prefix }}/sources">Browse legal sources</a>
+    <a class="btn ghost" href="{{ prefix }}/dashboard">Open the dashboard</a>
+  </div>
+</section>
+
+<section>
+  <h2>Why it exists</h2>
+  <p class="prose">
+    Legal AI claims are easy to make and hard to check. A demo that looks convincing once
+    tells you very little about whether a model reasons soundly, cites real authority, or
+    behaves consistently when the facts shift. AI Law Lab exists to turn those claims into
+    <strong>experiments</strong>: every run snapshots its exact configuration and records a
+    full trace, so a result is something you can re-run, compare, and cite &mdash; not a
+    screenshot. Because inference runs on local hardware, the lab can be used with sensitive
+    or unpublished material that a commercial API would be the wrong home for.
+  </p>
+</section>
+
+<section>
+  <h2>What it does</h2>
+  <div class="feature-grid">
+    <div class="feature">
+      <div class="feature-icon">📄</div>
+      <h3>Document analysis</h3>
+      <p>Plan a reading of a contract or opinion, retrieve grounded passages with page
+         anchors, and produce an answer whose every claim is traceable to a citation a
+         human can open.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🛠️</div>
+      <h3>Agentic workflows</h3>
+      <p>A tool-using loop that can search the corpus, do damages arithmetic, and &mdash;
+         when explicitly enabled &mdash; reach the live legal databases, with every tool
+         call recorded for audit.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">⚖️</div>
+      <h3>Multi-agent role-play</h3>
+      <p>Stand up opposing counsel as distinct agents, each with its own backstory,
+         temperament and private memory, and watch a negotiation or hearing play out turn
+         by turn, then get it assessed.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🗂️</div>
+      <h3>Grounded retrieval</h3>
+      <p>Upload PDFs or pull directly from CourtListener, the Federal Register, the eCFR,
+         govinfo and SEC EDGAR &mdash; everything is chunked, embedded, and made citable by
+         topic.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Capabilities at a glance</h2>
+  <div class="grid">
+    <div class="stat">
+      <div class="label">Experiment modes</div>
+      <div class="value">{{ modes|length }}</div>
+      <div class="note">{{ modes | map('replace', '_', ' ') | join(' · ') }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Online source families</div>
+      <div class="value">{{ topics|length }}</div>
+      <div class="note">searchable and ingestable into the corpus</div>
+    </div>
+    <div class="stat">
+      <div class="label">Experiments defined</div>
+      <div class="value">{{ exp_count }}</div>
+      <div class="note"><a href="{{ prefix }}/dashboard">see the dashboard</a></div>
+    </div>
+    <div class="stat">
+      <div class="label">Corpus collections</div>
+      <div class="value">{{ corpora|length }}</div>
+      <div class="note">
+        {% if corpora %}{{ corpora | map(attribute='corpus') | join(', ') }}
+        {% else %}empty &mdash; <a href="{{ prefix }}/sources">add sources</a>{% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>How a study runs</h2>
+  <ol class="steps">
+    <li><strong>Gather sources.</strong> Upload documents or search the online legal
+        databases and ingest the results you want, grouped by topic.</li>
+    <li><strong>Design an experiment.</strong> Pick a mode and configure it through the
+        builder &mdash; no JSON required &mdash; then save it.</li>
+    <li><strong>Launch a run.</strong> Provide the run's inputs; work is dispatched across
+        the Spark cluster and streamed back live as a trace.</li>
+    <li><strong>Read the result.</strong> Every run keeps its config snapshot, citations,
+        per-host timing and full event log, so it can be compared or reproduced later.</li>
+  </ol>
+  <p class="prose muted-note">
+    Runs execute real language-model calls against shared research hardware. Please be
+    considerate of others using the cluster.
+  </p>
+</section>
+
+{% endblock %}

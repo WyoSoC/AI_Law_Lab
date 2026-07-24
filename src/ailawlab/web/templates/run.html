@@ -3,7 +3,7 @@
 
 <h1>Run <code>{{ (run.id|string)[:8] }}</code></h1>
 <p class="sub">
-  <a href="/experiments/{{ run.experiment_id }}">{{ run.experiment_name }}</a>
+  <a href="{{ prefix }}/experiments/{{ run.experiment_id }}">{{ run.experiment_name }}</a>
   &middot; <span class="mode">{{ run.mode.replace('_', ' ') }}</span>
   &middot; <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
 </p>
@@ -133,7 +133,7 @@
   // Only stream while the run is actually in flight; finished runs are fully rendered.
   if (STATUS === 'running' || STATUS === 'pending') {
     const trace = document.getElementById('trace');
-    const es = new EventSource(`/api/runs/${RUN_ID}/stream`);
+    const es = new EventSource(`{{ prefix }}/api/runs/${RUN_ID}/stream`);
     const seen = new Set([...trace.querySelectorAll('.event')].map(
       el => el.querySelector('.meta span').textContent));
 

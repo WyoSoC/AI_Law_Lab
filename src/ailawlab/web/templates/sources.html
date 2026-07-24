@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Legal Sources · AI Law Lab{% endblock %}
+{% block content %}
+
+<h1>Legal Sources</h1>
+<p class="sub">Everything an experiment can retrieve from. Upload your own documents, or
+search the online legal databases and pull results in &mdash; each becomes chunked,
+embedded and citable, filed under a corpus you choose.</p>
+
+<h2>Search online databases</h2>
+{% for topic in topics %}
+<div class="panel source-topic">
+  <div class="topic-head">
+    <h3>{{ topic.name }}</h3>
+    <p class="hint">{{ topic.blurb }}</p>
+  </div>
+  {% for p in topic.providers %}
+  <div class="provider {% if not p.available %}unavailable{% endif %}"
+       data-provider="{{ p.id }}" data-corpus="{{ p.corpus }}">
+    <div class="provider-head">
+      <div>
+        <span class="provider-name">{{ p.name }}</span>
+        <a class="provider-home" href="{{ p.homepage }}" target="_blank" rel="noopener">↗</a>
+        <p class="provider-blurb">{{ p.blurb }}</p>
+      </div>
+    </div>
+    {% if p.reason %}<p class="provider-note {% if not p.available %}warn{% endif %}">{{ p.reason }}</p>{% endif %}
+    {% if p.available %}
+    <form class="source-search" onsubmit="return searchSource(event, '{{ p.id }}')">
+      <input type="text" name="q" placeholder="{{ p.query_hint }}" autocomplete="off">
+      <label class="corpus-inline">into
+        <input type="text" name="corpus" value="{{ p.corpus }}" size="12"></label>
+      <button type="submit">Search</button>
+    </form>
+    <div class="source-results" id="results-{{ p.id }}"></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+
+<h2>Upload a document</h2>
+<div class="panel">
+  {% if request.query_params.get('msg') %}
+  <p class="provider-note warn">{{ request.query_params.get('msg') }}</p>
+  {% endif %}
+  <form method="post" action="{{ prefix }}/corpus/upload" enctype="multipart/form-data">
+    <label for="file">Document (PDF or plain text)</label>
+    <input type="file" id="file" name="file" required accept=".pdf,.txt,.md">
+
+    <label for="corpus">Corpus name</label>
+    <input type="text" id="corpus" name="corpus" value="default">
+    <p class="hint">Experiments select a corpus by name, so you can keep collections separate by topic.</p>
+
+    <button type="submit">Ingest</button>
+  </form>
+</div>
+
+<h2>In the corpus</h2>
+<div class="panel">
+  {% if documents %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Title</th><th>Corpus</th><th>Type</th><th>Chunks</th><th>Ingested</th></tr></thead>
+      <tbody>
+        {% for d in documents %}
+        <tr>
+          <td>{% if d.source_uri and d.source_uri.startswith('http') %}
+              <a href="{{ d.source_uri }}" target="_blank" rel="noopener">{{ d.title }}</a>
+              {% else %}{{ d.title }}{% endif %}</td>
+          <td><span class="mode">{{ d.corpus }}</span></td>
+          <td>{{ d.doc_type }}</td>
+          <td>{{ d.chunk_count }}</td>
+          <td>{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Nothing ingested yet. Search a database above or upload a document.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const PREFIX = "{{ prefix }}";
+// Hits from the last search per provider, keyed by ref, so ingest can send back the whole
+// hit (snippet, url, metadata) and not just an id the server would have to re-fetch.
+const HITS = {};
+
+function esc(s) {
+  return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function searchSource(ev, pid) {
+  ev.preventDefault();
+  const form = ev.target;
+  const q = form.q.value.trim();
+  const box = document.getElementById('results-' + pid);
+  if (!q) return false;
+  box.innerHTML = '<p class="hint">Searching…</p>';
+  try {
+    const r = await fetch(`${PREFIX}/api/sources/search?provider=${encodeURIComponent(pid)}&q=${encodeURIComponent(q)}`);
+    const d = await r.json();
+    if (!r.ok) { box.innerHTML = `<p class="provider-note warn">${esc(d.detail || 'search failed')}</p>`; return false; }
+    renderHits(pid, d.hits, form.corpus.value.trim());
+  } catch (e) {
+    box.innerHTML = `<p class="provider-note warn">${esc(String(e))}</p>`;
+  }
+  return false;
+}
+
+function renderHits(pid, hits, corpus) {
+  const box = document.getElementById('results-' + pid);
+  HITS[pid] = {};
+  if (!hits.length) { box.innerHTML = '<p class="hint">No results.</p>'; return; }
+  let rows = '';
+  hits.forEach((h, i) => {
+    const key = pid + ':' + i;
+    HITS[pid][key] = h;
+    const flag = h.full_text ? '' : ' <span class="snip-flag" title="Only the search snippet will be ingested; no full-text access">snippet only</span>';
+    const meta = [h.badge, h.date].filter(Boolean).map(esc).join(' · ');
+    rows += `<label class="hit">
+      <input type="checkbox" value="${key}">
+      <span class="hit-body">
+        <span class="hit-title">${esc(h.title)}${flag}</span>
+        ${meta ? `<span class="hit-meta">${meta}</span>` : ''}
+        ${h.snippet ? `<span class="hit-snippet">${esc(h.snippet)}</span>` : ''}
+        ${h.url ? `<a class="hit-link" href="${esc(h.url)}" target="_blank" rel="noopener">source ↗</a>` : ''}
+      </span></label>`;
+  });
+  box.innerHTML = `<div class="hit-list">${rows}</div>
+    <div class="ingest-bar">
+      <label class="corpus-inline">Ingest into
+        <input type="text" class="ingest-corpus" value="${esc(corpus)}" size="14"></label>
+      <button type="button" onclick="ingestSelected('${pid}')">Ingest selected →</button>
+      <span class="ingest-status"></span>
+    </div>`;
+}
+
+async function ingestSelected(pid) {
+  const box = document.getElementById('results-' + pid);
+  const checked = [...box.querySelectorAll('input[type=checkbox]:checked')];
+  const status = box.querySelector('.ingest-status');
+  if (!checked.length) { status.textContent = 'select at least one result'; return; }
+  const corpus = box.querySelector('.ingest-corpus').value.trim();
+  const hits = checked.map(c => HITS[pid][c.value]);
+  const btn = box.querySelector('.ingest-bar button');
+  btn.disabled = true;
+  status.textContent = `fetching & embedding ${hits.length}…`;
+  try {
+    const r = await fetch(`${PREFIX}/api/sources/ingest`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider: pid, corpus, hits})
+    });
+    const d = await r.json();
+    if (!r.ok) { status.textContent = d.detail || 'ingest failed'; btn.disabled = false; return; }
+    const marks = {ingested: '✓', duplicate: '=', empty: '∅', error: '✕'};
+    box.querySelectorAll('.hit').forEach(lbl => {
+      const key = lbl.querySelector('input').value;
+      const res = d.results.find(x => HITS[pid][key] && x.ref === HITS[pid][key].ref);
+      if (res) {
+        lbl.classList.add('hit-' + res.status);
+        lbl.querySelector('.hit-title').insertAdjacentHTML('afterbegin',
+          `<span class="hit-mark" title="${esc(res.detail || res.status)}">${marks[res.status] || '?'}</span> `);
+      }
+    });
+    status.innerHTML = `${d.ingested} added to <strong>${esc(d.corpus)}</strong>. `
+      + `<a href="${PREFIX}/sources">refresh to see them below</a>`;
+  } catch (e) {
+    status.textContent = String(e);
+  }
+  btn.disabled = false;
+}
+</script>
+{% endblock %}

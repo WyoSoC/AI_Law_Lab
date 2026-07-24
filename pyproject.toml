@@ -49,6 +49,9 @@ target-version = "py312"
 # A failed run is a recorded outcome, not a crash: these handlers deliberately catch
 # anything so the failure lands on the run row and in the trace.
 "src/ailawlab/experiments.py" = ["BLE001"]
+# Same rationale per source hit: a fetch or PDF-parse failure is reported against that
+# one document rather than aborting the whole ingest batch.
+"src/ailawlab/sources.py" = ["BLE001"]
 # __aenter__ returning the concrete class is clearer here than typing.Self.
 "src/ailawlab/router.py" = ["PYI034"]
 

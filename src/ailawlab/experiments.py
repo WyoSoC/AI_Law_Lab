@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb
 from .graphs.agentic_workflow import build_agentic_graph
 from .graphs.document_analysis import build_document_graph
@@ -135,7 +136,8 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "agents": merged.get("agents", []),
             "transcript": [],
             "turn": 0,
-            "max_turns": int(merged.get("max_turns", 12)),
+            "max_turns": int(merged.get("max_turns", settings.default_max_turns)),
+            "word_limit": int(merged.get("word_limit", 200)),
             "done": False,
         }
     raise ValueError(f"unknown mode {mode!r}")
@@ -173,7 +175,7 @@ async def execute_run(run_id: str) -> dict:
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
         # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle.
-        limit = int(config.get("max_turns", 12)) * 3 + 20
+        limit = int(config.get("max_turns", settings.default_max_turns)) * 3 + 20
         final = await graph.ainvoke(
             state,
             config={"configurable": {"ctx": ctx}, "recursion_limit": limit},

@@ -33,7 +33,7 @@
       <tbody>
         {% for e in experiments %}
         <tr>
-          <td><a href="/experiments/{{ e.id }}">{{ e.name }}</a></td>
+          <td><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a></td>
           <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
           <td>{{ e.run_count }}</td>
           <td>{{ e.last_run.strftime('%Y-%m-%d %H:%M') if e.last_run else '—' }}</td>
@@ -43,7 +43,7 @@
     </table>
   </div>
   {% else %}
-  <p class="empty">No experiments yet. <a href="/experiments/new">Create one</a>.</p>
+  <p class="empty">No experiments yet. <a href="{{ prefix }}/experiments/new">Create one</a>.</p>
   {% endif %}
 </div>
 
@@ -56,7 +56,7 @@
       <tbody>
         {% for r in runs %}
         <tr>
-          <td><a href="/runs/{{ r.id }}"><code>{{ r.id.hex[:8] if r.id.hex is defined else (r.id|string)[:8] }}</code></a></td>
+          <td><a href="{{ prefix }}/runs/{{ r.id }}"><code>{{ r.id.hex[:8] if r.id.hex is defined else (r.id|string)[:8] }}</code></a></td>
           <td>{{ r.experiment_name }}</td>
           <td><span class="mode">{{ r.mode.replace('_', ' ') }}</span></td>
           <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
@@ -71,7 +71,7 @@
   {% endif %}
 </div>
 
-<h2>Corpus</h2>
+<h2>Legal Sources</h2>
 <div class="panel">
   {% if corpora %}
   <div class="table-wrap">
@@ -79,13 +79,13 @@
       <thead><tr><th>Corpus</th><th>Documents</th><th>Chunks</th></tr></thead>
       <tbody>
         {% for c in corpora %}
-        <tr><td>{{ c.corpus }}</td><td>{{ c.documents }}</td><td>{{ c.chunks }}</td></tr>
+        <tr><td><span class="mode">{{ c.corpus }}</span></td><td>{{ c.documents }}</td><td>{{ c.chunks }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <p class="empty">Corpus is empty. <a href="/corpus">Ingest documents</a>.</p>
+  <p class="empty">No sources yet. <a href="{{ prefix }}/sources">Add legal sources</a>.</p>
   {% endif %}
 </div>
 

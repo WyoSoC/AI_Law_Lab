@@ -1,7 +1,7 @@
 """Runtime configuration, loaded from environment / .env."""
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,9 +41,49 @@ class Settings(BaseSettings):
     chunk_chars: int = 2400
     chunk_overlap: int = 300
 
+    # --- online legal sources -------------------------------------------
+    # Credentials are optional by design: two of the four providers need none, and the
+    # other two degrade to a disabled panel rather than raising, so a fresh checkout
+    # still gets a working Legal Sources page without anyone signing up for anything.
+    courtlistener_token: str = ""   # free: courtlistener.com/profile/api. Without it
+                                    # search works but full opinion text 401s, so hits
+                                    # are ingested from their search snippet instead.
+    govinfo_api_key: str = ""       # free: api.data.gov/signup
+    # SEC blocks generic user agents outright; their fair-access policy wants a real
+    # contact address. Sending a fake one gets the whole institution rate-limited.
+    sec_user_agent: str = "AI Law Lab (University of Wyoming) gojian@uwyo.edu"
+
+    source_timeout_s: float = 45.0
+    source_search_limit: int = 20
+    # Each ingested document occupies embedding slots on the cluster for as long as it
+    # takes to chunk and embed it, so a single click is capped rather than unbounded.
+    source_max_ingest: int = 10
+
+    # --- roleplay --------------------------------------------------------
+    # A negotiation needs room to actually move: 12 turns is roughly three exchanges per
+    # side, which tends to end with positions restated rather than shifted.
+    default_max_turns: int = 24
+    max_turns_limit: int = 100
+
     # --- web ------------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8088
+
+    # Mount point when served behind a reverse proxy at a subpath, e.g. "/ai_law_lab".
+    # Empty means the app owns the root. Every link, form action, redirect and fetch()
+    # in the UI is built from this, so it must match the proxy's ProxyPass path exactly.
+    url_prefix: str = ""
+
+    @field_validator("url_prefix")
+    @classmethod
+    def _normalise_prefix(cls, v: str) -> str:
+        """Accept 'ai_law_lab', '/ai_law_lab' or '/ai_law_lab/' -- store '/ai_law_lab'.
+
+        Concatenation sites all assume no trailing slash, so normalising here keeps a
+        stray slash in .env from producing '//experiments' links.
+        """
+        v = v.strip().strip("/")
+        return f"/{v}" if v else ""
 
     @property
     def embed_dim(self) -> int:

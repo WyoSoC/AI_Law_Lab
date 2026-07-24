@@ -13,7 +13,7 @@
 
 <h2>Launch a run</h2>
 <div class="panel">
-  <form method="post" action="/experiments/{{ exp.id }}/launch">
+  <form method="post" action="{{ prefix }}/experiments/{{ exp.id }}/launch">
     <label for="inputs_json">Run inputs (JSON)</label>
     <textarea id="inputs_json" name="inputs_json" spellcheck="false">{{ input_template }}</textarea>
     <p class="hint">Merged over the experiment config for this run only.</p>
@@ -30,7 +30,7 @@
       <tbody>
         {% for r in runs %}
         <tr>
-          <td><a href="/runs/{{ r.id }}"><code>{{ (r.id|string)[:8] }}</code></a></td>
+          <td><a href="{{ prefix }}/runs/{{ r.id }}"><code>{{ (r.id|string)[:8] }}</code></a></td>
           <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
           <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M:%S') if r.started_at else '—' }}</td>
           <td>

@@ -1,67 +1,239 @@
 {% extends "base.html" %}
+{% block title %}New experiment · AI Law Lab{% endblock %}
 {% block content %}
 
 <h1>New experiment</h1>
-<p class="sub">Configuration is snapshotted into every run, so later edits never rewrite past results.</p>
+<p class="sub">Configuration is snapshotted into every run, so later edits never rewrite
+past results. Fill in the fields below &mdash; no JSON required.</p>
 
-<div class="panel">
-  <form method="post" action="/experiments">
+<form method="post" action="{{ prefix }}/experiments" id="exp-form" onsubmit="return finalize()">
+  <div class="panel">
     <label for="name">Name</label>
-    <input type="text" id="name" name="name" required placeholder="Contract risk review — gemma4 baseline">
+    <input type="text" id="name" name="name" required
+           placeholder="Contract risk review — gemma4 baseline">
 
-    <label for="mode">Mode</label>
-    <select id="mode" name="mode" onchange="showTemplate()">
-      {% for m in modes %}<option value="{{ m }}">{{ m.replace('_', ' ') }}</option>{% endfor %}
-    </select>
+    <div class="two-col">
+      <div>
+        <label for="mode">Mode</label>
+        <select id="mode" name="mode" onchange="showMode()">
+          {% for m in modes %}<option value="{{ m }}">{{ m.replace('_', ' ')|title }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="created_by">Created by</label>
+        <input type="text" id="created_by" name="created_by" placeholder="your name">
+      </div>
+    </div>
 
     <label for="description">Description</label>
-    <input type="text" id="description" name="description" placeholder="What question is this experiment asking?">
+    <input type="text" id="description" name="description"
+           placeholder="What question is this experiment asking?">
+  </div>
 
-    <label for="created_by">Created by</label>
-    <input type="text" id="created_by" name="created_by" placeholder="your name">
+  <!-- ───────────── document_analysis ───────────── -->
+  <div class="panel mode-panel" data-mode="document_analysis">
+    <h2>Document analysis setup</h2>
+    <p class="hint">The document itself is supplied per run. Configure retrieval here.</p>
+    <label for="da_corpus">Corpus to retrieve from</label>
+    <select id="da_corpus" class="corpus-pick">
+      <option value="default">default</option>
+      {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
+    </select>
+  </div>
 
-    <label for="config_json">Configuration (JSON)</label>
-    <textarea id="config_json" name="config_json" spellcheck="false">{}</textarea>
-    <p class="hint" id="config-hint"></p>
+  <!-- ───────────── agentic_workflow ───────────── -->
+  <div class="panel mode-panel" data-mode="agentic_workflow">
+    <h2>Agentic workflow setup</h2>
+    <p class="hint">The task is supplied per run. Configure the tool loop here.</p>
+    <div class="two-col">
+      <div>
+        <label for="aw_corpus">Corpus to retrieve from</label>
+        <select id="aw_corpus" class="corpus-pick">
+          <option value="default">default</option>
+          {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="aw_max_iter">Max tool iterations</label>
+        <input type="number" id="aw_max_iter" value="8" min="1" max="40">
+        <p class="hint">How many think→act cycles before the agent must answer.</p>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="aw_network">
+      Allow network tools (live legal-database lookups during the run)</label>
+    <p class="hint">Off by default: an experiment about model reasoning shouldn't silently
+       reach the open internet.</p>
+  </div>
 
-    <button type="submit">Create experiment</button>
-  </form>
-</div>
+  <!-- ───────────── roleplay ───────────── -->
+  <div class="panel mode-panel" data-mode="roleplay">
+    <h2>Role-play setup</h2>
+    <p class="hint">The scenario is supplied per run. Build the cast and pacing here. Each
+       agent keeps private memory scoped to its id, so opposing parties never share a
+       recollection.</p>
+
+    <div class="two-col">
+      <div>
+        <label for="rp_turns">Max turns</label>
+        <input type="number" id="rp_turns" value="{{ default_max_turns }}" min="2"
+               max="{{ max_turns_limit }}">
+        <p class="hint">Total speaking turns across all parties before the scene is assessed.</p>
+      </div>
+      <div>
+        <label for="rp_words">Words per turn</label>
+        <input type="number" id="rp_words" value="220" min="40" max="800">
+        <p class="hint">Upper bound on each agent's reply length.</p>
+      </div>
+    </div>
+
+    <div class="agents-head">
+      <h3>Cast</h3>
+      <button type="button" class="add-agent" onclick="addAgent()">+ Add agent</button>
+    </div>
+    <div id="agents"></div>
+  </div>
+
+  <!-- ───────────── advanced / raw ───────────── -->
+  <div class="panel">
+    <details id="advanced">
+      <summary>Advanced — inspect / edit raw JSON</summary>
+      <p class="hint">The builder writes this for you. Edit it directly only if you know
+         what you're doing; your edits are used as-is on submit.</p>
+      <textarea id="config_json" name="config_json" spellcheck="false"
+                oninput="rawEdited=true"></textarea>
+      <p class="hint" id="json-error"></p>
+    </details>
+  </div>
+
+  <button type="submit" class="primary">Create experiment</button>
+</form>
 
 {% endblock %}
 {% block scripts %}
 <script>
-  // Mode-specific starting configs, so the JSON box is never a blank stare.
-  const TEMPLATES = {
-    document_analysis: {
-      config: { corpus: "default" },
-      hint: "Per-run inputs supply document_title, document_text (or document_id) and question."
-    },
-    agentic_workflow: {
-      config: { corpus: "default", max_iterations: 8, allow_network: false },
-      hint: "Per-run inputs supply task. allow_network gates any tool that reaches outside the corpus."
-    },
-    roleplay: {
-      config: {
-        corpus: "default",
-        max_turns: 12,
-        agents: [
-          { id: "provider", name: "Dana Reyes", role: "counsel for the Provider",
-            goal: "Cap indemnification at 12 months of fees." },
-          { id: "client", name: "Sam Okafor", role: "counsel for the Client",
-            goal: "Keep Provider indemnification uncapped." }
-        ]
-      },
-      hint: "Each agent gets private memory scoped to its id. Per-run inputs supply scenario."
-    }
-  };
+// Once someone hand-edits the JSON, the builder stops overwriting it: their text is the
+// source of truth from that point, and silently clobbering it would be hostile.
+let rawEdited = false;
+let agentSeq = 0;
 
-  function showTemplate() {
-    const mode = document.getElementById('mode').value;
-    const t = TEMPLATES[mode];
-    document.getElementById('config_json').value = JSON.stringify(t.config, null, 2);
-    document.getElementById('config-hint').textContent = t.hint;
+const DEFAULT_MAX_TURNS = {{ default_max_turns }};
+
+const ROLE_PRESETS = [
+  {id: "provider", name: "Dana Reyes", role: "lead counsel for the Provider",
+   goal: "Cap the Provider's indemnification at 12 months of fees and win a mutual termination right.",
+   backstory: "Fifteen years in technology transactions, including a stint in-house at a vendor nearly bankrupted by an uncapped indemnity. Treats unlimited liability as an existential threat, not a bargaining chip.",
+   demeanor: "Calm, precise, relentlessly polite; wins by out-preparing the room rather than raising their voice.",
+   tendencies: "Anchors hard early, then trades small concessions slowly\nReframes every risk as a dollar figure\nBluffs about walking away, but will genuinely walk before accepting uncapped liability",
+   priorities: "Protecting the balance sheet above winning any single clause; a reputation for still closing the deal."},
+  {id: "client", name: "Sam Okafor", role: "general counsel for the Client",
+   goal: "Keep the Provider's indemnification uncapped and deny the Provider any termination-for-convenience right.",
+   backstory: "Came up in litigation before moving in-house; has personally cleaned up after a vendor that walked mid-project. Believes leverage lives in the contract, and gives it up reluctantly.",
+   demeanor: "Direct, a little impatient, comfortable with silence and confrontation.",
+   tendencies: "Opens with the strongest possible position and dares the other side to move first\nTests bluffs by calling them\nWill concede on price far sooner than on risk allocation",
+   priorities: "Certainty that the Client is protected if the Provider fails; avoiding another mid-project abandonment."},
+];
+
+function att(s){ return (s||"").replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+function txt(s){ return (s||"").replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+function optionFields(a) { a = a || {}; return `
+  <div class="two-col">
+    <div><label>Short id <span class="req">*</span></label>
+      <input class="a-id" value="${att(a.id)}" placeholder="provider" required></div>
+    <div><label>Display name</label>
+      <input class="a-name" value="${att(a.name)}" placeholder="Dana Reyes"></div>
+  </div>
+  <label>Role</label>
+  <input class="a-role" value="${att(a.role)}" placeholder="lead counsel for the Provider">
+  <label>Objective</label>
+  <input class="a-goal" value="${att(a.goal)}" placeholder="What is this party trying to achieve?">
+  <label>Background &amp; history</label>
+  <textarea class="a-backstory short" placeholder="Where they come from, and the experience that shapes how they act.">${txt(a.backstory)}</textarea>
+  <label>Demeanor</label>
+  <input class="a-demeanor" value="${att(a.demeanor)}" placeholder="Calm and precise; never raises their voice.">
+  <label>Behavioral tendencies <span class="hint-inline">(one per line)</span></label>
+  <textarea class="a-tendencies short" placeholder="Anchors hard early&#10;Reframes every risk as a number&#10;Bluffs about walking away">${txt(a.tendencies)}</textarea>
+  <label>What they care about most</label>
+  <input class="a-priorities" value="${att(a.priorities)}" placeholder="Protecting the balance sheet above any single clause.">`;
+}
+
+function addAgent(preset) {
+  const i = agentSeq++;
+  const card = document.createElement('div');
+  card.className = 'agent-card';
+  card.innerHTML = `<div class="agent-card-head">
+      <span class="agent-num">Agent ${i + 1}</span>
+      <button type="button" class="remove-agent" onclick="this.closest('.agent-card').remove(); syncJSON()">Remove</button>
+    </div>${optionFields(preset)}`;
+  document.getElementById('agents').appendChild(card);
+  card.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', syncJSON));
+  syncJSON();
+}
+
+function collectAgents() {
+  return [...document.querySelectorAll('.agent-card')].map(c => {
+    const v = s => (c.querySelector(s)?.value || "").trim();
+    const tend = v('.a-tendencies').split('\n').map(t => t.trim()).filter(Boolean);
+    const a = {id: v('.a-id'), name: v('.a-name'), role: v('.a-role'), goal: v('.a-goal')};
+    if (v('.a-backstory')) a.backstory = v('.a-backstory');
+    if (v('.a-demeanor')) a.demeanor = v('.a-demeanor');
+    if (tend.length) a.tendencies = tend;
+    if (v('.a-priorities')) a.priorities = v('.a-priorities');
+    return a;
+  }).filter(a => a.id);
+}
+
+function val(id){ return document.getElementById(id).value; }
+function int(id, d){ const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? d : n; }
+
+function buildConfig() {
+  const mode = document.getElementById('mode').value;
+  if (mode === 'document_analysis') {
+    return {corpus: val('da_corpus')};
   }
-  showTemplate();
+  if (mode === 'agentic_workflow') {
+    return {corpus: val('aw_corpus'),
+            max_iterations: int('aw_max_iter', 8),
+            allow_network: document.getElementById('aw_network').checked};
+  }
+  if (mode === 'roleplay') {
+    return {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
+            word_limit: int('rp_words', 220),
+            agents: collectAgents()};
+  }
+  return {};
+}
+
+function syncJSON() {
+  if (rawEdited) return;                       // user owns the JSON now
+  document.getElementById('config_json').value = JSON.stringify(buildConfig(), null, 2);
+}
+
+function showMode() {
+  const mode = document.getElementById('mode').value;
+  document.querySelectorAll('.mode-panel').forEach(p =>
+    p.style.display = p.dataset.mode === mode ? '' : 'none');
+  if (mode === 'roleplay' && !document.querySelector('.agent-card')) {
+    ROLE_PRESETS.forEach(addAgent);
+  }
+  syncJSON();
+}
+
+// On submit, fold builder state back in (unless the user took over the JSON) and validate.
+function finalize() {
+  const ta = document.getElementById('config_json');
+  if (!rawEdited) ta.value = JSON.stringify(buildConfig(), null, 2);
+  try {
+    const parsed = JSON.parse(ta.value || '{}');
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be a JSON object');
+  } catch (e) {
+    document.getElementById('advanced').open = true;
+    document.getElementById('json-error').textContent = 'Invalid configuration JSON: ' + e.message;
+    return false;
+  }
+  return true;
+}
+
+showMode();
 </script>
 {% endblock %}
