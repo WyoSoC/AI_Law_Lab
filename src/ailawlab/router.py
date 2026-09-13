@@ -211,6 +211,7 @@ class LLMRouter:
         num_ctx: int = 32768,
         temperature: float = 0.2,
         options: dict[str, Any] | None = None,
+        format: dict[str, Any] | str | None = None,
     ) -> LLMResult:
         """One chat completion, routed to whichever Spark frees a slot first.
 
@@ -219,6 +220,10 @@ class LLMRouter:
         roughly an order of magnitude more output tokens on short mechanical answers
         (measured: 2 tokens with think=False vs 32 with it on, for the same reply).
         Nodes that just classify or route should pass think=False.
+
+        `format` is Ollama's structured output: "json" or a JSON schema the reply must
+        match. Checked 2026-09-13 on Ollama 0.32.1 with think=False: schema replies parsed
+        cleanly, which is sturdier than scraping ids out of free text.
         """
         body: dict[str, Any] = {
             "model": model or settings.chat_model,
@@ -230,6 +235,8 @@ class LLMRouter:
             body["tools"] = tools
         if think is not None:
             body["think"] = think
+        if format is not None:
+            body["format"] = format
 
         async with self._acquire() as (host, queue_wait_ms):
             host.in_flight += 1

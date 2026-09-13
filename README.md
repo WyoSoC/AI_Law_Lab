@@ -102,6 +102,56 @@ a safe arithmetic evaluator; network-touching tools are opt-in per experiment vi
 assesses the outcome. The memory separation is the whole point: a shared buffer would leak
 one side's private reasoning into the other's context and quietly invalidate the exercise.
 
+Each turn, the speaking agent first updates its **private negotiation notes** (concessions
+made and received, where things stand, its read on the others, open issues, arguments
+already made, next move), then speaks with a short character reminder at the end of its
+prompt. The moderator returns structured JSON: whether the last speaker asked someone a
+direct question (that person answers next), whether talks have stalled (it intervenes by
+reframing, narrowing to one issue, or reality testing), and whether the scene is over (not
+before everyone has spoken twice). Code enforces turn balance so no agent monopolizes the
+floor. Transcripts too long for the 128K window are summarized in sections, concurrently,
+before assessment, and the assessor sees each party's bottom line so it can check whether
+anyone gave in past it or leaked a confidential fact.
+
+These rules, and the studies they come from, are in `graphs/roleplay_policy.py`. Defaults
+are 100 turns and 1000 words a turn. Each turn is three calls (moderator ~10 s, private
+notes ~12 s, the ~1000-word reply ~45 s), so a full scene takes about two hours; the
+moderator ends it sooner on agreement or a clear walk-away.
+
+### Agent files
+
+Agents can be uploaded and downloaded as plain Markdown, written for lawyers rather than
+programmers. A file holds one agent or a whole cast; each person starts at `# Name`:
+
+```markdown
+# Dana Reyes
+
+## Role
+Lead counsel for the Provider
+
+## Objective
+Cap the Provider's indemnification at 12 months of fees.
+
+## Tendencies
+- Anchors hard early, then concedes slowly
+- Reframes every risk as a dollar figure
+
+## Bottom line
+Will go as far as 24 months of fees; walks away from uncapped indemnification.
+
+## Confidential information
+The Provider's insurer refuses to cover uncapped indemnities.
+```
+
+The other sections are `Background`, `Demeanor` and `Priorities`. Only the name is
+required. Headings match case-insensitively and by common synonyms ("Goal", "Walk-away
+point", "Interests"); ids are generated from names; text before the first name or inside
+`<!-- -->` is ignored. Unrecognized sections are kept under "Additional notes" and reported,
+never dropped. The builder offers a commented blank file, bulk upload (several files, or
+several people per file), per-agent and whole-cast download, an AI-drafted cast from a
+scenario, and a cast check (rules plus an optional AI review against the scenario). The
+format lives in `agent_spec.py`.
+
 ## Memory
 
 Ported from `ollama-chat-agent/memory.py`, preserving its two-tier design — a verbatim
@@ -158,9 +208,14 @@ tests/            integration tests against real hardware
 .venv/bin/python -m pytest -q
 ```
 
-These hit the real Sparks and a real Postgres — they are integration tests by design, since
-the failures worth catching here (admission control, pgvector binding, tool dispatch,
-memory scoping) are exactly the ones a mock would hide.
+The graph and router tests hit the real Sparks and a real Postgres — they are integration
+tests by design, since the failures worth catching here (admission control, pgvector
+binding, tool dispatch, memory scoping) are exactly the ones a mock would hide.
+`test_agent_spec.py` and `test_roleplay_policy.py` are pure and run offline:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_agent_spec.py tests/test_roleplay_policy.py
+```
 
 ## Configuration
 

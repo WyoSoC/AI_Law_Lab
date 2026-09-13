@@ -61,9 +61,15 @@ class Settings(BaseSettings):
 
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per
-    # side, which tends to end with positions restated rather than shifted.
-    default_max_turns: int = 24
+    # side, which tends to end with positions restated rather than shifted. The moderator
+    # still ends a scene early on agreement or a clear impasse, so the default is a ceiling.
+    default_max_turns: int = 100
     max_turns_limit: int = 100
+    # Measured 2026-09-13: a ~1000-word gemma4 reply costs ~1.4k output tokens with thinking
+    # on (~45 s on one Spark); with the moderator and private-notes calls a turn is ~70 s,
+    # so a full 100-turn scene takes about two hours.
+    default_word_limit: int = 1000
+    word_limit_max: int = 2000
 
     # --- web ------------------------------------------------------------
     host: str = "0.0.0.0"

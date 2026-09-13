@@ -54,10 +54,13 @@ class MemoryScope:
 class Memory:
     """Memory for one (run, agent) pair."""
 
-    def __init__(self, scope: MemoryScope, router: LLMRouter):
+    def __init__(self, scope: MemoryScope, router: LLMRouter, token_budget: int | None = None):
         self.scope = scope
         self.router = router
         self.cfg = settings
+        # Callers whose messages are long (a 1000-word role-play turn is ~1.4k tokens) pass a
+        # larger budget; at the global default they would compact on nearly every turn.
+        self.token_budget = token_budget or settings.short_term_token_budget
 
     # ---------------------------------------------------------------- short-term
 
@@ -135,7 +138,7 @@ class Memory:
 
     async def maybe_compact(self) -> bool:
         """Fold the oldest half of an over-budget short-term buffer into a summary."""
-        if await self.short_term_tokens() <= self.cfg.short_term_token_budget:
+        if await self.short_term_tokens() <= self.token_budget:
             return False
 
         rows = await fetch_all(

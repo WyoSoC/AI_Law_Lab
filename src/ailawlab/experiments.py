@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from .agent_spec import check_cast, normalize_agent
 from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb
 from .graphs.agentic_workflow import build_agentic_graph
@@ -131,13 +132,18 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "done": False,
         }
     if mode == "roleplay":
+        max_turns = int(merged.get("max_turns", settings.default_max_turns))
+        word_limit = int(merged.get("word_limit", settings.default_word_limit))
         return {
             "scenario": merged.get("scenario", ""),
-            "agents": merged.get("agents", []),
+            "agents": [normalize_agent(a) for a in merged.get("agents", [])],
             "transcript": [],
             "turn": 0,
-            "max_turns": int(merged.get("max_turns", settings.default_max_turns)),
-            "word_limit": int(merged.get("word_limit", 200)),
+            "max_turns": max(2, min(max_turns, settings.max_turns_limit)),
+            "word_limit": max(40, min(word_limit, settings.word_limit_max)),
+            "directive": "",
+            "last_intervention": 0,
+            "ledgers": {},
             "done": False,
         }
     raise ValueError(f"unknown mode {mode!r}")
@@ -174,8 +180,11 @@ async def execute_run(run_id: str) -> dict:
     try:
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
-        # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle.
-        limit = int(config.get("max_turns", settings.default_max_turns)) * 3 + 20
+        if mode == "roleplay":
+            await _check_roleplay(state, tracer)
+        # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle. Read
+        # it from the built state, since run inputs may override the experiment's max_turns.
+        limit = int(state.get("max_turns", settings.default_max_turns)) * 3 + 20
         final = await graph.ainvoke(
             state,
             config={"configurable": {"ctx": ctx}, "recursion_limit": limit},
@@ -195,6 +204,22 @@ async def execute_run(run_id: str) -> dict:
         await _set_status(run_id, "failed", error=f"{type(e).__name__}: {e}",
                           finished_at=datetime.now(UTC))
         raise
+
+
+async def _check_roleplay(state: dict, tracer: Tracer) -> None:
+    """Fail fast on a cast that cannot run; record lesser problems in the trace.
+
+    Without this, a duplicate id or a moderator pick that matches no agent surfaces mid-run
+    as a bare StopIteration, long after the cause was knowable.
+    """
+    issues = check_cast(state["agents"])
+    errors = [i["message"] for i in issues if i["level"] == "error"]
+    if errors:
+        raise ValueError("the cast cannot run: " + " ".join(errors))
+    if not state["scenario"].strip():
+        raise ValueError("the run has no scenario; add one to the experiment or the run inputs")
+    for i in issues:
+        await tracer.note(f"cast check ({i['level']}): {i['message']}")
 
 
 def _summarize(mode: str, final: dict) -> dict:

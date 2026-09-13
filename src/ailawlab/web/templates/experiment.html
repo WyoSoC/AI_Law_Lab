@@ -62,7 +62,7 @@
       task: "Search the corpus and summarise how Wyoming treats one-sided termination-for-convenience clauses."
     },
     roleplay: {
-      scenario: "Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law."
+      scenario: {{ (default_scenario or "Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law.")|tojson }}
     }
   };
   const box = document.getElementById('inputs_json');

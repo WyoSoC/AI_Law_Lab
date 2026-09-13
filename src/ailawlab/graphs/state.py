@@ -62,14 +62,18 @@ class AgenticState(TypedDict, total=False):
 class RoleplayState(TypedDict, total=False):
     """Multi-agent role-play simulation state."""
     scenario: str
-    # Each agent: {id, name, role, goal, backstory, demeanor, tendencies, priorities}
-    # or a raw {system_prompt} that overrides the structured fields.
+    # Each agent: {id, name, role, goal, backstory, demeanor, tendencies, priorities,
+    # bottom_line, confidential, notes} or a raw {system_prompt} that overrides them.
+    # See agent_spec.py for the file format these come from.
     agents: list[dict]
     transcript: Annotated[list[dict], operator.add]
     turn: int
     max_turns: int
     word_limit: int             # per-turn word cap handed to each speaker
     next_speaker: str
+    directive: str              # moderator's instruction to the next speaker, if any
+    last_intervention: int      # turn of the moderator's last impasse intervention
+    ledgers: dict[str, dict]    # agent_id -> that agent's private negotiation notes
     outcome: str
     done: bool
     error: str

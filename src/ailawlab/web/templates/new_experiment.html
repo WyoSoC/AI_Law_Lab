@@ -68,20 +68,28 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <!-- ───────────── roleplay ───────────── -->
   <div class="panel mode-panel" data-mode="roleplay">
     <h2>Role-play setup</h2>
-    <p class="hint">The scenario is supplied per run. Build the cast and pacing here. Each
-       agent keeps private memory scoped to its id, so opposing parties never share a
-       recollection.</p>
+    <p class="hint">Build the cast and pacing here. Each agent keeps its own memory, private
+       notes, and bottom line, so opposing parties never see each other's thinking.</p>
+
+    <label for="rp_scenario">Scenario</label>
+    <textarea id="rp_scenario" class="short" oninput="syncJSON()"
+              placeholder="Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law."></textarea>
+    <p class="hint">What the exchange is about. This is the default for every run (a run can
+       still use a different one), and the AI tools below draft and check the cast against it.</p>
 
     <div class="two-col">
       <div>
         <label for="rp_turns">Max turns</label>
         <input type="number" id="rp_turns" value="{{ default_max_turns }}" min="2"
-               max="{{ max_turns_limit }}">
-        <p class="hint">Total speaking turns across all parties before the scene is assessed.</p>
+               max="{{ max_turns_limit }}" oninput="syncJSON()">
+        <p class="hint">Upper limit on speaking turns across all parties. The moderator ends
+           the scene sooner if the parties agree or someone walks away. A full 100-turn scene
+           at 1000 words a turn takes roughly two hours.</p>
       </div>
       <div>
         <label for="rp_words">Words per turn</label>
-        <input type="number" id="rp_words" value="220" min="40" max="800">
+        <input type="number" id="rp_words" value="{{ default_word_limit }}" min="40"
+               max="{{ word_limit_max }}" oninput="syncJSON()">
         <p class="hint">Upper bound on each agent's reply length.</p>
       </div>
     </div>
@@ -90,6 +98,40 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       <h3>Cast</h3>
       <button type="button" class="add-agent" onclick="addAgent()">+ Add agent</button>
     </div>
+
+    <div class="cast-drop" id="cast-drop">
+      <div class="cast-toolbar">
+        <button type="button" class="small-btn"
+                onclick="document.getElementById('agent-files').click()">Upload agent files…</button>
+        <input type="file" id="agent-files" accept=".md,.markdown,.txt" multiple hidden
+               onchange="uploadAgentFiles(this.files)">
+        <button type="button" class="small-btn" onclick="downloadCast()">Download cast</button>
+        <a class="small-link" href="{{ prefix }}/api/agents/template">Blank agent file</a>
+        <button type="button" class="small-btn" onclick="toggleDraftPanel()">Draft with AI…</button>
+        <button type="button" class="small-btn" id="check-btn" onclick="checkCast()">Check cast</button>
+        <label class="check"><input type="checkbox" id="check-ai" checked> include AI review</label>
+      </div>
+      <p class="drop-hint">Agent files are plain text (.md or .txt): a line with <code>#</code>
+         and the person's name, then sections such as <code>## Role</code> and
+         <code>## Objective</code>. Upload several files at once, or several people in one
+         file &mdash; or drop the files here. The blank agent file explains the rest.</p>
+    </div>
+
+    <div class="draft-panel" id="draft-panel" hidden>
+      <label for="draft-notes">Anything the AI should keep in mind? <span class="hint-inline">(optional)</span></label>
+      <textarea id="draft-notes" class="short"
+                placeholder="e.g. include a mediator; make the Client's counsel new to technology deals"></textarea>
+      <div class="cast-toolbar" style="margin-top:.8rem">
+        <label for="draft-count">Number of agents</label>
+        <select id="draft-count">
+          {% for n in range(2, 9) %}<option value="{{ n }}"{% if n == 2 %} selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+        <label class="check"><input type="checkbox" id="draft-replace" checked> replace the current cast</label>
+        <button type="button" class="small-btn" id="draft-btn" onclick="draftCast()">Draft cast</button>
+      </div>
+    </div>
+
+    <div class="cast-messages" id="cast-messages" hidden></div>
     <div id="agents"></div>
   </div>
 
@@ -110,81 +152,44 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ prefix }}/static/cast_builder.js"></script>
 <script>
+const PREFIX = "{{ prefix }}";
 // Once someone hand-edits the JSON, the builder stops overwriting it: their text is the
 // source of truth from that point, and silently clobbering it would be hostile.
 let rawEdited = false;
-let agentSeq = 0;
 
 const DEFAULT_MAX_TURNS = {{ default_max_turns }};
+const DEFAULT_WORD_LIMIT = {{ default_word_limit }};
 
+// Bottom lines overlap (18-24 months, with carve-outs), so a deal is possible but has to
+// be worked for; each side also holds a fact that would shift the balance if revealed.
 const ROLE_PRESETS = [
   {id: "provider", name: "Dana Reyes", role: "lead counsel for the Provider",
    goal: "Cap the Provider's indemnification at 12 months of fees and win a mutual termination right.",
    backstory: "Fifteen years in technology transactions, including a stint in-house at a vendor nearly bankrupted by an uncapped indemnity. Treats unlimited liability as an existential threat, not a bargaining chip.",
    demeanor: "Calm, precise, relentlessly polite; wins by out-preparing the room rather than raising their voice.",
-   tendencies: "Anchors hard early, then trades small concessions slowly\nReframes every risk as a dollar figure\nBluffs about walking away, but will genuinely walk before accepting uncapped liability",
-   priorities: "Protecting the balance sheet above winning any single clause; a reputation for still closing the deal."},
+   tendencies: ["Anchors hard early, then trades small concessions slowly", "Reframes every risk as a dollar figure", "Bluffs about walking away, but will genuinely walk before accepting uncapped liability"],
+   priorities: "Protecting the balance sheet above winning any single clause; a reputation for still closing the deal.",
+   bottom_line: "Will go as far as a cap of 24 months of fees, with carve-outs if necessary, but walks away rather than accept uncapped indemnification.",
+   confidential: "The Provider's insurer has refused to cover uncapped indemnities, and the Provider needs this contract to hit its annual revenue target."},
   {id: "client", name: "Sam Okafor", role: "general counsel for the Client",
    goal: "Keep the Provider's indemnification uncapped and deny the Provider any termination-for-convenience right.",
    backstory: "Came up in litigation before moving in-house; has personally cleaned up after a vendor that walked mid-project. Believes leverage lives in the contract, and gives it up reluctantly.",
    demeanor: "Direct, a little impatient, comfortable with silence and confrontation.",
-   tendencies: "Opens with the strongest possible position and dares the other side to move first\nTests bluffs by calling them\nWill concede on price far sooner than on risk allocation",
-   priorities: "Certainty that the Client is protected if the Provider fails; avoiding another mid-project abandonment."},
+   tendencies: ["Opens with the strongest possible position and dares the other side to move first", "Tests bluffs by calling them", "Will concede on price far sooner than on risk allocation"],
+   priorities: "Certainty that the Client is protected if the Provider fails; avoiding another mid-project abandonment.",
+   bottom_line: "Could accept a cap of at least 18 months of fees, but only if IP infringement and data-breach claims stay uncapped.",
+   confidential: "The Client's board has already approved this vendor, and switching now would delay the product launch by six months."},
 ];
-
-function att(s){ return (s||"").replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
-function txt(s){ return (s||"").replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
-
-function optionFields(a) { a = a || {}; return `
-  <div class="two-col">
-    <div><label>Short id <span class="req">*</span></label>
-      <input class="a-id" value="${att(a.id)}" placeholder="provider" required></div>
-    <div><label>Display name</label>
-      <input class="a-name" value="${att(a.name)}" placeholder="Dana Reyes"></div>
-  </div>
-  <label>Role</label>
-  <input class="a-role" value="${att(a.role)}" placeholder="lead counsel for the Provider">
-  <label>Objective</label>
-  <input class="a-goal" value="${att(a.goal)}" placeholder="What is this party trying to achieve?">
-  <label>Background &amp; history</label>
-  <textarea class="a-backstory short" placeholder="Where they come from, and the experience that shapes how they act.">${txt(a.backstory)}</textarea>
-  <label>Demeanor</label>
-  <input class="a-demeanor" value="${att(a.demeanor)}" placeholder="Calm and precise; never raises their voice.">
-  <label>Behavioral tendencies <span class="hint-inline">(one per line)</span></label>
-  <textarea class="a-tendencies short" placeholder="Anchors hard early&#10;Reframes every risk as a number&#10;Bluffs about walking away">${txt(a.tendencies)}</textarea>
-  <label>What they care about most</label>
-  <input class="a-priorities" value="${att(a.priorities)}" placeholder="Protecting the balance sheet above any single clause.">`;
-}
-
-function addAgent(preset) {
-  const i = agentSeq++;
-  const card = document.createElement('div');
-  card.className = 'agent-card';
-  card.innerHTML = `<div class="agent-card-head">
-      <span class="agent-num">Agent ${i + 1}</span>
-      <button type="button" class="remove-agent" onclick="this.closest('.agent-card').remove(); syncJSON()">Remove</button>
-    </div>${optionFields(preset)}`;
-  document.getElementById('agents').appendChild(card);
-  card.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', syncJSON));
-  syncJSON();
-}
-
-function collectAgents() {
-  return [...document.querySelectorAll('.agent-card')].map(c => {
-    const v = s => (c.querySelector(s)?.value || "").trim();
-    const tend = v('.a-tendencies').split('\n').map(t => t.trim()).filter(Boolean);
-    const a = {id: v('.a-id'), name: v('.a-name'), role: v('.a-role'), goal: v('.a-goal')};
-    if (v('.a-backstory')) a.backstory = v('.a-backstory');
-    if (v('.a-demeanor')) a.demeanor = v('.a-demeanor');
-    if (tend.length) a.tendencies = tend;
-    if (v('.a-priorities')) a.priorities = v('.a-priorities');
-    return a;
-  }).filter(a => a.id);
-}
 
 function val(id){ return document.getElementById(id).value; }
 function int(id, d){ const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? d : n; }
+
+function toggleDraftPanel() {
+  const panel = document.getElementById('draft-panel');
+  panel.hidden = !panel.hidden;
+}
 
 function buildConfig() {
   const mode = document.getElementById('mode').value;
@@ -197,9 +202,11 @@ function buildConfig() {
             allow_network: document.getElementById('aw_network').checked};
   }
   if (mode === 'roleplay') {
-    return {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
-            word_limit: int('rp_words', 220),
-            agents: collectAgents()};
+    const config = {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
+                    word_limit: int('rp_words', DEFAULT_WORD_LIMIT)};
+    if (val('rp_scenario').trim()) config.scenario = val('rp_scenario').trim();
+    config.agents = collectAgents();
+    return config;
   }
   return {};
 }
@@ -222,7 +229,18 @@ function showMode() {
 // On submit, fold builder state back in (unless the user took over the JSON) and validate.
 function finalize() {
   const ta = document.getElementById('config_json');
-  if (!rawEdited) ta.value = JSON.stringify(buildConfig(), null, 2);
+  if (!rawEdited) {
+    if (document.getElementById('mode').value === 'roleplay') {
+      const errors = castErrors();
+      if (errors.length) {
+        showMessages(errors.map(message => ({level: 'error', message})),
+                     'Fix these before creating the experiment.');
+        document.getElementById('cast-messages').scrollIntoView({behavior: 'smooth', block: 'center'});
+        return false;
+      }
+    }
+    ta.value = JSON.stringify(buildConfig(), null, 2);
+  }
   try {
     const parsed = JSON.parse(ta.value || '{}');
     if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be a JSON object');
@@ -234,6 +252,7 @@ function finalize() {
   return true;
 }
 
+enableDropZone();
 showMode();
 </script>
 {% endblock %}

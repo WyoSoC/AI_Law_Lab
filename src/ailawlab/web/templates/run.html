@@ -68,11 +68,25 @@
   {% if run.result.transcript %}
     <h3 style="font-size:.95rem;margin-top:1.5rem">Transcript</h3>
     {% for t in run.result.transcript %}
+      {% if t.agent_id == 'moderator' %}
+      <div class="event moderator-note">
+        <div class="meta"><strong>Moderator</strong> <span>{{ t.role }}</span> <span>after turn {{ t.turn }}</span></div>
+        <div class="body">{{ t.content }}</div>
+      </div>
+      {% else %}
       <div class="event">
         <div class="meta"><strong>{{ t.name }}</strong> <span>{{ t.role }}</span> <span>turn {{ t.turn }}</span> <span>{{ t.host }}</span></div>
         <div class="body">{{ t.content }}</div>
+        {% if t.private_notes %}
+        <details><summary>private notes (only {{ t.name }} saw these)</summary>
+          <dl class="ledger">
+            {% for k, v in t.private_notes.items() %}<dt>{{ k.replace('_', ' ')|capitalize }}</dt><dd>{{ v }}</dd>{% endfor %}
+          </dl>
+        </details>
+        {% endif %}
         {% if t.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ t.thinking }}</div></details>{% endif %}
       </div>
+      {% endif %}
     {% endfor %}
   {% endif %}
 

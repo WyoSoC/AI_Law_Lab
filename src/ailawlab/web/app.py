@@ -4,16 +4,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import experiments, sources
+from .. import agent_spec, cast_assistant, experiments, sources
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..rag import Corpus
@@ -95,6 +96,8 @@ async def new_experiment_form(request: Request):
         "corpora": [c["corpus"] for c in corpora],
         "default_max_turns": settings.default_max_turns,
         "max_turns_limit": settings.max_turns_limit,
+        "default_word_limit": settings.default_word_limit,
+        "word_limit_max": settings.word_limit_max,
     })
 
 
@@ -130,6 +133,7 @@ async def experiment_detail(request: Request, experiment_id: str):
         "exp": exp,
         "runs": await experiments.list_runs(experiment_id),
         "config_pretty": json.dumps(exp["config"], indent=2),
+        "default_scenario": (exp["config"] or {}).get("scenario", ""),
     })
 
 
@@ -247,6 +251,99 @@ async def corpus_upload(file: UploadFile, corpus: str = Form("default")):
     if doc_id is None:
         return RedirectResponse(f"{P}/sources?msg=already+ingested+or+no+text", status_code=303)
     return RedirectResponse(f"{P}/sources", status_code=303)
+
+
+# ---------------------------------------------------------------- role-play cast files
+
+# Agent files are a few kilobytes of prose; anything far larger is the wrong file.
+MAX_AGENT_FILE_BYTES = 1_000_000
+AGENT_FILE_SUFFIXES = (".md", ".markdown", ".txt")
+
+
+def _markdown_download(text: str, filename: str) -> Response:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(filename or "cast").stem).strip("-.") or "cast"
+    return Response(text, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.md"'})
+
+
+def _taken_ids(raw: object) -> list[str]:
+    return [str(i) for i in raw] if isinstance(raw, list) else []
+
+
+@app.get("/api/agents/template")
+async def api_agents_template():
+    """A blank, commented agent file to fill in by hand."""
+    return _markdown_download(agent_spec.template(), "agent-template")
+
+
+@app.post("/api/agents/upload")
+async def api_agents_upload(files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
+                            taken: str = Form("[]")):
+    """Read one or more agent files into agents. `taken` lists ids already in the builder,
+    so uploads never collide with agents that are already there."""
+    readable: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for f in files:
+        name = f.filename or "upload"
+        raw = await f.read()
+        if not name.lower().endswith(AGENT_FILE_SUFFIXES):
+            skipped.append(f"{name}: skipped. Agent files must be plain text saved as .md or "
+                           ".txt (in Word, use Save As and choose Plain Text).")
+        elif len(raw) > MAX_AGENT_FILE_BYTES:
+            skipped.append(f"{name}: skipped, because it is too large to be an agent file.")
+        else:
+            readable.append((name, raw.decode("utf-8-sig", errors="replace")))
+    try:
+        taken_ids = _taken_ids(json.loads(taken or "[]"))
+    except json.JSONDecodeError:
+        taken_ids = []
+    result = agent_spec.parse_files(readable, taken=taken_ids)
+    return JSONResponse({"agents": result.agents, "warnings": skipped + result.warnings})
+
+
+@app.post("/api/agents/download")
+async def api_agents_download(request: Request):
+    """Agents as one Markdown file. Body: {agents, filename}."""
+    body = await request.json()
+    agents = [a for a in body.get("agents") or [] if isinstance(a, dict)]
+    if not agents:
+        raise HTTPException(400, "no agents to download")
+    return _markdown_download(agent_spec.to_markdown(agents), body.get("filename") or "cast")
+
+
+@app.post("/api/agents/check")
+async def api_agents_check(request: Request):
+    """Problems with a cast. Body: {agents, scenario, ai}. The rule-based checks always run;
+    the AI review runs only when asked for and a scenario is given, since it costs a call."""
+    body = await request.json()
+    agents = [a for a in body.get("agents") or [] if isinstance(a, dict)]
+    scenario = (body.get("scenario") or "").strip()
+    issues = agent_spec.check_cast(agents)
+    if body.get("ai") and scenario and agents:
+        try:
+            issues += await cast_assistant.review_cast(await get_router(), agents, scenario)
+        except Exception as e:  # noqa: BLE001 - the rule-based results are still worth showing
+            log.warning("AI cast review failed: %s", e)
+            issues.append({"level": "warning", "agent": None,
+                           "message": f"The AI review could not run ({type(e).__name__})."})
+    return JSONResponse({"issues": issues})
+
+
+@app.post("/api/agents/draft")
+async def api_agents_draft(request: Request):
+    """Draft agents from a scenario. Body: {scenario, count, notes, taken}."""
+    body = await request.json()
+    scenario = (body.get("scenario") or "").strip()
+    if not scenario:
+        raise HTTPException(400, "describe the scenario first")
+    try:
+        count = max(2, min(int(body.get("count") or 2), 8))
+    except (TypeError, ValueError):
+        count = 2
+    result = await cast_assistant.draft_cast(await get_router(), scenario, count,
+                                             notes=body.get("notes") or "",
+                                             taken=_taken_ids(body.get("taken")))
+    return JSONResponse({"agents": result.agents, "warnings": result.warnings})
 
 
 # ---------------------------------------------------------------- api / streaming

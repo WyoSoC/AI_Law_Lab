@@ -1,0 +1,434 @@
+"""Agent specification files: plain Markdown that a lawyer can edit in any text editor.
+
+A file holds one agent or a whole cast. Each agent starts at a top-level heading with the
+person's name, and each part of the character is a second-level heading under it:
+
+    # Dana Reyes
+
+    ## Role
+    Lead counsel for the Provider
+
+    ## Tendencies
+    - Anchors hard early
+    - Reframes every risk as a dollar figure
+
+The people writing these files are lawyers, not programmers, so the format asks for no
+syntax beyond `#` and `-`, and the reader is deliberately forgiving: headings match
+case-insensitively and by common synonyms, every section but the name is optional, and
+text before the first name or inside <!-- comments --> is ignored so a file can carry its
+own instructions. What the reader cannot place is never silently dropped. It is kept under
+"Additional notes" and reported back, because a lawyer who wrote a section called
+"Leverage" should find out it was not read as one of the standard sections.
+
+"Bottom line" and "Confidential information" mirror how negotiators actually prepare (a
+walk-away point, and facts the other side does not have). Studies of LLM negotiators found
+that agents without a threshold to measure offers against tend to repeat themselves rather
+than converge; see graphs/roleplay.py for how the engine uses them.
+
+Ids are generated from names rather than asked for. An id is plumbing (it scopes each
+agent's private memory), and inventing one is exactly the kind of step that trips up
+someone who has never edited a configuration file.
+"""
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Section:
+    key: str                          # field name in the experiment config
+    heading: str                      # heading written in downloaded files
+    hint: str                         # plain-language guidance in the blank template
+    synonyms: tuple[str, ...] = ()
+    is_list: bool = False
+    in_template: bool = True
+
+
+SECTIONS: tuple[Section, ...] = (
+    Section("role", "Role",
+            "Who this person is in the matter, e.g. lead counsel for the Provider.",
+            ("position", "title", "party")),
+    Section("goal", "Objective",
+            "What they are trying to achieve in this exchange.",
+            ("objectives", "goal", "goals", "aim", "aims", "what they want")),
+    Section("backstory", "Background",
+            "Where they come from, and the experience that shapes how they act.",
+            ("backstory", "back story", "history", "experience", "biography", "bio",
+             "background and history")),
+    Section("demeanor", "Demeanor",
+            "How they come across in the room.",
+            ("demeanour", "temperament", "manner", "style", "personality", "tone")),
+    Section("tendencies", "Tendencies",
+            "Habits and tactics. Put each one on its own line, starting with a dash (-).",
+            ("behavioral tendencies", "behavioural tendencies", "behavior", "behaviour",
+             "behaviors", "behaviours", "habits", "tactics"),
+            is_list=True),
+    Section("priorities", "Priorities",
+            "The interests behind their position: what they care about most, and why.",
+            ("interests", "what they care about", "what they care about most", "concerns",
+             "values")),
+    Section("bottom_line", "Bottom line",
+            "Private. The point past which they would rather walk away than agree, and what "
+            "they would do instead.",
+            ("walk away point", "walkaway point", "walk away", "reservation point",
+             "reservation price", "batna", "red lines", "limits")),
+    Section("confidential", "Confidential information",
+            "Private. Facts only this person knows. They guard them unless revealing one helps.",
+            ("confidential", "private information", "private facts", "secrets",
+             "secret information", "what only they know", "hidden information")),
+    Section("notes", "Additional notes",
+            "Anything else about this person.",
+            ("notes", "other notes", "extra notes"),
+            in_template=False),
+    Section("system_prompt", "Full prompt (advanced)",
+            "A complete prompt written by hand. If present, it replaces everything above.",
+            ("custom prompt", "full prompt", "system prompt"),
+            in_template=False),
+    Section("id", "Short id",
+            "Generated from the name when left out.",
+            ("id",),
+            in_template=False),
+)
+
+TEMPLATE_INTRO = """<!--
+HOW TO USE THIS FILE
+
+Describe each person in the role-play under a line that starts with "# " followed by
+their name. Under the name, fill in the sections that start with "## ".
+
+  - Only the name is required. Delete or leave empty any section you do not need.
+  - To describe several people in one file, repeat the whole block: another "# Name"
+    line followed by its sections.
+  - Under "Tendencies", put each habit on its own line starting with "- ".
+  - "Bottom line" and "Confidential information" are private. The other people in the
+    role-play never see them.
+  - Anything between these arrow markers is instructions and is ignored, like this
+    whole paragraph. You can delete it.
+
+Save as plain text (.md or .txt) and upload it on the New experiment page.
+-->"""
+
+
+def _norm(label: str) -> str:
+    """Heading text reduced to a lookup key: 'Walk-away point (private):' -> 'walk away point'."""
+    s = re.sub(r"\([^)]*\)", " ", label).lower().replace("&", " and ")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+_BY_LABEL: dict[str, Section] = {}
+for _s in SECTIONS:
+    for _label in (_s.heading, _s.key.replace("_", " "), *_s.synonyms):
+        _BY_LABEL.setdefault(_norm(_label), _s)
+_LIST_KEYS = {s.key for s in SECTIONS if s.is_list}
+
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+# A space (or a letter) must follow the hash, so a line such as "#1 concern is cost" inside
+# a section is not mistaken for a new person.
+_H1 = re.compile(r"^#(?!#)(?:\s+|(?=[A-Za-z]))(.*?)\s*#*\s*$")
+_H2 = re.compile(r"^#{2,6}(?:\s+|(?=[A-Za-z]))(.*?)\s*#*\s*$")
+# People used to word processors reach for bold instead of "##"; accept that for known names.
+_BOLD_HEADING = re.compile(r"^\s*(\*\*|__)(.+?)\1\s*:?\s*$")
+_LABEL_LINE = re.compile(
+    r"^\s*(?:\*\*|__)?([^:*_\n]{2,40}?)(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.*\S)\s*$")
+_RULE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
+_BULLET = re.compile(r"^\s*(?:[-*+•‣◦]|\d{1,3}[.)])\s+(.*)$")
+_ESCAPED = re.compile(r"^(\s*)\\([#*_+-])")
+
+
+def _unescape(line: str) -> str:
+    return _ESCAPED.sub(r"\1\2", line)
+
+
+def _inline(text: str) -> str:
+    """Heading or name text without surrounding bold markers or a trailing colon."""
+    text = re.sub(r"^(\*\*|__)(.*)\1$", r"\2", text.strip()).strip()
+    return text.rstrip(":").strip()
+
+
+def _text(lines: Iterable[str]) -> str:
+    out = [_unescape(line.strip()) for line in lines]
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
+def _items(lines: Iterable[str]) -> list[str]:
+    """List entries from dashes, numbers or bullets -- or one per line if there are none."""
+    lines = list(lines)
+    bulleted = any(_BULLET.match(line) for line in lines)
+    items: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if m := _BULLET.match(raw):
+            items.append(m.group(1).strip())
+        elif bulleted and items:
+            items[-1] = f"{items[-1]} {line}"      # a long entry wrapped onto the next line
+        else:
+            items.append(line)
+    return [_unescape(i) for i in items if i]
+
+
+def slugify(name: str) -> str:
+    s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-z0-9_]+", "-", s.lower()).strip("-")
+    return s[:40].strip("-") or "agent"
+
+
+def normalize_agent(agent: dict) -> dict:
+    """A tidy copy of one agent: strings trimmed, tendencies as a list, empty fields dropped.
+
+    Agents reach the engine from uploaded files, the builder, and hand-written JSON, so
+    this is the one place their shape is made consistent.
+    """
+    out: dict = {}
+    for key, value in agent.items():
+        if key in _LIST_KEYS:
+            if isinstance(value, str):
+                value = _items(value.split("\n"))
+            value = [" ".join(str(v).split()) for v in (value or []) if str(v).strip()]
+        elif isinstance(value, str):
+            value = value.strip()
+        if value not in ("", None, []):
+            out[key] = value
+    return out
+
+
+def assign_ids(agents: list[dict], taken: Iterable[str] = ()) -> list[str]:
+    """Give every agent a unique id (from its name unless one was set). Returns warnings."""
+    used = set(taken)
+    warnings: list[str] = []
+    for a in agents:
+        base = slugify(a.get("id") or a.get("name") or "")
+        candidate, n = base, 2
+        while candidate in used:
+            candidate = f"{base}-{n}"
+            n += 1
+        if candidate != base:
+            warnings.append(
+                f'Two agents would share the id "{base}", so "{a.get("name") or base}" was '
+                f'given "{candidate}". Check that the same person was not added twice.')
+        a["id"] = candidate
+        used.add(candidate)
+    return warnings
+
+
+@dataclass
+class ParseResult:
+    agents: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+class _Reader:
+    """Line-by-line reader for one file."""
+
+    def __init__(self, source: str):
+        self.source = source
+        self.agents: list[dict] = []
+        self.warnings: list[str] = []
+        self.agent: dict | None = None
+        self.heading: str | None = None    # current "##" section; None directly under the name
+        self.lines: list[str] = []
+        self.loose: list[str] = []
+
+    def warn(self, message: str) -> None:
+        self.warnings.append(f"{self.source}: {message}")
+
+    def feed(self, raw: str) -> None:
+        if m := _H1.match(raw):
+            self.finish_agent()
+            self.start_agent(_inline(m.group(1)))
+            return
+        if self.agent is None:
+            return                          # before the first name: the file's own notes
+        h2 = _H2.match(raw)
+        bold = _BOLD_HEADING.match(raw)
+        if h2 or (bold and _norm(bold.group(2)) in _BY_LABEL):
+            self.finish_section()
+            self.heading = _inline(h2.group(1) if h2 else bold.group(2))
+            return
+        if _RULE.match(raw):
+            raw = ""                        # a horizontal rule is only a visual separator
+        if self.heading is None:
+            label = _LABEL_LINE.match(raw)
+            if label and _norm(label.group(1)) in _BY_LABEL:
+                self.store(label.group(1), [label.group(2)])
+            elif raw.strip():
+                self.loose.append(raw)
+            return
+        self.lines.append(raw)
+
+    def start_agent(self, name: str) -> None:
+        if not name:
+            name = f"Unnamed agent {len(self.agents) + 1}"
+            self.warn(f'a "#" line has no name after it, so that agent was called "{name}". '
+                      "Add the person's name after the #.")
+        self.agent = {"name": name}
+        self.heading, self.lines, self.loose = None, [], []
+
+    def finish_section(self) -> None:
+        if self.agent is not None and self.heading is not None:
+            self.store(self.heading, self.lines)
+        self.heading, self.lines = None, []
+
+    def finish_agent(self) -> None:
+        if self.agent is None:
+            return
+        self.finish_section()
+        if loose := _text(self.loose):
+            self.warn(f'"{self.agent["name"]}" has text directly under the name, before any "##" '
+                      'heading. It was kept under "Additional notes"; move it under a heading '
+                      'such as "## Background" if that is where it belongs.')
+            self.append_text("notes", loose)
+        self.agents.append(normalize_agent(self.agent))
+        self.agent = None
+
+    def append_text(self, key: str, text: str) -> None:
+        assert self.agent is not None
+        self.agent[key] = f"{self.agent[key]}\n\n{text}" if self.agent.get(key) else text
+
+    def store(self, label: str, lines: list[str]) -> None:
+        assert self.agent is not None
+        name = self.agent["name"]
+        section = _BY_LABEL.get(_norm(label))
+        if section is None:
+            if text := _text(lines):
+                self.warn(f'"{name}" has a section called "{label}", which is not one of the '
+                          'standard sections. Its text was kept under "Additional notes".')
+                self.append_text("notes", f"{label}:\n{text}" if "\n" in text else f"{label}: {text}")
+            return
+        if section.is_list:
+            value: str | list[str] = _items(lines)
+        else:
+            value = _text(lines)
+        if not value:
+            return                          # an empty section, e.g. straight from the template
+        if section.key in self.agent and section.key != "notes":
+            self.warn(f'"{name}" has more than one "{section.heading}" section; all of them '
+                      "were kept.")
+            if section.is_list:
+                self.agent[section.key] = [*self.agent[section.key], *value]
+                return
+        if section.is_list:
+            self.agent[section.key] = value
+        else:
+            self.append_text(section.key, value)
+
+
+def parse_markdown(text: str, source: str = "file", taken: Iterable[str] = ()) -> ParseResult:
+    """Read every agent in one file. `taken` holds ids already used elsewhere in the cast."""
+    reader = _Reader(source)
+    text = _COMMENT.sub("", text.lstrip("﻿")).replace("\r\n", "\n").replace("\r", "\n")
+    for line in text.split("\n"):
+        reader.feed(line)
+    reader.finish_agent()
+    result = ParseResult(reader.agents, reader.warnings)
+    if not result.agents:
+        result.warnings.append(f'{source}: no agents found. Each person must start on a line '
+                               'like "# Dana Reyes".')
+    result.warnings += [f"{source}: {w}" for w in assign_ids(result.agents, taken)]
+    return result
+
+
+def parse_files(files: Iterable[tuple[str, str]], taken: Iterable[str] = ()) -> ParseResult:
+    """Read several uploaded files as one cast, keeping ids unique across all of them."""
+    combined = ParseResult()
+    used = set(taken)
+    for name, text in files:
+        r = parse_markdown(text, source=name, taken=used)
+        combined.agents += r.agents
+        combined.warnings += r.warnings
+        used |= {a["id"] for a in r.agents}
+    return combined
+
+
+def _escape(text: str) -> str:
+    """Protect lines that would otherwise be read back as headings or separators."""
+    return "\n".join(
+        f"\\{line}" if line.startswith("#") or _RULE.match(line) or _BOLD_HEADING.match(line)
+        else line
+        for line in text.split("\n"))
+
+
+def to_markdown(agents: list[dict]) -> str:
+    """Write agents in the standard layout. parse_markdown reads the result back unchanged."""
+    blocks: list[str] = []
+    for raw in agents:
+        a = normalize_agent(raw)
+        name = a.get("name") or a.get("id") or "Unnamed agent"
+        lines = [f"# {name}"]
+        for s in SECTIONS:
+            value = a.get(s.key)
+            if not value or (s.key == "id" and value == slugify(name)):
+                continue
+            body = "\n".join(f"- {item}" for item in value) if s.is_list else _escape(str(value))
+            lines += ["", f"## {s.heading}", body]
+        blocks.append("\n".join(lines))
+    return "\n\n\n".join(blocks) + "\n"
+
+
+def template() -> str:
+    """A blank, commented file to fill in."""
+    parts = [TEMPLATE_INTRO, "", "# Full name of the person"]
+    for s in SECTIONS:
+        if s.in_template:
+            parts += ["", f"## {s.heading}", f"<!-- {s.hint} -->"]
+    return "\n".join(parts) + "\n"
+
+
+def check_cast(agents: list[dict]) -> list[dict]:
+    """Problems a person can fix before running, in plain language.
+
+    Levels: "error" stops a run from working at all, "warning" will likely spoil it, and
+    "suggestion" is advice that tends to make the exchange more realistic.
+    """
+    issues: list[dict] = []
+
+    def add(level: str, message: str, agent: str | None = None) -> None:
+        issues.append({"level": level, "agent": agent, "message": message})
+
+    if len(agents) < 2:
+        add("error", "A role-play needs at least two agents." if agents
+            else "Add at least two agents to the cast.")
+
+    ids: set[str] = set()
+    names: set[str] = set()
+    goals: dict[str, str] = {}
+    for a in (normalize_agent(x) for x in agents):
+        aid, name = a.get("id"), a.get("name")
+        label = name or aid or "An unnamed agent"
+        if not aid:
+            add("error", f"{label} has no short id.")
+        elif aid in ids:
+            add("error", f'Two agents share the id "{aid}". Each agent needs its own, because the '
+                "id is what keeps its memory private.", aid)
+        ids.add(aid or "")
+        if not name:
+            add("warning", f'Agent "{aid}" has no name.', aid)
+        elif name.casefold() in names:
+            add("warning", f'Two agents are both named "{name}". The others will not be able to '
+                "tell them apart.", aid)
+        names.add((name or "").casefold())
+
+        if a.get("system_prompt"):
+            continue                        # a hand-written prompt is its author's call
+        if not a.get("goal"):
+            add("warning", f"{label} has no objective, so they have nothing to argue for.", aid)
+        else:
+            key = " ".join(a["goal"].casefold().split())
+            if key in goals:
+                add("warning", f"{goals[key]} and {label} have the same objective. Was one agent "
+                    "copied from another?", aid)
+            goals.setdefault(key, label)
+        if not a.get("role"):
+            add("warning", f"{label} has no role.", aid)
+        if not a.get("bottom_line"):
+            add("suggestion", f"{label} has no bottom line. Without a point where they would "
+                "rather walk away, agents tend to argue in circles or give in too easily.", aid)
+    return issues
