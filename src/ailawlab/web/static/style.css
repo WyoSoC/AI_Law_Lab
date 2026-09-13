@@ -78,6 +78,13 @@ h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; }
   border-radius: var(--radius); padding: 1rem 1.15rem; margin-bottom: 1rem;
 }
 
+/* Brief highlight when the corpus table is refreshed in place after an ingest. */
+.panel.flash { animation: panel-flash 1.1s ease-out; }
+@keyframes panel-flash {
+  from { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  to   { border-color: var(--line); box-shadow: 0 0 0 3px transparent; }
+}
+
 .grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem .95rem; }

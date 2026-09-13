@@ -162,15 +162,28 @@ async def run_detail(request: Request, run_id: str):
     })
 
 
-@app.get("/sources", response_class=HTMLResponse)
-async def sources_page(request: Request):
-    docs = await fetch_all(
+async def _corpus_documents():
+    """Every ingested document with its chunk count, newest first."""
+    return await fetch_all(
         "SELECT d.*, COUNT(c.id) AS chunk_count FROM documents d "
         "LEFT JOIN chunks c ON c.document_id = d.id GROUP BY d.id ORDER BY d.created_at DESC"
     )
+
+
+@app.get("/sources", response_class=HTMLResponse)
+async def sources_page(request: Request):
     return templates.TemplateResponse(request, "sources.html", {
-        "documents": docs,
+        "documents": await _corpus_documents(),
         "topics": sources.by_topic(),
+    })
+
+
+@app.get("/api/sources/documents", response_class=HTMLResponse)
+async def api_sources_documents(request: Request):
+    """The "In the corpus" table as an HTML fragment, so the page can refresh it in
+    place after an ingest without a full reload."""
+    return templates.TemplateResponse(request, "_documents.html", {
+        "documents": await _corpus_documents(),
     })
 
 

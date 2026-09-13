@@ -57,29 +57,8 @@ embedded and citable, filed under a corpus you choose.</p>
 </div>
 
 <h2>In the corpus</h2>
-<div class="panel">
-  {% if documents %}
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Title</th><th>Corpus</th><th>Type</th><th>Chunks</th><th>Ingested</th></tr></thead>
-      <tbody>
-        {% for d in documents %}
-        <tr>
-          <td>{% if d.source_uri and d.source_uri.startswith('http') %}
-              <a href="{{ d.source_uri }}" target="_blank" rel="noopener">{{ d.title }}</a>
-              {% else %}{{ d.title }}{% endif %}</td>
-          <td><span class="mode">{{ d.corpus }}</span></td>
-          <td>{{ d.doc_type }}</td>
-          <td>{{ d.chunk_count }}</td>
-          <td>{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="empty">Nothing ingested yet. Search a database above or upload a document.</p>
-  {% endif %}
+<div class="panel" id="corpus-panel">
+  {% include "_documents.html" %}
 </div>
 
 {% endblock %}
@@ -167,12 +146,26 @@ async function ingestSelected(pid) {
           `<span class="hit-mark" title="${esc(res.detail || res.status)}">${marks[res.status] || '?'}</span> `);
       }
     });
-    status.innerHTML = `${d.ingested} added to <strong>${esc(d.corpus)}</strong>. `
-      + `<a href="${PREFIX}/sources">refresh to see them below</a>`;
+    status.innerHTML = `${d.ingested} added to <strong>${esc(d.corpus)}</strong>.`;
+    if (d.ingested) await refreshCorpus();
   } catch (e) {
     status.textContent = String(e);
   }
   btn.disabled = false;
+}
+
+// Pull the freshly-rendered "In the corpus" table and swap it in, so newly ingested
+// documents show up below without a full page reload (which would wipe the ✓ marks above).
+async function refreshCorpus() {
+  const panel = document.getElementById('corpus-panel');
+  try {
+    const r = await fetch(`${PREFIX}/api/sources/documents`);
+    if (!r.ok) return;
+    panel.innerHTML = await r.text();
+    panel.classList.remove('flash');
+    void panel.offsetWidth;  // restart the CSS animation on repeated ingests
+    panel.classList.add('flash');
+  } catch (e) { /* leave the old table in place on failure */ }
 }
 </script>
 {% endblock %}

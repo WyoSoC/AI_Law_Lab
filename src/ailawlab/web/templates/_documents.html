@@ -1,0 +1,22 @@
+{% if documents %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Title</th><th>Corpus</th><th>Type</th><th>Chunks</th><th>Ingested</th></tr></thead>
+    <tbody>
+      {% for d in documents %}
+      <tr>
+        <td>{% if d.source_uri and d.source_uri.startswith('http') %}
+            <a href="{{ d.source_uri }}" target="_blank" rel="noopener">{{ d.title }}</a>
+            {% else %}{{ d.title }}{% endif %}</td>
+        <td><span class="mode">{{ d.corpus }}</span></td>
+        <td>{{ d.doc_type }}</td>
+        <td>{{ d.chunk_count }}</td>
+        <td>{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">Nothing ingested yet. Search a database above or upload a document.</p>
+{% endif %}
