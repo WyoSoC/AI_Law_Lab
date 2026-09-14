@@ -201,3 +201,30 @@ def test_check_cast_suggests_a_bottom_line_but_leaves_hand_written_prompts_alone
     issues = check_cast([{"id": "a", "name": "A", "role": "r", "goal": "g"},
                          {"id": "b", "name": "B", "system_prompt": "You are B."}])
     assert [(i["level"], i["agent"]) for i in issues] == [("suggestion", "a")]
+
+
+def test_bold_or_sub_heading_names_start_agents():
+    r = parse_markdown("**Eleanor Vance**\n\n## Role\nCounsel\n\n***\n\n"
+                       "### Marcus Thorne\n## Role\nDeveloper counsel\n")
+    assert [(a["name"], a["role"]) for a in r.agents] == [
+        ("Eleanor Vance", "Counsel"), ("Marcus Thorne", "Developer counsel")]
+    assert r.warnings == []
+
+
+def test_ordinary_bold_lines_and_empty_sections_are_not_taken_for_names():
+    text = ("# Dana Reyes\n\n## Background\nLong career.\n\n**A key lesson learned**\n\n"
+            "## Demeanor\nCalm.\n\n## Leverage\n\n## Role\nCounsel\n")
+    r = parse_markdown(text)
+    assert [a["name"] for a in r.agents] == ["Dana Reyes"]
+    assert r.agents[0]["role"] == "Counsel"
+    assert "A key lesson learned" in r.agents[0]["backstory"]
+
+
+def test_small_typos_in_section_headings_are_forgiven():
+    # "Demeanories" is what gemma4 wrote in a live draft.
+    r = parse_markdown("# Dana Reyes\n## Demeanories\nCalm.\n## Backround\nLong career.\n"
+                       "## Objetive\nWin.\n## Leverage\nNone.\n## Full prompting ideas\nX\n")
+    [a] = r.agents
+    assert (a["demeanor"], a["backstory"], a["goal"]) == ("Calm.", "Long career.", "Win.")
+    assert "Leverage: None." in a["notes"] and "Full prompting ideas: X" in a["notes"]
+    assert "system_prompt" not in a

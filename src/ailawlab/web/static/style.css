@@ -227,6 +227,15 @@ button:disabled { opacity: .55; cursor: progress; }
 .draft-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: .2rem 1rem 1rem; margin-top: .8rem; background: var(--bg); }
 .cast-toolbar label { margin: 0; }
 .draft-panel select { width: auto; }
+.source-choice { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; }
+.source-choice label { margin: 0; }
+.source-input { margin-top: .6rem; }
+.source-input .cast-toolbar input[type=text] { flex: 1; min-width: 14rem; width: auto; }
+.source-preview { border-left: 3px solid var(--data); background: var(--panel); padding: .5rem .8rem; margin-top: .8rem; border-radius: 0 6px 6px 0; }
+.source-title { font-weight: 600; font-size: .92rem; }
+.source-meta { font-size: .8rem; color: var(--muted); margin-top: .1rem; }
+.source-excerpt { font-size: .85rem; color: var(--muted); margin: .4rem 0 0; line-height: 1.5; }
+.source-note { margin-top: .6rem; }
 .cast-messages { margin-top: .8rem; }
 .cast-msg-head { margin: .2rem 0 .4rem; font-size: .88rem; }
 .issue-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .35rem; }
@@ -235,6 +244,7 @@ button:disabled { opacity: .55; cursor: progress; }
 .issue.error .issue-level { color: var(--bad); }
 .issue.warning .issue-level { color: var(--warn); }
 .issue.suggestion .issue-level { color: var(--accent); }
+.issue.note .issue-level { color: var(--data); }
 
 /* run page: moderator interventions and private notes */
 .event.moderator-note { border-left-color: var(--warn); }

@@ -223,30 +223,118 @@ function enableDropZone() {
 
 function scenarioText() { return document.getElementById("rp_scenario").value.trim(); }
 
+// A source read by /api/source/read (title, kind, url, site, published, words, text, ...),
+// kept in the page until a cast is drafted from it.
+let currentSource = null;
+// What the experiment records about the source its cast was drafted from (no text).
+let draftedSource = null;
+
+function draftFrom() {
+  const picked = document.querySelector('input[name="draft-from"]:checked');
+  return picked ? picked.value : "scenario";
+}
+
+function showDraftSource() {
+  const from = draftFrom();
+  document.querySelectorAll(".source-input").forEach(el => { el.hidden = el.dataset.from !== from; });
+  document.getElementById("source-preview").hidden = from === "scenario" || !currentSource;
+  document.getElementById("draft-scenario-option").hidden = from === "scenario";
+}
+
+async function readSource(from) {
+  let request;
+  if (from === "link") {
+    const url = document.getElementById("source-url").value.trim();
+    if (!url) { showMessages([{level: "error", message: "Paste a link first."}]); return; }
+    request = postJSON("/api/source/read", {url});
+  } else if (from === "file") {
+    const file = document.getElementById("source-file").files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file, file.name);
+    request = fetch(`${PREFIX}/api/source/read`, {method: "POST", body: form})
+      .then(async r => { if (!r.ok) throw new Error(await errorText(r)); return r; });
+  } else {
+    const text = document.getElementById("source-text").value;
+    if (!text.trim()) { showMessages([{level: "error", message: "Paste some text first."}]); return; }
+    request = postJSON("/api/source/read", {text});
+  }
+  currentSource = null;
+  document.getElementById("source-preview").hidden = true;
+  showMessages([], from === "link" ? "Reading the link…" : "Reading the source…");
+  try {
+    currentSource = await (await request).json();
+    renderSourcePreview(currentSource);
+    showMessages(currentSource.warnings.map(message => ({level: "warning", message})),
+      `Read ${plural(currentSource.words, "word")}. Check the preview is the right material, then draft the cast.`);
+  } catch (e) {
+    showMessages([{level: "error", message: String(e.message || e)}], "The source could not be read.");
+  }
+}
+
+function renderSourcePreview(s) {
+  const box = document.getElementById("source-preview");
+  box.innerHTML = '<div class="source-title"></div><div class="source-meta"></div><p class="source-excerpt"></p>';
+  box.querySelector(".source-title").textContent = s.title;
+  const meta = box.querySelector(".source-meta");
+  meta.textContent = [s.kind, s.site, (s.published || "").slice(0, 10),
+    `${s.words.toLocaleString()} words${s.truncated ? " (shortened)" : ""}`].filter(Boolean).join(" · ");
+  if (s.url) {
+    const link = document.createElement("a");
+    link.href = s.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.className = "small-link";
+    link.textContent = "open original";
+    meta.append(" · ", link);
+  }
+  const words = s.text.split(/\s+/);
+  box.querySelector(".source-excerpt").textContent = words.slice(0, 80).join(" ") + (words.length > 80 ? " …" : "");
+  box.hidden = false;
+}
+
 async function draftCast() {
+  const from = draftFrom();
   const scenario = scenarioText();
-  if (!scenario) {
+  if (from === "scenario" && !scenario) {
     showMessages([{level: "error", message: "Describe the scenario first. The AI drafts the cast from it."}]);
     document.getElementById("rp_scenario").focus();
     return;
   }
+  if (from !== "scenario" && !currentSource) {
+    showMessages([{level: "error", message: "Read the source first, so you can check what was found before drafting."}]);
+    return;
+  }
   const btn = document.getElementById("draft-btn");
   const replace = document.getElementById("draft-replace").checked;
+  const body = {
+    count: parseInt(document.getElementById("draft-count").value, 10),
+    notes: document.getElementById("draft-notes").value,
+    taken: replace ? [] : collectAgents().map(a => a.id),
+  };
+  if (from === "scenario") body.scenario = scenario; else body.source = currentSource;
   btn.disabled = true;
-  showMessages([], "Drafting the cast with gemma4. This usually takes one to three minutes…");
+  showMessages([], from === "scenario"
+    ? "Drafting the cast with gemma4. This usually takes one to three minutes…"
+    : "Drafting a scenario and cast from the source with gemma4. This usually takes two to four minutes…");
   try {
-    const r = await postJSON("/api/agents/draft", {
-      scenario,
-      count: parseInt(document.getElementById("draft-count").value, 10),
-      notes: document.getElementById("draft-notes").value,
-      taken: replace ? [] : collectAgents().map(a => a.id),
-    });
-    const d = await r.json();
+    const d = await (await postJSON("/api/agents/draft", body)).json();
     if (!d.agents.length) throw new Error(d.warnings[0] || "The AI did not produce any agents. Try again.");
     if (replace) document.querySelectorAll(".agent-card").forEach(c => c.remove());
     d.agents.forEach(addAgent);
-    showMessages(d.warnings.map(message => ({level: "warning", message})),
-      `Drafted ${plural(d.agents.length, "agent")}. Read them through and change anything that does not fit before creating the experiment.`);
+    if (d.scenario && (document.getElementById("draft-scenario").checked || !scenario)) {
+      document.getElementById("rp_scenario").value = d.scenario;
+    }
+    if (d.source) draftedSource = d.source;
+    else if (replace) draftedSource = null;
+    syncJSON();
+    const notes = d.warnings.map(message => ({level: "warning", message}));
+    if (d.renamed && d.renamed.length) {
+      notes.unshift({level: "note", message: "Real names in the source were replaced before drafting: "
+        + d.renamed.map(r => `${r.real} → ${r.invented}`).join("; ") + "."});
+    }
+    showMessages(notes,
+      `Drafted ${d.scenario ? "a scenario and " : ""}${plural(d.agents.length, "agent")}. Read them through and change anything that does not fit before creating the experiment.`);
   } catch (e) {
     showMessages([{level: "error", message: String(e.message || e)}], "Drafting failed.");
   }

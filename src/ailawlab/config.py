@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # takes to chunk and embed it, so a single click is capped rather than unbounded.
     source_max_ingest: int = 10
 
+    # --- source material for AI-drafted casts ----------------------------
+    # The whole source goes into one drafting prompt. ~12k words is ~17k tokens: a long news
+    # feature or an opinion's syllabus and majority, with room left for gemma4 to write the
+    # cast. A 40k-word Supreme Court PDF is cut to its first 12k words, with a visible note.
+    source_max_words: int = 12_000
+    source_max_bytes: int = 8_000_000
+
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per
     # side, which tends to end with positions restated rather than shifted. The moderator

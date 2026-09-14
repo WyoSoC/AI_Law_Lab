@@ -293,10 +293,41 @@ class _Reader:
         assert self.agent is not None
         self.agent[key] = f"{self.agent[key]}\n\n{text}" if self.agent.get(key) else text
 
+    @staticmethod
+    def _edit_distance(a: str, b: str) -> int:
+        if abs(len(a) - len(b)) > 2:
+            return 3
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+            prev = cur
+        return prev[-1]
+
+    @classmethod
+    def section_for(cls, label: str) -> Section | None:
+        """A standard section by heading, forgiving a small typo ("Demeanories", "Backround").
+
+        The advanced full-prompt section is matched exactly only, since it replaces every
+        other section and must never be picked up by a near miss.
+        """
+        key = _norm(label)
+        if key in _BY_LABEL:
+            return _BY_LABEL[key]
+        if len(key) < 6:
+            return None
+        for known, section in _BY_LABEL.items():
+            if section.key == "system_prompt" or len(known) < 6:
+                continue
+            if key.startswith(known) or cls._edit_distance(key, known) <= 2:
+                return section
+        return None
+
     def store(self, label: str, lines: list[str]) -> None:
         assert self.agent is not None
         name = self.agent["name"]
-        section = _BY_LABEL.get(_norm(label))
+        section = self.section_for(label)
         if section is None:
             if text := _text(lines):
                 self.warn(f'"{name}" has a section called "{label}", which is not one of the '
@@ -321,10 +352,41 @@ class _Reader:
             self.append_text(section.key, value)
 
 
+_NAME_LINE = re.compile(r"^\s*(?:(\*\*|__)(?P<bold>.+?)\1|#{2,6}\s+(?P<head>.+?)\s*#*)\s*$")
+
+
+def promote_name_lines(text: str) -> str:
+    """Read a bold or sub-heading line holding a name as "# Name" when a section follows it.
+
+    People used to word processors bold a person's name instead of typing "#", and models
+    do the same when asked for this layout (gemma4 wrote "**Eleanor Vance**" above "## Role").
+    To leave an ordinary bold sentence or an unknown "## Leverage" section alone, the line
+    must look like a name (two to eight words, not a section name), and the next section
+    must be "## Role" -- unless the text has no "# Name" lines at all, when any standard
+    section will do.
+    """
+    lines = text.split("\n")
+    has_names = any(_H1.match(line) for line in lines)
+    for i, line in enumerate(lines):
+        m = _NAME_LINE.match(line)
+        if not m:
+            continue
+        label = _inline(m.group("bold") or m.group("head") or "")
+        if not 2 <= len(label.split()) <= 8 or label.endswith(".") or _norm(label) in _BY_LABEL:
+            continue
+        following = next((x for x in lines[i + 1:] if x.strip()), "")
+        h2, bold = _H2.match(following), _BOLD_HEADING.match(following)
+        section = _BY_LABEL.get(_norm(_inline(h2.group(1) if h2 else bold.group(2) if bold else "")))
+        if section and (section.key == "role" or not has_names):
+            lines[i] = f"# {label}"
+    return "\n".join(lines)
+
+
 def parse_markdown(text: str, source: str = "file", taken: Iterable[str] = ()) -> ParseResult:
     """Read every agent in one file. `taken` holds ids already used elsewhere in the cast."""
     reader = _Reader(source)
     text = _COMMENT.sub("", text.lstrip("﻿")).replace("\r\n", "\n").replace("\r", "\n")
+    text = promote_name_lines(text)
     for line in text.split("\n"):
         reader.feed(line)
     reader.finish_agent()

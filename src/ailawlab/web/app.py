@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import agent_spec, cast_assistant, experiments, sources
+from .. import agent_spec, cast_assistant, experiments, source_material, sources
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..rag import Corpus
@@ -329,20 +329,68 @@ async def api_agents_check(request: Request):
     return JSONResponse({"issues": issues})
 
 
+@app.post("/api/source/read")
+async def api_source_read(request: Request):
+    """Read source material to draft a cast from: a JSON body {url} or {text, title}, or a
+    multipart upload named `file`. Returns the text with its title, site, date and
+    warnings, for the browser to preview and send back with a draft request."""
+    try:
+        if request.headers.get("content-type", "").startswith("multipart/form-data"):
+            form = await request.form()
+            upload = form.get("file")
+            if upload is None or isinstance(upload, str):
+                raise HTTPException(400, "Choose a file to read.")
+            data = await upload.read(settings.source_max_bytes + 1)
+            if len(data) > settings.source_max_bytes:
+                raise HTTPException(413, "That file is too large to read.")
+            # PDF extraction is CPU-bound; keep it off the event loop.
+            doc = await asyncio.to_thread(source_material.from_bytes, data,
+                                          content_type=upload.content_type or "",
+                                          filename=upload.filename or "upload")
+        else:
+            body = await request.json()
+            if (body.get("url") or "").strip():
+                doc = await source_material.fetch_url(body["url"])
+            elif (body.get("text") or "").strip():
+                doc = source_material.from_text(body["text"], title=body.get("title") or "")
+            else:
+                raise HTTPException(400, "Give a link, a file, or some text to read.")
+    except source_material.SourceError as e:
+        raise HTTPException(422, str(e)) from e
+    return JSONResponse(doc.as_dict())
+
+
 @app.post("/api/agents/draft")
 async def api_agents_draft(request: Request):
-    """Draft agents from a scenario. Body: {scenario, count, notes, taken}."""
+    """Draft agents from a scenario, or a scenario and agents from a source.
+
+    Body: {scenario | source, count, notes, taken}, where `source` is what /api/source/read
+    returned. For a source, the response adds `source` (what the experiment records about
+    it, without the text) and `renamed` (the real names the draft replaced).
+    """
     body = await request.json()
-    scenario = (body.get("scenario") or "").strip()
-    if not scenario:
-        raise HTTPException(400, "describe the scenario first")
     try:
         count = max(2, min(int(body.get("count") or 2), 8))
     except (TypeError, ValueError):
         count = 2
-    result = await cast_assistant.draft_cast(await get_router(), scenario, count,
-                                             notes=body.get("notes") or "",
-                                             taken=_taken_ids(body.get("taken")))
+    notes, taken = body.get("notes") or "", _taken_ids(body.get("taken"))
+    router = await get_router()
+
+    if isinstance(body.get("source"), dict):
+        try:
+            source = source_material.from_client(body["source"])
+        except source_material.SourceError as e:
+            raise HTTPException(422, str(e)) from e
+        draft = await cast_assistant.draft_from_source(router, source, count, notes=notes,
+                                                       taken=taken)
+        return JSONResponse({"scenario": draft.scenario, "agents": draft.agents,
+                             "warnings": draft.warnings, "renamed": draft.renamed,
+                             "source": source.meta()})
+
+    scenario = (body.get("scenario") or "").strip()
+    if not scenario:
+        raise HTTPException(400, "describe the scenario first")
+    result = await cast_assistant.draft_cast(router, scenario, count, notes=notes, taken=taken)
     return JSONResponse({"agents": result.agents, "warnings": result.warnings})
 
 

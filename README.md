@@ -152,6 +152,24 @@ several people per file), per-agent and whole-cast download, an AI-drafted cast 
 scenario, and a cast check (rules plus an optional AI review against the scenario). The
 format lives in `agent_spec.py`.
 
+### Drafting a cast from real material
+
+"Draft with AI" can start from a web link (a news story, a court page, an opinion), an
+uploaded PDF, HTML or text file, or pasted text instead of the scenario box. The source is
+previewed first so you can confirm the right text came through; the AI then writes the
+scenario and the cast. `source_material.py` does the reading: it picks the main article out
+of a page without an HTML library, caps a source at 12,000 words, and fetches a link only if
+its host resolves to public addresses (re-checked on every redirect), because this server
+can reach the Sparks, Postgres and the university network.
+
+Real people and private organizations in the source are renamed before the model drafts
+anything, and the same substitution is applied to its output. A draft invents bottom lines
+and confidential facts, and telling the model to use invented names was not enough: on a
+Casper Mountain gravel-pit story it kept the real mining company and gave it an invented
+secret. The builder lists every name it changed; courts, agencies and places keep their
+real names. The experiment records the source's title, link, retrieval time and a SHA-256
+of the text that was used.
+
 ## Memory
 
 Ported from `ollama-chat-agent/memory.py`, preserving its two-tier design — a verbatim

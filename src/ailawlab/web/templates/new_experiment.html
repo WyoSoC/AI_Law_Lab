@@ -118,15 +118,42 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
     </div>
 
     <div class="draft-panel" id="draft-panel" hidden>
+      <label>Draft from</label>
+      <div class="source-choice">
+        <label class="check"><input type="radio" name="draft-from" value="scenario" checked onchange="showDraftSource()"> the scenario above</label>
+        <label class="check"><input type="radio" name="draft-from" value="link" onchange="showDraftSource()"> a web link</label>
+        <label class="check"><input type="radio" name="draft-from" value="file" onchange="showDraftSource()"> a file</label>
+        <label class="check"><input type="radio" name="draft-from" value="text" onchange="showDraftSource()"> pasted text</label>
+      </div>
+
+      <div class="source-input" data-from="link" hidden>
+        <div class="cast-toolbar">
+          <input type="text" id="source-url" placeholder="https://… a news story, court page, or opinion">
+          <button type="button" class="small-btn" onclick="readSource('link')">Read link</button>
+        </div>
+      </div>
+      <div class="source-input" data-from="file" hidden>
+        <input type="file" id="source-file" accept=".pdf,.html,.htm,.txt,.md" onchange="readSource('file')">
+      </div>
+      <div class="source-input" data-from="text" hidden>
+        <textarea id="source-text" class="short" placeholder="Paste an article, opinion, complaint, or case summary."></textarea>
+        <div class="cast-toolbar"><button type="button" class="small-btn" onclick="readSource('text')">Use this text</button></div>
+      </div>
+      <div class="source-preview" id="source-preview" hidden></div>
+      <p class="hint source-note" id="source-note">From a source, the AI writes the scenario and the cast. It keeps real
+         courts, agencies and places, but gives every person and private company an invented name,
+         because the bottom lines and confidential facts it adds are made up.</p>
+
       <label for="draft-notes">Anything the AI should keep in mind? <span class="hint-inline">(optional)</span></label>
       <textarea id="draft-notes" class="short"
-                placeholder="e.g. include a mediator; make the Client's counsel new to technology deals"></textarea>
+                placeholder="e.g. include a mediator; set it as a settlement conference before the ruling"></textarea>
       <div class="cast-toolbar" style="margin-top:.8rem">
         <label for="draft-count">Number of agents</label>
         <select id="draft-count">
           {% for n in range(2, 9) %}<option value="{{ n }}"{% if n == 2 %} selected{% endif %}>{{ n }}</option>{% endfor %}
         </select>
         <label class="check"><input type="checkbox" id="draft-replace" checked> replace the current cast</label>
+        <label class="check" id="draft-scenario-option" hidden><input type="checkbox" id="draft-scenario" checked> replace the scenario</label>
         <button type="button" class="small-btn" id="draft-btn" onclick="draftCast()">Draft cast</button>
       </div>
     </div>
@@ -205,6 +232,8 @@ function buildConfig() {
     const config = {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
                     word_limit: int('rp_words', DEFAULT_WORD_LIMIT)};
     if (val('rp_scenario').trim()) config.scenario = val('rp_scenario').trim();
+    // Where an AI-drafted cast came from, so a run can be traced back to its source.
+    if (draftedSource) config.source = draftedSource;
     config.agents = collectAgents();
     return config;
   }

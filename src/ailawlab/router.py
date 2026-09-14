@@ -212,6 +212,7 @@ class LLMRouter:
         temperature: float = 0.2,
         options: dict[str, Any] | None = None,
         format: dict[str, Any] | str | None = None,
+        timeout: float | None = None,
     ) -> LLMResult:
         """One chat completion, routed to whichever Spark frees a slot first.
 
@@ -242,7 +243,11 @@ class LLMRouter:
             host.in_flight += 1
             host.total_requests += 1
             try:
-                r = await self.client.post(f"{host.base_url}/api/chat", json=body)
+                # Long generations (an 8-agent cast from a long source) can outlast the
+                # client-wide timeout, so callers may ask for more.
+                r = await self.client.post(
+                    f"{host.base_url}/api/chat", json=body,
+                    timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout)
                 r.raise_for_status()
                 data = r.json()
             except Exception:
