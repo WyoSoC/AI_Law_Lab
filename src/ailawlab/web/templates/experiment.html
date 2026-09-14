@@ -1,43 +1,190 @@
 {% extends "base.html" %}
+{% block title %}{{ exp.name }} · AI Law Lab{% endblock %}
 {% block content %}
+{% set v = view %}
 
 <h1>{{ exp.name }}</h1>
 <p class="sub">
-  <span class="mode">{{ exp.mode.replace('_', ' ') }}</span>
-  &middot; created by {{ exp.created_by }} on {{ exp.created_at.strftime('%Y-%m-%d') }}
+  <span class="mode">{{ v.mode_label }}</span>
+  &middot; created by {{ exp.created_by }} on {{ v.created }}
 </p>
-{% if exp.description %}<p>{{ exp.description }}</p>{% endif %}
+{% if exp.description %}<p class="exp-description">{{ exp.description }}</p>{% endif %}
 
-<h2>Configuration</h2>
-<div class="panel"><pre>{{ config_pretty }}</pre></div>
+{% for r in v.active_runs %}
+<p class="notice">
+  A run is in progress: <a href="{{ prefix }}/runs/{{ r.id }}">{{ r.summary }}</a>
+  &middot; started {{ r.started }}, {{ r.took }}.
+</p>
+{% endfor %}
 
-<h2>Launch a run</h2>
 <div class="panel">
-  <form method="post" action="{{ prefix }}/experiments/{{ exp.id }}/launch">
-    <label for="inputs_json">Run inputs (JSON)</label>
-    <textarea id="inputs_json" name="inputs_json" spellcheck="false">{{ input_template }}</textarea>
-    <p class="hint">Merged over the experiment config for this run only.</p>
-    <button type="submit">Launch run</button>
-  </form>
+  <p class="mode-blurb">{{ v.blurb }}</p>
+  <div class="fact-grid">
+    {% for f in v.facts %}
+    <div class="fact">
+      <div class="fact-label">{{ f.label }}</div>
+      <div class="fact-value">{{ f.value }}</div>
+      {% if f.note %}<div class="fact-note">{{ f.note }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <details class="config-details">
+    <summary>Show the stored settings as JSON</summary>
+    <pre>{{ config_pretty }}</pre>
+  </details>
 </div>
+
+{% if exp.mode == 'roleplay' %}
+<h2>Scenario</h2>
+<div class="panel">
+  {% if v.scenario %}
+    <div class="scenario-text">{{ v.scenario }}</div>
+  {% else %}
+    <p class="empty">No default scenario: each run supplies its own.</p>
+  {% endif %}
+  {% if v.source %}
+  <div class="source-card">
+    <div class="source-label">Drafted from</div>
+    <div class="source-title">
+      {% if v.source.url %}<a href="{{ v.source.url }}" target="_blank" rel="noopener">{{ v.source.title }}</a>
+      {% else %}{{ v.source.title }}{% endif %}
+    </div>
+    {% if v.source.meta %}<div class="source-meta">{{ v.source.meta }}</div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="section-head">
+  <h2>Cast</h2>
+  {% if v.agents %}<a class="small-link" href="{{ prefix }}/experiments/{{ exp.id }}/cast.md">Download cast as an agent file</a>{% endif %}
+</div>
+{% if v.cast_errors %}
+<div class="notice bad">
+  This cast cannot run yet:
+  <ul>{% for e in v.cast_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  Create a new experiment with a complete cast.
+</div>
+{% endif %}
+{% if v.agents %}
+<div class="cast-grid">
+  {% for a in v.agents %}
+  <article class="person-card">
+    <div class="person-name">{{ a.name }}</div>
+    {% if a.role %}<div class="person-role">{{ a.role }}</div>{% endif %}
+    {% if a.goal %}
+    <div class="person-field">
+      <div class="person-label">Objective</div>
+      <div class="person-text">{{ a.goal }}</div>
+    </div>
+    {% endif %}
+    {% if a.details or a.private or a.prompt %}
+    <details class="person-more">
+      <summary>More about {{ a.name }}</summary>
+      {% for d in a.details %}
+      <div class="person-field">
+        <div class="person-label">{{ d.label }}</div>
+        {% if d.entries %}<ul class="person-list">{% for i in d.entries %}<li>{{ i }}</li>{% endfor %}</ul>
+        {% else %}<div class="person-text">{{ d.text }}</div>{% endif %}
+      </div>
+      {% endfor %}
+      {% if a.private %}
+      <div class="private-block">
+        <div class="private-head">Private <span class="hint-inline">&mdash; the other participants never see these</span></div>
+        {% for d in a.private %}
+        <div class="person-field">
+          <div class="person-label">{{ d.label }}</div>
+          <div class="person-text">{{ d.text }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if a.prompt %}
+      <div class="person-field">
+        <div class="person-label">Full prompt (advanced)</div>
+        <div class="person-text">{{ a.prompt }}</div>
+      </div>
+      {% endif %}
+    </details>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+
+<h2 id="launch">Launch a run</h2>
+<form class="panel" id="launch-form" method="post" action="{{ prefix }}/experiments/{{ exp.id }}/launch"
+      onsubmit="return finalizeLaunch()">
+  {% if exp.mode == 'roleplay' %}
+    <label for="in_scenario">Scenario for this run</label>
+    <textarea id="in_scenario" class="short tall" oninput="syncInputs()"
+              placeholder="What the exchange is about.">{{ v.scenario }}</textarea>
+    <p class="hint">Starts as the experiment's scenario. Changes apply to this run only.</p>
+    <details class="pacing">
+      <summary>Pacing for this run: up to <span id="pace-turns">{{ v.launch_defaults.max_turns }}</span> turns,
+        <span id="pace-words">{{ v.launch_defaults.word_limit }}</span> words each</summary>
+      <div class="two-col">
+        <div>
+          <label for="in_turns">Max turns</label>
+          <input type="number" id="in_turns" min="2" max="{{ limits.max_turns }}"
+                 value="{{ v.launch_defaults.max_turns }}" oninput="syncInputs()">
+        </div>
+        <div>
+          <label for="in_words">Words per turn</label>
+          <input type="number" id="in_words" min="40" max="{{ limits.word_limit }}"
+                 value="{{ v.launch_defaults.word_limit }}" oninput="syncInputs()">
+        </div>
+      </div>
+    </details>
+    <p class="estimate" id="estimate"></p>
+  {% elif exp.mode == 'document_analysis' %}
+    <label for="in_question">Question</label>
+    <textarea id="in_question" class="short" oninput="syncInputs()">What are the principal legal risks in this document?</textarea>
+    <label for="in_title">Document title</label>
+    <input type="text" id="in_title" placeholder="Master Services Agreement" oninput="syncInputs()">
+    <label for="in_text">Document text <span class="req">*</span></label>
+    <div class="load-row">
+      <input type="text" id="load-url" placeholder="Load it from a link: https://…">
+      <button type="button" class="small-btn" onclick="loadDocument('link')">Load link</button>
+      <label class="small-btn file-btn">Load a file…
+        <input type="file" id="load-file" accept=".pdf,.html,.htm,.txt,.md" hidden onchange="loadDocument('file')">
+      </label>
+    </div>
+    <textarea id="in_text" class="doc-text" placeholder="Or paste the document here." oninput="syncInputs()"></textarea>
+    <p class="hint" id="load-status"></p>
+  {% else %}
+    <label for="in_task">Task</label>
+    <textarea id="in_task" class="short tall" oninput="syncInputs()"
+              placeholder="e.g. Search the corpus and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
+  {% endif %}
+
+  <p class="launch-error" id="launch-error" hidden></p>
+  <div class="launch-row">
+    <button type="submit" class="primary" {% if v.cast_errors %}disabled{% endif %}>Launch run</button>
+    <span class="hint">Once a run starts you can leave this page; it keeps going.</span>
+  </div>
+  <details class="advanced">
+    <summary>Advanced: run inputs as JSON</summary>
+    <p class="hint">Built from the fields above and merged over the experiment's settings for
+       this run only. If you edit it here, your version is used as it is.</p>
+    <textarea id="inputs_json" name="inputs_json" spellcheck="false" oninput="rawEdited = true"></textarea>
+  </details>
+</form>
 
 <h2>Runs</h2>
 <div class="panel">
-  {% if runs %}
+  {% if v.runs %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Duration</th></tr></thead>
+      <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Time</th><th>Summary</th></tr></thead>
       <tbody>
-        {% for r in runs %}
+        {% for r in v.runs %}
         <tr>
-          <td><a href="{{ prefix }}/runs/{{ r.id }}"><code>{{ (r.id|string)[:8] }}</code></a></td>
+          <td><a href="{{ prefix }}/runs/{{ r.id }}"><code>{{ r.short }}</code></a></td>
           <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
-          <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M:%S') if r.started_at else '—' }}</td>
-          <td>
-            {%- if r.started_at and r.finished_at -%}
-              {{ '%.1fs' % (r.finished_at - r.started_at).total_seconds() }}
-            {%- else -%}—{%- endif -%}
-          </td>
+          <td class="nowrap">{{ r.started }}</td>
+          <td class="nowrap">{{ r.took }}</td>
+          <td class="run-summary">{{ r.summary }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -51,23 +198,122 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // Prefill the inputs box with the shape this mode expects.
-  const INPUT_TEMPLATES = {
-    document_analysis: {
-      document_title: "Master Services Agreement",
-      document_text: "(paste document text here, or ingest it into the corpus first)",
-      question: "What are the principal risks to the Provider in this agreement?"
-    },
-    agentic_workflow: {
-      task: "Search the corpus and summarise how Wyoming treats one-sided termination-for-convenience clauses."
-    },
-    roleplay: {
-      scenario: {{ (default_scenario or "Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law.")|tojson }}
-    }
-  };
-  const box = document.getElementById('inputs_json');
-  if (box && !box.value.trim()) {
-    box.value = JSON.stringify(INPUT_TEMPLATES["{{ exp.mode }}"] || {}, null, 2);
+const MODE = {{ exp.mode|tojson }};
+const PREFIX = "{{ prefix }}";
+const BASE = {{ view.launch_defaults|tojson }};   // `v` is set in the content block only
+const ESTIMATE = {{ estimate|tojson }};
+// Once someone edits the JSON by hand, the form stops overwriting it.
+let rawEdited = false;
+
+const $ = id => document.getElementById(id);
+function num(id, fallback) { const n = parseInt($(id).value, 10); return isNaN(n) ? fallback : n; }
+
+function buildInputs() {
+  if (MODE === "roleplay") {
+    const inputs = {scenario: $("in_scenario").value.trim()};
+    const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
+    if (turns !== BASE.max_turns) inputs.max_turns = turns;
+    if (words !== BASE.word_limit) inputs.word_limit = words;
+    return inputs;
   }
+  if (MODE === "document_analysis") {
+    const inputs = {question: $("in_question").value.trim(), document_text: $("in_text").value};
+    if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
+    return inputs;
+  }
+  return {task: $("in_task").value.trim()};
+}
+
+// Mirrors views.duration_text and roleplay_policy.estimate_run_seconds.
+function estimateSeconds(turns, words) {
+  return turns * (ESTIMATE.per_turn_s + ESTIMATE.per_1000_words_s * words / 1000) + ESTIMATE.assess_s;
+}
+function durationText(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 2) return "about a minute";
+  if (minutes < 60) return `about ${minutes} minutes`;
+  let hours = Math.floor(minutes / 60), rest = Math.round((minutes % 60) / 10) * 10;
+  if (rest === 60) { hours += 1; rest = 0; }
+  return `about ${hours} hour${hours === 1 ? "" : "s"}` + (rest ? ` ${rest} minutes` : "");
+}
+
+function syncInputs() {
+  if (MODE === "roleplay") {
+    const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
+    $("pace-turns").textContent = turns;
+    $("pace-words").textContent = words.toLocaleString();
+    $("estimate").textContent = `If it uses every turn, this run takes ${durationText(estimateSeconds(turns, words))}. `
+      + "The moderator usually ends it sooner, when the parties agree or someone walks away.";
+  }
+  if (!rawEdited) $("inputs_json").value = JSON.stringify(buildInputs(), null, 2);
+  $("launch-error").hidden = true;
+}
+
+function missingInput() {
+  const inputs = buildInputs();
+  if (MODE === "roleplay" && !inputs.scenario) return "Write a scenario for this run.";
+  if (MODE === "document_analysis" && !inputs.document_text.trim()) return "Paste the document text, or load it from a link or file.";
+  if (MODE === "agentic_workflow" && !inputs.task) return "Describe the task for this run.";
+  return "";
+}
+
+function showLaunchError(message) {
+  const box = $("launch-error");
+  box.textContent = message;
+  box.hidden = false;
+}
+
+function finalizeLaunch() {
+  const box = $("inputs_json");
+  if (!rawEdited) {
+    const problem = missingInput();
+    if (problem) { showLaunchError(problem); return false; }
+    box.value = JSON.stringify(buildInputs());
+  }
+  try {
+    const parsed = JSON.parse(box.value || "{}");
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("it must be a JSON object");
+  } catch (e) {
+    box.closest("details").open = true;
+    showLaunchError("The advanced JSON is not valid: " + e.message);
+    return false;
+  }
+  // One click, one run: a second click while the page is submitting would launch another.
+  $("launch-form").querySelector("button[type=submit]").disabled = true;
+  return true;
+}
+
+async function loadDocument(from) {
+  const status = $("load-status");
+  let request;
+  if (from === "link") {
+    const url = $("load-url").value.trim();
+    if (!url) { status.textContent = "Paste a link first."; return; }
+    request = fetch(`${PREFIX}/api/source/read`, {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({url})});
+  } else {
+    const file = $("load-file").files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file, file.name);
+    request = fetch(`${PREFIX}/api/source/read`, {method: "POST", body: form});
+  }
+  status.textContent = "Reading…";
+  try {
+    const r = await request;
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    $("in_text").value = d.text;
+    if (!$("in_title").value.trim()) $("in_title").value = d.title;
+    status.textContent = `Loaded ${d.words.toLocaleString()} words from “${d.title}”.`
+      + (d.warnings.length ? " " + d.warnings.join(" ") : "");
+    syncInputs();
+  } catch (e) {
+    status.textContent = "Could not load it: " + (e.message || e);
+  }
+  if (from === "file") $("load-file").value = "";
+}
+
+syncInputs();
 </script>
 {% endblock %}

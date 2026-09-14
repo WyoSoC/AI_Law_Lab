@@ -72,9 +72,9 @@ class Settings(BaseSettings):
     # still ends a scene early on agreement or a clear impasse, so the default is a ceiling.
     default_max_turns: int = 100
     max_turns_limit: int = 100
-    # Measured 2026-09-13: a ~1000-word gemma4 reply costs ~1.4k output tokens with thinking
-    # on (~45 s on one Spark); with the moderator and private-notes calls a turn is ~70 s,
-    # so a full 100-turn scene takes about two hours.
+    # Measured 2026-09-14 on a live run: a 1000-word turn (reply, private notes, moderator)
+    # takes roughly 26-30 s, rising as prompts grow, so a full 100-turn scene takes about an
+    # hour. graphs/roleplay_policy.ESTIMATE holds the figures the pages show.
     default_word_limit: int = 1000
     word_limit_max: int = 2000
 

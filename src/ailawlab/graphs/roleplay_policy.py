@@ -292,3 +292,17 @@ def private_briefs(agents: list[dict]) -> str:
         if any(bits):
             rows.append(f"- {a.get('name', a['id'])}: " + "; ".join(b for b in bits if b))
     return "\n".join(rows) or "(no participant had a bottom line or confidential information)"
+
+
+# Measured 2026-09-14 on a live three-agent run at 1000 words a turn: turns took 26 s early
+# and 30 s by turn 20 (reply ~17 s, private notes ~4 s, moderator ~2.5 s, plus memory and
+# database work), growing as each agent's prompt lengthens. 38 s a turn leaves room for
+# that growth. An earlier probe with several requests sharing a Spark measured ~70 s, which
+# overstated a normal run by more than half.
+ESTIMATE = {"per_turn_s": 14.0, "per_1000_words_s": 24.0, "assess_s": 60.0}
+
+
+def estimate_run_seconds(max_turns: int, word_limit: int) -> float:
+    """Wall time for a run that uses every turn -- an upper bound people can plan around."""
+    per_turn = ESTIMATE["per_turn_s"] + ESTIMATE["per_1000_words_s"] * word_limit / 1000
+    return max_turns * per_turn + ESTIMATE["assess_s"]

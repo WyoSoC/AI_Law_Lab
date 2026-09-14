@@ -114,9 +114,10 @@ before assessment, and the assessor sees each party's bottom line so it can chec
 anyone gave in past it or leaked a confidential fact.
 
 These rules, and the studies they come from, are in `graphs/roleplay_policy.py`. Defaults
-are 100 turns and 1000 words a turn. Each turn is three calls (moderator ~10 s, private
-notes ~12 s, the ~1000-word reply ~45 s), so a full scene takes about two hours; the
-moderator ends it sooner on agreement or a clear walk-away.
+are 100 turns and 1000 words a turn. Each turn is three calls; on a live run they took
+about 26-30 s together (the reply ~17 s, private notes ~4 s, the moderator ~2.5 s), rising
+as prompts grow, so a full scene takes about an hour. The moderator ends it sooner on
+agreement or a clear walk-away.
 
 ### Agent files
 

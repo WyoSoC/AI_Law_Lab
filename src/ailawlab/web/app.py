@@ -17,9 +17,11 @@ from sse_starlette.sse import EventSourceResponse
 from .. import agent_spec, cast_assistant, experiments, source_material, sources
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
+from ..graphs.roleplay_policy import ESTIMATE
 from ..rag import Corpus
 from ..router import get_router
 from ..tracing import run_metrics
+from . import views
 
 log = logging.getLogger(__name__)
 BASE = Path(__file__).parent
@@ -129,12 +131,41 @@ async def experiment_detail(request: Request, experiment_id: str):
     exp = await experiments.get_experiment(experiment_id)
     if exp is None:
         raise HTTPException(404, "no such experiment")
+    runs = await experiments.list_runs(experiment_id)
+
+    # A role-play run can take hours, so its page says how far along it is.
+    progress: dict[str, int] = {}
+    active = [str(r["id"]) for r in runs if r["status"] in ("pending", "running")]
+    if active and exp["mode"] == "roleplay":
+        rows = await fetch_all(
+            "SELECT run_id::text AS run_id, COUNT(*) AS turns FROM run_events "
+            "WHERE run_id = ANY(%s::uuid[]) AND node = 'speak' AND event_type = 'llm_call' "
+            "GROUP BY run_id", (active,))
+        progress = {r["run_id"]: r["turns"] for r in rows}
+
+    corpus_documents = None
+    if exp["mode"] != "roleplay":
+        row = await fetch_one("SELECT COUNT(*) AS n FROM documents WHERE corpus = %s",
+                              ((exp["config"] or {}).get("corpus") or "default",))
+        corpus_documents = row["n"] if row else 0
+
     return templates.TemplateResponse(request, "experiment.html", {
         "exp": exp,
-        "runs": await experiments.list_runs(experiment_id),
+        "view": views.experiment_view(exp, runs, progress, corpus_documents),
         "config_pretty": json.dumps(exp["config"], indent=2),
-        "default_scenario": (exp["config"] or {}).get("scenario", ""),
+        "estimate": ESTIMATE,
+        "limits": {"max_turns": settings.max_turns_limit, "word_limit": settings.word_limit_max},
     })
+
+
+@app.get("/experiments/{experiment_id}/cast.md")
+async def experiment_cast_file(experiment_id: str):
+    """The experiment's cast as an agent file, to reuse in another experiment."""
+    exp = await experiments.get_experiment(experiment_id)
+    agents = [a for a in ((exp or {}).get("config") or {}).get("agents") or [] if isinstance(a, dict)]
+    if not agents:
+        raise HTTPException(404, "this experiment has no cast")
+    return _markdown_download(agent_spec.to_markdown(agents), f"{exp['name']} cast")
 
 
 @app.post("/experiments/{experiment_id}/launch")
