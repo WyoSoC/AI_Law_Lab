@@ -148,14 +148,43 @@ The other sections are `Background`, `Demeanor` and `Priorities`. Only the name 
 required. Headings match case-insensitively and by common synonyms ("Goal", "Walk-away
 point", "Interests"); ids are generated from names; text before the first name or inside
 `<!-- -->` is ignored. Unrecognized sections are kept under "Additional notes" and reported,
-never dropped. The builder offers a commented blank file, bulk upload (several files, or
-several people per file), per-agent and whole-cast download, an AI-drafted cast from a
-scenario, and a cast check (rules plus an optional AI review against the scenario). The
+never dropped. The builder offers an agent file template, bulk upload (several files, or
+several people per file), per-agent and whole-cast download, "Generate cast with AI" from a
+scenario, and "Validate cast" (rules plus an optional AI review against the scenario). The
 format lives in `agent_spec.py`.
+
+### Experiment files
+
+An experiment file is an agent file with the rest of the role-play above the cast, so one
+file holds everything needed to recreate it:
+
+```markdown
+# Scenario
+A mediation session over the renewal of state gravel leases...
+
+# Settings
+Max turns: 100
+Words per turn: 1000
+
+# Source
+Title: Wyoming's high court hears arguments over gravel pit controversy
+Link: https://oilcity.news/...
+
+# Evelyn Reed
+## Role
+Mediator
+```
+
+`# Source` and a `# Cast` line before the people are optional. The same upload button takes
+both kinds of file: an agent file adds people to the cast, while an experiment file fills
+in the scenario, settings and cast (asking first if any are already filled in). Settings
+outside the builder's limits are brought within them with a note. The builder, and every
+saved role-play experiment (`/experiments/{id}/experiment.md`), can download one, and there
+is an experiment file template alongside the agent file template.
 
 ### Drafting a cast from real material
 
-"Draft with AI" can start from a web link (a news story, a court page, an opinion), an
+"Generate cast with AI" can start from a web link (a news story, a court page, an opinion), an
 uploaded PDF, HTML or text file, or pasted text instead of the scenario box. The source is
 previewed first so you can confirm the right text came through; the AI then writes the
 scenario and the cast. `source_material.py` does the reading: it picks the main article out
@@ -244,8 +273,9 @@ for agent files, moderation rules, source reading, cast drafting and the experim
 are pure and run offline:
 
 ```bash
-.venv/bin/python -m pytest -q tests/test_agent_spec.py tests/test_roleplay_policy.py \
-  tests/test_source_material.py tests/test_cast_assistant.py tests/test_experiment_page.py
+.venv/bin/python -m pytest -q tests/test_agent_spec.py tests/test_experiment_file.py \
+  tests/test_roleplay_policy.py tests/test_source_material.py tests/test_cast_assistant.py \
+  tests/test_experiment_page.py
 ```
 
 ## Configuration

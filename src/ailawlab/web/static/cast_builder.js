@@ -1,9 +1,9 @@
-// Role-play cast builder: agent cards, Markdown agent files (upload and download), AI
-// drafting, and cast checks. Loaded by new_experiment.html, which defines PREFIX and
-// syncJSON() before any of these run.
+// Role-play cast builder: agent cards, Markdown agent and experiment files (upload and
+// download), AI-generated casts, and cast validation. Loaded by new_experiment.html, which
+// defines PREFIX and syncJSON() before any of these run.
 //
-// Field names match agent_spec.py on the server, which owns the file format; this file
-// only moves agents between cards and the server's JSON.
+// Field names match agent_spec.py on the server, which owns both file formats; this file
+// only moves agents, the scenario and the settings between the page and the server's JSON.
 
 const CAST_FIELDS = [
   // [key, label, control, placeholder, group]
@@ -150,31 +150,67 @@ async function postJSON(path, body) {
 
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
+function scenarioText() { return document.getElementById("rp_scenario").value.trim(); }
+
 // ------------------------------------------------------------------ files
+
+async function readUploadedFiles(files, taken) {
+  const form = new FormData();
+  files.forEach(f => form.append("files", f, f.name));
+  form.append("taken", JSON.stringify(taken));
+  const r = await fetch(`${PREFIX}/api/agents/upload`, {method: "POST", body: form});
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.json();
+}
+
+function applyExperimentFile(d) {
+  document.querySelectorAll(".agent-card").forEach(c => c.remove());
+  document.getElementById("rp_scenario").value = d.scenario || "";
+  if (d.settings.max_turns) document.getElementById("rp_turns").value = d.settings.max_turns;
+  if (d.settings.word_limit) document.getElementById("rp_words").value = d.settings.word_limit;
+  draftedSource = d.source || null;
+  d.agents.forEach(addAgent);
+  syncJSON();
+}
 
 async function uploadAgentFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
-  const form = new FormData();
-  files.forEach(f => form.append("files", f, f.name));
-  form.append("taken", JSON.stringify(collectAgents().map(a => a.id)));
   showMessages([], `Reading ${plural(files.length, "file")}…`);
   try {
-    const r = await fetch(`${PREFIX}/api/agents/upload`, {method: "POST", body: form});
-    if (!r.ok) throw new Error(await errorText(r));
-    const d = await r.json();
-    d.agents.forEach(addAgent);
-    showMessages(d.warnings.map(message => ({level: "warning", message})),
-      `Added ${plural(d.agents.length, "agent")} from ${plural(files.length, "file")}.`);
+    let d = await readUploadedFiles(files, collectAgents().map(a => a.id));
+    if (d.experiment) {
+      const hasWork = document.querySelector(".agent-card") || scenarioText();
+      if (hasWork && !confirm("This is an experiment file. Replace the current scenario, settings "
+                              + "and cast with the ones in the file?")) {
+        showMessages([], "Nothing was changed.");
+        return;
+      }
+      // The file replaces the cast, so read it again against an empty cast: its ids should not
+      // be renamed to avoid people who are about to be removed.
+      d = await readUploadedFiles(files, []);
+      applyExperimentFile(d);
+      const parts = [d.scenario ? "the scenario" : "",
+        d.settings.max_turns ? `up to ${d.settings.max_turns} turns` : "",
+        d.settings.word_limit ? `${d.settings.word_limit.toLocaleString()} words per turn` : "",
+        plural(d.agents.length, "agent")].filter(Boolean);
+      showMessages(d.warnings.map(message => ({level: "warning", message})),
+        `Loaded the experiment file: ${parts.join(", ")}.`);
+    } else {
+      d.agents.forEach(addAgent);
+      showMessages(d.warnings.map(message => ({level: "warning", message})),
+        `Added ${plural(d.agents.length, "agent")} from ${plural(files.length, "file")}.`);
+    }
   } catch (e) {
     showMessages([{level: "error", message: String(e.message || e)}], "Upload failed.");
+  } finally {
+    document.getElementById("agent-files").value = "";
   }
-  document.getElementById("agent-files").value = "";
 }
 
-async function downloadMarkdown(agents, filename) {
+async function downloadFile(path, body, filename) {
   try {
-    const r = await postJSON("/api/agents/download", {agents, filename});
+    const r = await postJSON(path, body);
     const url = URL.createObjectURL(await r.blob());
     const link = document.createElement("a");
     link.href = url;
@@ -188,13 +224,32 @@ async function downloadMarkdown(agents, filename) {
   }
 }
 
+function experimentSlug() { return slugify(document.getElementById("name").value || "role-play"); }
+
 function downloadCast() {
   const agents = collectAgents();
   if (!agents.length) {
     showMessages([{level: "error", message: "There are no agents to download yet."}]);
     return;
   }
-  return downloadMarkdown(agents, `${slugify(document.getElementById("name").value || "role-play")}-cast`);
+  return downloadFile("/api/agents/download", {agents, filename: "cast"}, `${experimentSlug()}-cast`);
+}
+
+function downloadExperimentFile() {
+  const agents = collectAgents();
+  if (!agents.length && !scenarioText()) {
+    showMessages([{level: "error", message: "Add a scenario or an agent before downloading the experiment file."}]);
+    return;
+  }
+  const number = id => { const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? undefined : n; };
+  return downloadFile("/api/experiment-file", {
+    name: document.getElementById("name").value.trim(),
+    scenario: scenarioText(),
+    max_turns: number("rp_turns"),
+    word_limit: number("rp_words"),
+    agents,
+    source: draftedSource,
+  }, `${experimentSlug()}-experiment`);
 }
 
 function downloadAgent(card) {
@@ -203,7 +258,7 @@ function downloadAgent(card) {
     showMessages([{level: "error", message: "Give this agent a name before downloading it."}]);
     return;
   }
-  return downloadMarkdown([a], a.id);
+  return downloadFile("/api/agents/download", {agents: [a], filename: a.id}, a.id);
 }
 
 function enableDropZone() {
@@ -221,12 +276,10 @@ function enableDropZone() {
 
 // ------------------------------------------------------------------ AI help
 
-function scenarioText() { return document.getElementById("rp_scenario").value.trim(); }
-
 // A source read by /api/source/read (title, kind, url, site, published, words, text, ...),
-// kept in the page until a cast is drafted from it.
+// kept in the page until a cast is generated from it.
 let currentSource = null;
-// What the experiment records about the source its cast was drafted from (no text).
+// What the experiment records about the source its cast was generated from (no text).
 let draftedSource = null;
 
 function draftFrom() {
@@ -266,7 +319,7 @@ async function readSource(from) {
     currentSource = await (await request).json();
     renderSourcePreview(currentSource);
     showMessages(currentSource.warnings.map(message => ({level: "warning", message})),
-      `Read ${plural(currentSource.words, "word")}. Check the preview is the right material, then draft the cast.`);
+      `Read ${plural(currentSource.words, "word")}. Check the preview is the right material, then generate the cast.`);
   } catch (e) {
     showMessages([{level: "error", message: String(e.message || e)}], "The source could not be read.");
   }
@@ -297,12 +350,12 @@ async function draftCast() {
   const from = draftFrom();
   const scenario = scenarioText();
   if (from === "scenario" && !scenario) {
-    showMessages([{level: "error", message: "Describe the scenario first. The AI drafts the cast from it."}]);
+    showMessages([{level: "error", message: "Describe the scenario first. The AI generates the cast from it."}]);
     document.getElementById("rp_scenario").focus();
     return;
   }
   if (from !== "scenario" && !currentSource) {
-    showMessages([{level: "error", message: "Read the source first, so you can check what was found before drafting."}]);
+    showMessages([{level: "error", message: "Read the source first, so you can check what was found before generating."}]);
     return;
   }
   const btn = document.getElementById("draft-btn");
@@ -315,8 +368,8 @@ async function draftCast() {
   if (from === "scenario") body.scenario = scenario; else body.source = currentSource;
   btn.disabled = true;
   showMessages([], from === "scenario"
-    ? "Drafting the cast with gemma4. This usually takes one to three minutes…"
-    : "Drafting a scenario and cast from the source with gemma4. This usually takes two to four minutes…");
+    ? "Generating the cast with gemma4. This usually takes one to three minutes…"
+    : "Generating a scenario and cast from the source with gemma4. This usually takes two to four minutes…");
   try {
     const d = await (await postJSON("/api/agents/draft", body)).json();
     if (!d.agents.length) throw new Error(d.warnings[0] || "The AI did not produce any agents. Try again.");
@@ -330,13 +383,13 @@ async function draftCast() {
     syncJSON();
     const notes = d.warnings.map(message => ({level: "warning", message}));
     if (d.renamed && d.renamed.length) {
-      notes.unshift({level: "note", message: "Real names in the source were replaced before drafting: "
+      notes.unshift({level: "note", message: "Real names in the source were replaced before generating: "
         + d.renamed.map(r => `${r.real} → ${r.invented}`).join("; ") + "."});
     }
     showMessages(notes,
-      `Drafted ${d.scenario ? "a scenario and " : ""}${plural(d.agents.length, "agent")}. Read them through and change anything that does not fit before creating the experiment.`);
+      `Generated ${d.scenario ? "a scenario and " : ""}${plural(d.agents.length, "agent")}. Read them through and change anything that does not fit before creating the experiment.`);
   } catch (e) {
-    showMessages([{level: "error", message: String(e.message || e)}], "Drafting failed.");
+    showMessages([{level: "error", message: String(e.message || e)}], "Generating the cast failed.");
   }
   btn.disabled = false;
 }
@@ -348,8 +401,8 @@ async function checkCast() {
   const cards = [...document.querySelectorAll(".agent-card")];
   cards.forEach(c => c.classList.remove("has-error", "has-warning"));
   btn.disabled = true;
-  showMessages([], ai && scenario ? "Checking the cast, including an AI review against the scenario…"
-                                  : "Checking the cast…");
+  showMessages([], ai && scenario ? "Validating the cast, including an AI review against the scenario…"
+                                  : "Validating the cast…");
   try {
     const r = await postJSON("/api/agents/check", {agents: collectAgents(), scenario, ai});
     const issues = (await r.json()).issues;
@@ -362,7 +415,7 @@ async function checkCast() {
     showMessages(issues, issues.length ? `Found ${plural(issues.length, "thing")} to look at.`
                                        : "No problems found.");
   } catch (e) {
-    showMessages([{level: "error", message: String(e.message || e)}], "The check could not run.");
+    showMessages([{level: "error", message: String(e.message || e)}], "The validation could not run.");
   }
   btn.disabled = false;
 }

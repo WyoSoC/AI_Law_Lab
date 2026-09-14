@@ -307,19 +307,32 @@ async def api_agents_template():
     return _markdown_download(agent_spec.template(), "agent-template")
 
 
+@app.get("/api/experiment-file/template")
+async def api_experiment_file_template():
+    """A blank, commented experiment file: scenario, settings, and a person to copy."""
+    return _markdown_download(
+        agent_spec.experiment_template(settings.default_max_turns, settings.default_word_limit,
+                                       settings.max_turns_limit, settings.word_limit_max),
+        "experiment-template")
+
+
 @app.post("/api/agents/upload")
 async def api_agents_upload(files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
                             taken: str = Form("[]")):
-    """Read one or more agent files into agents. `taken` lists ids already in the builder,
-    so uploads never collide with agents that are already there."""
+    """Read agent or experiment files. `taken` lists ids already in the builder, so uploads
+    never collide with agents that are already there.
+
+    `experiment` says whether any file had a Scenario, Settings or Source section; if so,
+    `scenario`, `settings` (brought within the builder's limits) and `source` carry them.
+    """
     readable: list[tuple[str, str]] = []
     skipped: list[str] = []
     for f in files:
         name = f.filename or "upload"
         raw = await f.read()
         if not name.lower().endswith(AGENT_FILE_SUFFIXES):
-            skipped.append(f"{name}: skipped. Agent files must be plain text saved as .md or "
-                           ".txt (in Word, use Save As and choose Plain Text).")
+            skipped.append(f"{name}: skipped. Agent and experiment files must be plain text saved "
+                           "as .md or .txt (in Word, use Save As and choose Plain Text).")
         elif len(raw) > MAX_AGENT_FILE_BYTES:
             skipped.append(f"{name}: skipped, because it is too large to be an agent file.")
         else:
@@ -329,7 +342,12 @@ async def api_agents_upload(files: list[UploadFile] = File(...),  # noqa: B008 -
     except json.JSONDecodeError:
         taken_ids = []
     result = agent_spec.parse_files(readable, taken=taken_ids)
-    return JSONResponse({"agents": result.agents, "warnings": skipped + result.warnings})
+    run_settings, limit_warnings = agent_spec.apply_limits(
+        result.settings, settings.max_turns_limit, settings.word_limit_max)
+    return JSONResponse({"agents": result.agents,
+                         "warnings": skipped + result.warnings + limit_warnings,
+                         "experiment": result.is_experiment, "scenario": result.scenario,
+                         "settings": run_settings, "source": result.source})
 
 
 @app.post("/api/agents/download")
@@ -340,6 +358,44 @@ async def api_agents_download(request: Request):
     if not agents:
         raise HTTPException(400, "no agents to download")
     return _markdown_download(agent_spec.to_markdown(agents), body.get("filename") or "cast")
+
+
+def _experiment_file(scenario: str, raw_settings: dict, agents: list, source: object) -> str:
+    wanted = {}
+    for key in ("max_turns", "word_limit"):
+        try:
+            wanted[key] = int(raw_settings[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    run_settings, _ = agent_spec.apply_limits(wanted, settings.max_turns_limit,
+                                              settings.word_limit_max)
+    return agent_spec.to_experiment_markdown(
+        scenario or "", run_settings, [a for a in agents or [] if isinstance(a, dict)],
+        source if isinstance(source, dict) else None,
+        max_turns_limit=settings.max_turns_limit, word_limit_max=settings.word_limit_max)
+
+
+@app.post("/api/experiment-file")
+async def api_experiment_file(request: Request):
+    """A role-play being built, as one experiment file.
+    Body: {name, scenario, max_turns, word_limit, agents, source}."""
+    body = await request.json()
+    text = _experiment_file(body.get("scenario") or "", body, body.get("agents"), body.get("source"))
+    return _markdown_download(text, f"{body.get('name') or 'role-play'} experiment")
+
+
+@app.get("/experiments/{experiment_id}/experiment.md")
+async def experiment_file(experiment_id: str):
+    """A saved role-play experiment as one experiment file, to reuse or share."""
+    exp = await experiments.get_experiment(experiment_id)
+    if exp is None or exp["mode"] != "roleplay":
+        raise HTTPException(404, "no such role-play experiment")
+    config = exp["config"] or {}
+    raw_settings = {"max_turns": config.get("max_turns", settings.default_max_turns),
+                    "word_limit": config.get("word_limit", settings.default_word_limit)}
+    text = _experiment_file(config.get("scenario") or "", raw_settings, config.get("agents"),
+                            config.get("source"))
+    return _markdown_download(text, f"{exp['name']} experiment")
 
 
 @app.post("/api/agents/check")

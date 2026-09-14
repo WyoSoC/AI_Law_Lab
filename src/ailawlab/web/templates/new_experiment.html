@@ -69,15 +69,15 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <!-- ───────────── roleplay ───────────── -->
   <div class="panel mode-panel" data-mode="roleplay">
     <h2>Role-play setup</h2>
-    <p class="hint">Build the cast and pacing here. Each agent keeps its own memory, private
-       notes, and bottom line, so opposing parties never see each other's thinking.
+    <p class="hint">Build the scenario, pacing and cast here. Each agent keeps its own memory,
+       private notes, and bottom line, so opposing parties never see each other's thinking.
        <a href="{{ prefix }}/static/docs/roleplay-moderation.pdf" target="_blank" rel="noopener">How the moderator works (PDF)</a></p>
 
     <label for="rp_scenario">Scenario</label>
     <textarea id="rp_scenario" class="short" oninput="syncJSON()"
               placeholder="Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law."></textarea>
     <p class="hint">What the exchange is about. This is the default for every run (a run can
-       still use a different one), and the AI tools below draft and check the cast against it.</p>
+       still use a different one), and the AI tools below generate and validate the cast against it.</p>
 
     <div class="two-col">
       <div>
@@ -102,25 +102,29 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
     </div>
 
     <div class="cast-drop" id="cast-drop">
-      <div class="cast-toolbar">
-        <button type="button" class="small-btn"
-                onclick="document.getElementById('agent-files').click()">Upload agent files…</button>
-        <input type="file" id="agent-files" accept=".md,.markdown,.txt" multiple hidden
-               onchange="uploadAgentFiles(this.files)">
-        <button type="button" class="small-btn" onclick="downloadCast()">Download cast</button>
-        <a class="small-link" href="{{ prefix }}/api/agents/template">Blank agent file</a>
-        <button type="button" class="small-btn" onclick="toggleDraftPanel()">Draft with AI…</button>
-        <button type="button" class="small-btn" id="check-btn" onclick="checkCast()">Check cast</button>
-        <label class="check"><input type="checkbox" id="check-ai" checked> include AI review</label>
-      </div>
       <p class="drop-hint">Agent files are plain text (.md or .txt): a line with <code>#</code>
          and the person's name, then sections such as <code>## Role</code> and
          <code>## Objective</code>. Upload several files at once, or several people in one
-         file &mdash; or drop the files here. The blank agent file explains the rest.</p>
+         file &mdash; or drop the files here. The
+         <a href="{{ prefix }}/api/agents/template">Agent file template</a> explains the rest.
+         An experiment file adds <code># Scenario</code> and <code># Settings</code> above the
+         people, so the whole role-play travels as one file; uploading one fills in the
+         scenario, settings and cast (<a href="{{ prefix }}/api/experiment-file/template">Experiment file template</a>).</p>
+      <div class="cast-toolbar">
+        <button type="button" class="small-btn"
+                onclick="document.getElementById('agent-files').click()">Upload agent or experiment files…</button>
+        <input type="file" id="agent-files" accept=".md,.markdown,.txt" multiple hidden
+               onchange="uploadAgentFiles(this.files)">
+        <button type="button" class="small-btn" onclick="downloadCast()">Download cast</button>
+        <button type="button" class="small-btn" onclick="downloadExperimentFile()">Download experiment file</button>
+        <button type="button" class="small-btn" onclick="toggleDraftPanel()">Generate cast with AI…</button>
+        <button type="button" class="small-btn" id="check-btn" onclick="checkCast()">Validate cast</button>
+        <label class="check"><input type="checkbox" id="check-ai" checked> include AI review</label>
+      </div>
     </div>
 
     <div class="draft-panel" id="draft-panel" hidden>
-      <label>Draft from</label>
+      <label>Generate from</label>
       <div class="source-choice">
         <label class="check"><input type="radio" name="draft-from" value="scenario" checked onchange="showDraftSource()"> the scenario above</label>
         <label class="check"><input type="radio" name="draft-from" value="link" onchange="showDraftSource()"> a web link</label>
@@ -156,7 +160,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
         </select>
         <label class="check"><input type="checkbox" id="draft-replace" checked> replace the current cast</label>
         <label class="check" id="draft-scenario-option" hidden><input type="checkbox" id="draft-scenario" checked> replace the scenario</label>
-        <button type="button" class="small-btn" id="draft-btn" onclick="draftCast()">Draft cast</button>
+        <button type="button" class="small-btn" id="draft-btn" onclick="draftCast()">Generate cast</button>
       </div>
     </div>
 
@@ -234,7 +238,7 @@ function buildConfig() {
     const config = {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
                     word_limit: int('rp_words', DEFAULT_WORD_LIMIT)};
     if (val('rp_scenario').trim()) config.scenario = val('rp_scenario').trim();
-    // Where an AI-drafted cast came from, so a run can be traced back to its source.
+    // Where an AI-generated cast came from, so a run can be traced back to its source.
     if (draftedSource) config.source = draftedSource;
     config.agents = collectAgents();
     return config;

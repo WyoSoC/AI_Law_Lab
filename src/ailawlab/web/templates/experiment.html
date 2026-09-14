@@ -57,7 +57,10 @@
 
 <div class="section-head">
   <h2>Cast</h2>
-  {% if v.agents %}<a class="small-link" href="{{ prefix }}/experiments/{{ exp.id }}/cast.md">Download cast as an agent file</a>{% endif %}
+  <span class="section-links">
+    <a class="small-link" href="{{ prefix }}/experiments/{{ exp.id }}/experiment.md">Download experiment file</a>
+    {% if v.agents %}&middot; <a class="small-link" href="{{ prefix }}/experiments/{{ exp.id }}/cast.md">Download cast as an agent file</a>{% endif %}
+  </span>
 </div>
 {% if v.cast_errors %}
 <div class="notice bad">

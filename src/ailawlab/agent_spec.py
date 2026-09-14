@@ -1,7 +1,7 @@
-"""Agent specification files: plain Markdown that a lawyer can edit in any text editor.
+"""Agent and experiment files: plain Markdown that a lawyer can edit in any text editor.
 
-A file holds one agent or a whole cast. Each agent starts at a top-level heading with the
-person's name, and each part of the character is a second-level heading under it:
+An agent file holds one agent or a whole cast. Each agent starts at a top-level heading with
+the person's name, and each part of the character is a second-level heading under it:
 
     # Dana Reyes
 
@@ -11,6 +11,25 @@ person's name, and each part of the character is a second-level heading under it
     ## Tendencies
     - Anchors hard early
     - Reframes every risk as a dollar figure
+
+An experiment file is the same kind of file with the rest of a role-play above the cast,
+under reserved top-level headings, so a whole role-play can be saved, shared and uploaded
+again as one file:
+
+    # Scenario
+    A mediation over the renewal of state gravel leases...
+
+    # Settings
+    Max turns: 100
+    Words per turn: 1000
+
+    # Dana Reyes
+    ...
+
+"# Source" may record where the scenario came from and "# Cast" may introduce the people;
+both are optional. Every agent file is also a valid upload wherever experiment files are
+accepted: the reader tells them apart by whether a Scenario, Settings or Source section
+appears.
 
 The people writing these files are lawyers, not programmers, so the format asks for no
 syntax beyond `#` and `-`, and the reader is deliberately forgiving: headings match
@@ -111,6 +130,25 @@ their name. Under the name, fill in the sections that start with "## ".
 Save as plain text (.md or .txt) and upload it on the New experiment page.
 -->"""
 
+EXPERIMENT_INTRO = """<!--
+HOW TO USE THIS FILE
+
+This file holds a whole role-play: the scenario, its settings, and the cast.
+
+  - Under "# Scenario", describe what the exchange is about, in plain paragraphs.
+  - Under "# Settings", keep the lines "Max turns:" and "Words per turn:" and change only
+    the numbers. Max turns can be 2 to {max_turns_limit}; words per turn 40 to {word_limit_max}.
+  - "# Source" is optional. It records the article or document the scenario came from.
+  - Then describe each person under a line that starts with "# " followed by their name,
+    with sections that start with "## ", exactly as in an agent file.
+  - "Bottom line" and "Confidential information" are private. The other people in the
+    role-play never see them.
+  - Anything between these arrow markers is instructions and is ignored, like this
+    whole paragraph. You can delete it.
+
+Save as plain text (.md or .txt) and upload it on the New experiment page.
+-->"""
+
 
 def _norm(label: str) -> str:
     """Heading text reduced to a lookup key: 'Walk-away point (private):' -> 'walk away point'."""
@@ -123,6 +161,29 @@ for _s in SECTIONS:
     for _label in (_s.heading, _s.key.replace("_", " "), *_s.synonyms):
         _BY_LABEL.setdefault(_norm(_label), _s)
 _LIST_KEYS = {s.key for s in SECTIONS if s.is_list}
+
+# Top-level headings that belong to the experiment rather than naming a person.
+_RESERVED = {
+    "scenario": "scenario", "the scenario": "scenario",
+    "settings": "settings", "role play settings": "settings", "roleplay settings": "settings",
+    "experiment settings": "settings", "pacing": "settings",
+    "source": "source", "drafted from": "source", "source material": "source",
+    "cast": "cast", "the cast": "cast", "participants": "cast", "agents": "cast",
+}
+_SETTING_KEYS = {
+    "max turns": "max_turns", "maximum turns": "max_turns", "turn limit": "max_turns",
+    "maximum number of turns": "max_turns", "turns": "max_turns",
+    "words per turn": "word_limit", "max words per turn": "word_limit",
+    "maximum words per turn": "word_limit", "word limit": "word_limit", "words": "word_limit",
+}
+_SOURCE_KEYS = {
+    "title": "title", "link": "url", "url": "url", "web address": "url", "address": "url",
+    "site": "site", "website": "site", "publisher": "site", "published": "published",
+    "publication date": "published", "date published": "published", "retrieved": "retrieved_at",
+    "read": "retrieved_at", "accessed": "retrieved_at", "date read": "retrieved_at",
+    "words": "words", "kind": "kind", "type": "kind", "shortened": "truncated",
+    "truncated": "truncated", "sha 256": "sha256", "sha256": "sha256", "fingerprint": "sha256",
+}
 
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # A space (or a letter) must follow the hash, so a line such as "#1 concern is cost" inside
@@ -223,6 +284,10 @@ def assign_ids(agents: list[dict], taken: Iterable[str] = ()) -> list[str]:
 class ParseResult:
     agents: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    scenario: str = ""
+    settings: dict[str, int] = field(default_factory=dict)   # max_turns, word_limit
+    source: dict | None = None
+    is_experiment: bool = False     # the file had a Scenario, Settings or Source section
 
 
 class _Reader:
@@ -236,6 +301,13 @@ class _Reader:
         self.heading: str | None = None    # current "##" section; None directly under the name
         self.lines: list[str] = []
         self.loose: list[str] = []
+        # Experiment sections: which reserved block is open, and what has been read from them.
+        self.block: str | None = None
+        self.block_lines: list[str] = []
+        self.scenario = ""
+        self.settings: dict[str, int] = {}
+        self.source_info: dict = {}
+        self.is_experiment = False
 
     def warn(self, message: str) -> None:
         self.warnings.append(f"{self.source}: {message}")
@@ -243,7 +315,17 @@ class _Reader:
     def feed(self, raw: str) -> None:
         if m := _H1.match(raw):
             self.finish_agent()
-            self.start_agent(_inline(m.group(1)))
+            self.finish_block()
+            heading = _inline(m.group(1))
+            block = _RESERVED.get(_norm(heading))
+            if block:
+                self.block = block
+                self.is_experiment = self.is_experiment or block != "cast"
+            else:
+                self.start_agent(heading)
+            return
+        if self.block is not None:
+            self.block_lines.append(raw)
             return
         if self.agent is None:
             return                          # before the first name: the file's own notes
@@ -263,6 +345,68 @@ class _Reader:
                 self.loose.append(raw)
             return
         self.lines.append(raw)
+
+    # ------------------------------------------------------------ experiment sections
+
+    def finish_block(self) -> None:
+        lines = ["" if _RULE.match(line) else line for line in self.block_lines]
+        if self.block == "scenario" and (text := _text(lines)):
+            if self.scenario:
+                self.warn('there is more than one "# Scenario" section; all of them were kept.')
+                self.scenario = f"{self.scenario}\n\n{text}"
+            else:
+                self.scenario = text
+        elif self.block == "settings":
+            self.read_settings(lines)
+        elif self.block == "source":
+            self.read_source(lines)
+        self.block, self.block_lines = None, []
+
+    def _label_lines(self, lines: list[str], section: str):
+        for raw in lines:
+            line = raw.strip()
+            if not line:
+                continue
+            if m := _BULLET.match(line):
+                line = m.group(1)
+            label = _LABEL_LINE.match(line)
+            if not label:
+                self.warn(f'the "# {section}" section has a line that could not be read: '
+                          f'"{line}". Write each line as a name, a colon and a value.')
+                continue
+            yield label.group(1).strip(), label.group(2).strip()
+
+    def read_settings(self, lines: list[str]) -> None:
+        for label, value in self._label_lines(lines, "Settings"):
+            key = _SETTING_KEYS.get(_norm(label))
+            if key is None:
+                self.warn(f'"{label}" is not a setting this app knows, so it was ignored. The '
+                          'settings are "Max turns" and "Words per turn".')
+                continue
+            number = re.search(r"\d[\d,]*", value)
+            if not number:
+                self.warn(f'"{label}" needs a number, for example "{label}: 100".')
+                continue
+            self.settings[key] = int(number.group(0).replace(",", ""))
+
+    def read_source(self, lines: list[str]) -> None:
+        for label, value in self._label_lines(lines, "Source"):
+            key = _SOURCE_KEYS.get(_norm(label))
+            if key is None:
+                self.warn(f'"{label}" is not something the Source section records, so it was '
+                          'ignored. Use Title, Link, Site, Published or Retrieved.')
+            elif key == "url" and not re.match(r"^https?://", value, re.IGNORECASE):
+                self.warn(f'the source link "{value}" is not a web address starting with '
+                          "http:// or https://, so it was left out.")
+            elif key == "words":
+                if number := re.search(r"\d[\d,]*", value):
+                    self.source_info["words"] = int(number.group(0).replace(",", ""))
+            elif key == "truncated":
+                self.source_info["truncated"] = value.strip().lower() in ("yes", "true", "y")
+            else:
+                self.source_info[key] = value
+
+    # ------------------------------------------------------------ people
 
     def start_agent(self, name: str) -> None:
         if not name:
@@ -383,14 +527,19 @@ def promote_name_lines(text: str) -> str:
 
 
 def parse_markdown(text: str, source: str = "file", taken: Iterable[str] = ()) -> ParseResult:
-    """Read every agent in one file. `taken` holds ids already used elsewhere in the cast."""
+    """Read every agent, and any experiment sections, in one file.
+
+    `taken` holds ids already used elsewhere in the cast.
+    """
     reader = _Reader(source)
     text = _COMMENT.sub("", text.lstrip("﻿")).replace("\r\n", "\n").replace("\r", "\n")
     text = promote_name_lines(text)
     for line in text.split("\n"):
         reader.feed(line)
     reader.finish_agent()
-    result = ParseResult(reader.agents, reader.warnings)
+    reader.finish_block()
+    result = ParseResult(reader.agents, reader.warnings, reader.scenario, reader.settings,
+                         reader.source_info or None, reader.is_experiment)
     if not result.agents:
         result.warnings.append(f'{source}: no agents found. Each person must start on a line '
                                'like "# Dana Reyes".')
@@ -399,7 +548,11 @@ def parse_markdown(text: str, source: str = "file", taken: Iterable[str] = ()) -
 
 
 def parse_files(files: Iterable[tuple[str, str]], taken: Iterable[str] = ()) -> ParseResult:
-    """Read several uploaded files as one cast, keeping ids unique across all of them."""
+    """Read several uploaded files as one cast, keeping ids unique across all of them.
+
+    The scenario, settings and source come from the first experiment file; any later one
+    only contributes its people, and says so.
+    """
     combined = ParseResult()
     used = set(taken)
     for name, text in files:
@@ -407,7 +560,35 @@ def parse_files(files: Iterable[tuple[str, str]], taken: Iterable[str] = ()) -> 
         combined.agents += r.agents
         combined.warnings += r.warnings
         used |= {a["id"] for a in r.agents}
+        if not r.is_experiment:
+            continue
+        if combined.is_experiment:
+            combined.warnings.append(f"{name}: an experiment file was already read, so this "
+                                     "file's scenario and settings were ignored; its people "
+                                     "were added to the cast.")
+        else:
+            combined.is_experiment = True
+            combined.scenario, combined.settings, combined.source = r.scenario, r.settings, r.source
     return combined
+
+
+def apply_limits(settings: dict[str, int], max_turns_limit: int,
+                 word_limit_max: int) -> tuple[dict[str, int], list[str]]:
+    """Settings brought within the ranges the builder allows, with a note for each change."""
+    bounds = {"max_turns": (2, max_turns_limit, "Max turns"),
+              "word_limit": (40, word_limit_max, "Words per turn")}
+    out: dict[str, int] = {}
+    warnings: list[str] = []
+    for key, value in settings.items():
+        if key not in bounds:
+            continue
+        low, high, label = bounds[key]
+        clamped = max(low, min(int(value), high))
+        if clamped != value:
+            warnings.append(f"{label} must be between {low} and {high:,}, so {value:,} was "
+                            f"changed to {clamped:,}.")
+        out[key] = clamped
+    return out, warnings
 
 
 def _escape(text: str) -> str:
@@ -435,13 +616,57 @@ def to_markdown(agents: list[dict]) -> str:
     return "\n\n\n".join(blocks) + "\n"
 
 
-def template() -> str:
-    """A blank, commented file to fill in."""
-    parts = [TEMPLATE_INTRO, "", "# Full name of the person"]
+_SOURCE_LINES = (("title", "Title"), ("kind", "Kind"), ("url", "Link"), ("site", "Site"),
+                 ("published", "Published"), ("retrieved_at", "Retrieved"), ("words", "Words"),
+                 ("truncated", "Shortened"), ("sha256", "SHA-256"))
+
+
+def to_experiment_markdown(scenario: str, settings: dict[str, int], agents: list[dict],
+                           source: dict | None = None, max_turns_limit: int = 100,
+                           word_limit_max: int = 2000) -> str:
+    """Write a whole role-play as one file. parse_markdown reads it back unchanged."""
+    parts = [EXPERIMENT_INTRO.format(max_turns_limit=max_turns_limit,
+                                     word_limit_max=f"{word_limit_max:,}"),
+             "", "# Scenario",
+             _escape(scenario.strip()) if scenario.strip()
+             else "<!-- What the exchange is about: the dispute, the parties, and what this "
+                  "meeting is meant to settle. -->",
+             "", "# Settings"]
+    if "max_turns" in settings:
+        parts.append(f"Max turns: {settings['max_turns']}")
+    if "word_limit" in settings:
+        parts.append(f"Words per turn: {settings['word_limit']}")
+    if source and (source.get("title") or source.get("url")):
+        parts += ["", "# Source"]
+        for key, label in _SOURCE_LINES:
+            value = source.get(key)
+            if isinstance(value, bool):
+                value = "yes" if value else "no"
+            if value not in (None, ""):
+                parts.append(f"{label}: {' '.join(str(value).split())}")
+    text = "\n".join(parts) + "\n"
+    return f"{text}\n\n{to_markdown(agents)}" if agents else text
+
+
+def _agent_template_lines() -> list[str]:
+    lines = ["# Full name of the person"]
     for s in SECTIONS:
         if s.in_template:
-            parts += ["", f"## {s.heading}", f"<!-- {s.hint} -->"]
-    return "\n".join(parts) + "\n"
+            lines += ["", f"## {s.heading}", f"<!-- {s.hint} -->"]
+    return lines
+
+
+def template() -> str:
+    """A blank, commented agent file to fill in."""
+    return "\n".join([TEMPLATE_INTRO, "", *_agent_template_lines()]) + "\n"
+
+
+def experiment_template(max_turns: int = 100, word_limit: int = 1000, max_turns_limit: int = 100,
+                        word_limit_max: int = 2000) -> str:
+    """A blank, commented experiment file: scenario, settings, and one person to copy."""
+    head = to_experiment_markdown("", {"max_turns": max_turns, "word_limit": word_limit}, [],
+                                  max_turns_limit=max_turns_limit, word_limit_max=word_limit_max)
+    return head + "\n\n" + "\n".join(_agent_template_lines()) + "\n"
 
 
 def check_cast(agents: list[dict]) -> list[dict]:
