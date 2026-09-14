@@ -147,7 +147,7 @@ def test_a_file_without_names_says_how_to_fix_it():
 
 def test_download_then_upload_gives_back_the_same_agents():
     agents = [
-        {"id": "provider", "name": "Dana Reyes", "role": "Lead counsel", "goal": "Cap it.",
+        {"id": "dana-reyes", "name": "Dana Reyes", "role": "Lead counsel", "goal": "Cap it.",
          "backstory": "First paragraph.\n\n# Not a heading\n---\n**Role**",
          "tendencies": ["Anchors", "Bluffs"], "bottom_line": "24 months.",
          "confidential": "Insurer refused.", "notes": "Leverage: none."},
@@ -156,6 +156,14 @@ def test_download_then_upload_gives_back_the_same_agents():
     r = parse_markdown(to_markdown(agents))
     assert r.warnings == []
     assert r.agents == agents
+
+
+def test_downloads_leave_out_ids_but_uploads_still_read_them():
+    text = to_markdown([{"id": "provider", "name": "Dana Reyes", "role": "Lead counsel"}])
+    assert "Short id" not in text and "provider" not in text
+    assert parse_markdown(text).agents[0]["id"] == "dana-reyes"
+    r = parse_markdown("# Dana Reyes\n\n## Short id\nprovider\n")
+    assert r.warnings == [] and r.agents[0]["id"] == "provider"
 
 
 def test_ids_come_from_names_and_never_collide():

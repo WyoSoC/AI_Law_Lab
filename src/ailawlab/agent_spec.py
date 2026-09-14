@@ -600,7 +600,12 @@ def _escape(text: str) -> str:
 
 
 def to_markdown(agents: list[dict]) -> str:
-    """Write agents in the standard layout. parse_markdown reads the result back unchanged."""
+    """Write agents in the standard layout.
+
+    Ids are left out: reading a file makes a unique id for every agent from its name, so
+    a "Short id" section would only show lawyers plumbing they never need to edit.
+    parse_markdown reads everything else back unchanged.
+    """
     blocks: list[str] = []
     for raw in agents:
         a = normalize_agent(raw)
@@ -608,7 +613,7 @@ def to_markdown(agents: list[dict]) -> str:
         lines = [f"# {name}"]
         for s in SECTIONS:
             value = a.get(s.key)
-            if not value or (s.key == "id" and value == slugify(name)):
+            if not value or s.key == "id":
                 continue
             body = "\n".join(f"- {item}" for item in value) if s.is_list else _escape(str(value))
             lines += ["", f"## {s.heading}", body]
