@@ -35,23 +35,24 @@
     <div class="feature">
       <div class="feature-icon">📄</div>
       <h3>Document analysis</h3>
-      <p>Plan a reading of a contract or opinion, retrieve grounded passages with page
-         anchors, and produce an answer whose every claim is traceable to a citation a
-         human can open.</p>
+      <p>Break a question about a contract or opinion into sub-questions, answer each from
+         the document, and ground the answer in the corpus with numbered citations that are
+         checked afterwards &mdash; an invented citation is flagged, not hidden.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">🛠️</div>
       <h3>Agentic workflows</h3>
-      <p>A tool-using loop that can search the corpus, do damages arithmetic, and &mdash;
-         when explicitly enabled &mdash; reach the live legal databases, with every tool
-         call recorded for audit.</p>
+      <p>A tool-using loop that plans, searches the corpus and does damages arithmetic until
+         it can answer, with every tool call recorded for audit.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">⚖️</div>
       <h3>Multi-agent role-play</h3>
-      <p>Stand up opposing counsel as distinct agents, each with its own backstory,
-         temperament and private memory, and watch a negotiation or hearing play out turn
-         by turn, then get it assessed.</p>
+      <p>Stage a negotiation, mediation or hearing between agents that each have a background,
+         a temperament, a private bottom line and confidential facts. A moderator keeps turns
+         fair and steps in when talks stall; an evaluator assesses the outcome. Draft a cast
+         from a news story or opinion, or upload agent files written in plain Markdown.</p>
+      <p><a href="{{ prefix }}/static/docs/roleplay-moderation.pdf">How the moderator works (PDF)</a></p>
     </div>
     <div class="feature">
       <div class="feature-icon">🗂️</div>
@@ -98,9 +99,11 @@
     <li><strong>Gather sources.</strong> Upload documents or search the online legal
         databases and ingest the results you want, grouped by topic.</li>
     <li><strong>Design an experiment.</strong> Pick a mode and configure it through the
-        builder &mdash; no JSON required &mdash; then save it.</li>
-    <li><strong>Launch a run.</strong> Provide the run's inputs; work is dispatched across
-        the Spark cluster and streamed back live as a trace.</li>
+        builder &mdash; no JSON required &mdash; then save it. For a role-play, write the
+        cast, upload agent files, or let the AI draft one from a link, file or pasted text.</li>
+    <li><strong>Launch a run.</strong> Fill in the run's inputs on the experiment page, which
+        also says how long a role-play can take; work is dispatched across the Spark cluster
+        and streamed back live as a trace.</li>
     <li><strong>Read the result.</strong> Every run keeps its config snapshot, citations,
         per-host timing and full event log, so it can be compared or reproduced later.</li>
   </ol>
@@ -108,6 +111,22 @@
     Runs execute real language-model calls against shared research hardware. Please be
     considerate of others using the cluster.
   </p>
+</section>
+
+<section>
+  <h2>Method notes</h2>
+  <ul class="method-notes">
+    <li>
+      <div class="method-title">Moderating Multi-Agent Legal Role-Play with a Small Local Language Model</div>
+      <div class="method-meta">Jian Gong, AI Law Lab &middot; method note, September 2026 &middot;
+        <a href="{{ prefix }}/static/docs/roleplay-moderation.pdf">PDF</a> &middot;
+        <a href="{{ prefix }}/static/docs/roleplay-moderation.docx">Word</a></div>
+      <p class="method-blurb">How the role-play moderator chooses speakers, detects and breaks
+         impasses, and decides when a scene is over; what each participant is allowed to see;
+         the research each rule rests on; and what a live 24-turn mediation showed about where
+         it still falls short.</p>
+    </li>
+  </ul>
 </section>
 
 {% endblock %}

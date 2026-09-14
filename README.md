@@ -94,8 +94,8 @@ recorded as `unsupported` rather than dropped — catching fabrication is the po
 
 **`agentic_workflow`** — a ReAct loop over gemma4's native function calling. Tools arrive
 as structured `message.tool_calls`, not scraped JSON. Built-in tools are corpus search and
-a safe arithmetic evaluator; network-touching tools are opt-in per experiment via
-`allow_network`.
+a safe arithmetic evaluator. Network-touching tools would be opt-in per experiment via
+`allow_network`, but none are installed yet, so that switch currently changes nothing.
 
 **`roleplay`** — several agents with distinct roles, goals, and **private memory scoped to
 `(run_id, agent_id)`**. A moderator picks the next speaker or ends the scene; an evaluator
@@ -206,20 +206,30 @@ an experiment later never rewrites the conditions a past result was produced und
 
 ```
 src/ailawlab/
-  config.py       settings (env / .env)
-  router.py       bounded-queue LLM router across the Sparks
-  db.py           async Postgres pool + pgvector binding
-  memory.py       two-tier agent memory
-  rag.py          corpus ingestion and grounded retrieval
-  tools.py        tool registry for agentic workflows
-  tracing.py      trace writer + run metrics
-  experiments.py  experiment/run lifecycle
-  graphs/         LangGraph definitions per mode
-  web/            FastAPI app, templates, static
-db/schema.sql     Postgres schema
-scripts/          benchmark and utilities
-tests/            integration tests against real hardware
+  config.py            settings (env / .env)
+  router.py            bounded-queue LLM router across the Sparks
+  db.py                async Postgres pool + pgvector binding
+  memory.py            two-tier agent memory
+  rag.py               corpus ingestion and grounded retrieval
+  sources.py           online legal databases (CourtListener, Federal Register, eCFR, govinfo, EDGAR)
+  source_material.py   reading a web page, PDF or text to draft a cast from
+  agent_spec.py        Markdown agent files: reading, writing, cast checks
+  cast_assistant.py    AI-drafted casts, real-name replacement, AI cast review
+  tools.py             tool registry for agentic workflows
+  tracing.py           trace writer + run metrics
+  experiments.py       experiment/run lifecycle
+  graphs/              LangGraph definitions per mode; roleplay_policy.py holds the moderation rules
+  web/                 FastAPI app, page views (views.py), templates, static
+db/schema.sql          Postgres schema
+docs/                  method notes and the script that builds them
+scripts/               benchmark and utilities
+tests/                 offline unit tests and integration tests against real hardware
 ```
+
+The role-play moderation logic is written up as a short method note with references:
+[`src/ailawlab/web/static/docs/roleplay-moderation.pdf`](src/ailawlab/web/static/docs/roleplay-moderation.pdf)
+(also as Word), linked from the web portal's About page and from each role-play experiment.
+`docs/roleplay-moderation/build.py` regenerates both files.
 
 ## Tests
 
@@ -229,11 +239,13 @@ tests/            integration tests against real hardware
 
 The graph and router tests hit the real Sparks and a real Postgres — they are integration
 tests by design, since the failures worth catching here (admission control, pgvector
-binding, tool dispatch, memory scoping) are exactly the ones a mock would hide.
-`test_agent_spec.py` and `test_roleplay_policy.py` are pure and run offline:
+binding, tool dispatch, memory scoping) are exactly the ones a mock would hide. The tests
+for agent files, moderation rules, source reading, cast drafting and the experiment page
+are pure and run offline:
 
 ```bash
-.venv/bin/python -m pytest -q tests/test_agent_spec.py tests/test_roleplay_policy.py
+.venv/bin/python -m pytest -q tests/test_agent_spec.py tests/test_roleplay_policy.py \
+  tests/test_source_material.py tests/test_cast_assistant.py tests/test_experiment_page.py
 ```
 
 ## Configuration

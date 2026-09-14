@@ -226,7 +226,7 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
                   "think-then-act cycles before it must answer"),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
-                  "live legal-database lookups during a run"),
+                  "none are installed yet, so the agent uses corpus search either way"),
         ]
     view.update(facts=facts, launch_defaults={})
     return view

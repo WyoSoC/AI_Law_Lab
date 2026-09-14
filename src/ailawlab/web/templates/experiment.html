@@ -18,7 +18,8 @@
 {% endfor %}
 
 <div class="panel">
-  <p class="mode-blurb">{{ v.blurb }}</p>
+  <p class="mode-blurb">{{ v.blurb }}
+    {% if exp.mode == 'roleplay' %}<a href="{{ prefix }}/static/docs/roleplay-moderation.pdf" target="_blank" rel="noopener">How the moderator works (PDF)</a>{% endif %}</p>
   <div class="fact-grid">
     {% for f in v.facts %}
     <div class="fact">
