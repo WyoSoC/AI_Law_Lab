@@ -15,7 +15,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import agent_spec, cast_assistant, experiments, rag, source_material, sources, web_links
+from .. import (
+    agent_spec,
+    cast_assistant,
+    citations,
+    experiments,
+    rag,
+    source_material,
+    sources,
+    web_links,
+)
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..graphs.roleplay_policy import ESTIMATE
@@ -170,7 +179,8 @@ async def empty_trash():
 
 @app.get("/experiments/new", response_class=HTMLResponse)
 async def new_experiment_form(request: Request):
-    corpora = await fetch_all("SELECT DISTINCT corpus FROM documents ORDER BY corpus")
+    corpora = await fetch_all("SELECT DISTINCT corpus FROM documents WHERE removed_at IS NULL "
+                              "ORDER BY corpus")
     return templates.TemplateResponse(request, "new_experiment.html", {
         "modes": experiments.MODES,
         "corpora": [c["corpus"] for c in corpora],
@@ -204,6 +214,18 @@ async def create_experiment(
     return RedirectResponse(f"{P}/experiments/{exp['id']}", status_code=303)
 
 
+async def _library_versions() -> dict[str, list[dict]]:
+    """Every library's versions, newest first, for the launch form's version picker."""
+    rows = await fetch_all("SELECT corpus, version, cardinality(document_ids) AS documents, created_at "
+                           "FROM corpus_versions ORDER BY corpus, version DESC")
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["corpus"], []).append(
+            {"version": r["version"], "documents": r["documents"],
+             "date": f"{r['created_at']:%b} {r['created_at'].day}, {r['created_at']:%Y}"})
+    return out
+
+
 @app.get("/experiments/{experiment_id}", response_class=HTMLResponse)
 async def experiment_detail(request: Request, experiment_id: str):
     exp = await experiments.get_experiment(_experiment_id(experiment_id))
@@ -223,7 +245,8 @@ async def experiment_detail(request: Request, experiment_id: str):
 
     corpus_documents = None
     if exp["mode"] != "roleplay":
-        row = await fetch_one("SELECT COUNT(*) AS n FROM documents WHERE corpus = %s",
+        row = await fetch_one("SELECT COUNT(*) AS n FROM documents WHERE corpus = %s "
+                              "AND removed_at IS NULL",
                               ((exp["config"] or {}).get("corpus") or "default",))
         corpus_documents = row["n"] if row else 0
 
@@ -234,6 +257,7 @@ async def experiment_detail(request: Request, experiment_id: str):
         "estimate": ESTIMATE,
         "limits": {"max_turns": settings.max_turns_limit, "word_limit": settings.word_limit_max},
         "corpora": [c["corpus"] for c in await rag.list_corpora()],
+        "library_versions": await _library_versions(),
     })
 
 
@@ -308,14 +332,60 @@ def _corpus_url(name: str) -> str:
 @app.get("/sources/corpora/{name}", response_class=HTMLResponse)
 async def corpus_page(request: Request, name: str):
     documents = await rag.corpus_documents(name)
-    if not documents:
-        raise HTTPException(404, f"There is no corpus named {name!r}.")
+    versions = await rag.list_versions(name)
+    if not documents and not versions:
+        raise HTTPException(404, f"There is no library named “{name}”.")
+    if documents and (not versions or sorted(versions[0]["document_ids"]) != sorted(d["id"] for d in documents)):
+        # Changed some other way since the last version (the command line, or before
+        # libraries were versioned): record it now, so what the page shows has a number.
+        await rag.record_version(name)
+        versions = await rag.list_versions(name)
     return templates.TemplateResponse(request, "corpus.html", {
         "name": name,
         "documents": documents,
         "chunks": sum(d["chunk_count"] for d in documents),
         "experiments": await rag.corpus_experiments(name),
+        "versions": versions,
+        "citations": citations.citation_list(documents),
     })
+
+
+@app.get("/sources/corpora/{name}/versions/{version}", response_class=HTMLResponse)
+async def corpus_version_page(request: Request, name: str, version: int):
+    v = await rag.get_version(name, version)
+    if v is None:
+        raise HTTPException(404, f"The library “{name}” has no version {version}.")
+    documents = await rag.corpus_documents(ids=list(v["document_ids"]))
+    latest = await rag.latest_version(name)
+    runs = await fetch_all(
+        "SELECT r.id, r.status, r.created_at, e.name AS experiment_name, e.id AS experiment_id "
+        "FROM runs r JOIN experiments e ON e.id = r.experiment_id "
+        "WHERE r.corpus=%s AND r.corpus_version=%s ORDER BY r.created_at DESC", (name, version))
+    return templates.TemplateResponse(request, "corpus_version.html", {
+        "name": name, "v": v, "latest": latest["version"] if latest else None,
+        "documents": documents, "runs": runs,
+        "citations": citations.citation_list(documents),
+    })
+
+
+@app.get("/sources/corpora/{name}/citations.txt")
+async def corpus_citations(name: str, version: int | None = None):
+    """A library's citation list as plain text: its current documents, or a version's."""
+    if version is not None:
+        v = await rag.get_version(name, version)
+        if v is None:
+            raise HTTPException(404, f"The library “{name}” has no version {version}.")
+        documents = await rag.corpus_documents(ids=list(v["document_ids"]))
+        label = f"version {version}"
+    else:
+        documents = await rag.corpus_documents(name)
+        latest = await rag.latest_version(name)
+        label = f"version {latest['version']}" if latest else "current contents"
+    text = citations.as_text(citations.citation_list(documents),
+                             f"Citation list: {name} ({label}), AI Law Lab")
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{name} {label} citations").strip("-.")
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'})
 
 
 @app.get("/api/sources/corpora/{name}/search")
@@ -334,12 +404,13 @@ async def corpus_delete(name: str, confirm_name: str = Form("")):
     if confirm_name.strip() != name:
         return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
             "The name you typed did not match, so nothing was deleted."), status_code=303)
+    # Deleting a library takes its versions with it, so past runs can no longer be repeated.
     try:
         n = await rag.delete_corpus(name)
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
     return RedirectResponse(f"{P}/sources?msg=" + quote(
-        f"Deleted the corpus “{name}” and its {n} document{'' if n == 1 else 's'}."),
+        f"Deleted the library “{name}”, its {n} document{'' if n == 1 else 's'} and all its versions."),
         status_code=303)
 
 
@@ -348,8 +419,15 @@ async def document_page(request: Request, document_id: int):
     doc = await rag.get_document(document_id)
     if doc is None:
         raise HTTPException(404, "no such document")
+    replacement = await rag.get_document(doc["replaced_by"]) if doc["replaced_by"] else None
+    in_versions = await fetch_all(
+        "SELECT version FROM corpus_versions WHERE corpus=%s AND %s = ANY(document_ids) "
+        "ORDER BY version", (doc["corpus"], document_id))
     return templates.TemplateResponse(request, "document.html", {
         "doc": doc,
+        "replacement": replacement,
+        "in_versions": [r["version"] for r in in_versions],
+        "citation": citations.citation(doc),
         "chunks": await rag.document_chunks(document_id),
         "corpora": [c["corpus"] for c in await rag.list_corpora()],
         "metadata_pretty": json.dumps(doc["metadata"], indent=2) if doc["metadata"] else None,
@@ -419,7 +497,7 @@ async def document_move(document_id: int, corpus: str = Form("")):
         raise HTTPException(409, str(e)) from e
     if doc is None:
         raise HTTPException(404, "no such document")
-    return RedirectResponse(f"{P}/sources/documents/{document_id}?msg=" + quote(
+    return RedirectResponse(f"{P}/sources/documents/{doc['id']}?msg=" + quote(
         f"Moved to “{doc['corpus']}”."), status_code=303)
 
 
@@ -431,13 +509,9 @@ async def document_delete(document_id: int):
         raise HTTPException(409, str(e)) from e
     if gone is None:
         raise HTTPException(404, "no such document")
-    remaining = await rag.corpus_documents(gone["corpus"])
-    msg = quote(f"Removed “{gone['title']}”.")
-    if remaining:
-        return RedirectResponse(f"{_corpus_url(gone['corpus'])}?msg={msg}", status_code=303)
-    return RedirectResponse(f"{P}/sources?msg={msg}" + quote(
-        f" That was the last document, so the corpus “{gone['corpus']}” is gone."),
-        status_code=303)
+    msg = quote(f"Removed “{gone['title']}” from the library. Earlier versions still include "
+                "it, so runs that searched them can be repeated.")
+    return RedirectResponse(f"{_corpus_url(gone['corpus'])}?msg={msg}", status_code=303)
 
 
 # Old bookmark: /corpus was the page's name before it became Legal Sources.
@@ -501,13 +575,15 @@ async def corpus_upload(files: list[UploadFile] = File(...),  # noqa: B008 - Fas
             doc_id = await store.add_document(title=Path(name).stem, text=text,
                                               doc_type="text", source_uri=name)
         (added if doc_id is not None else refused).append(name)
+    if added:
+        await rag.record_version(corpus)
 
     parts = []
     if added:
         parts.append(f"Added {len(added)} document{'' if len(added) == 1 else 's'}.")
     if refused:
         parts.append("Not added, because it has no readable text or the same text is already "
-                     "in a corpus: " + ", ".join(f"“{n}”" for n in refused) + ".")
+                     "in this library: " + ", ".join(f"“{n}”" for n in refused) + ".")
     msg = quote(" ".join(parts))
     if not added:
         return RedirectResponse(f"{P}/sources?tab=upload&msg={msg}", status_code=303)

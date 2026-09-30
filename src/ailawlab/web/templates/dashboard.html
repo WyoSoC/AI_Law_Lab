@@ -4,7 +4,7 @@
 {% block content %}
 
 <h1>Dashboard</h1>
-<p class="sub">Shared local inference on the DGX Spark cluster &middot; experiments, corpus, and run history.</p>
+<p class="sub">Shared local inference on the DGX Spark cluster &middot; experiments, libraries, and run history.</p>
 
 {% if trashed and trashed.deleted_at %}
 <form class="notice undo" method="post" action="{{ prefix }}/experiments/{{ trashed.id }}/restore">
@@ -100,7 +100,7 @@
   {% if corpora %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Corpus</th><th>Documents</th><th>Chunks</th><th>Used by</th></tr></thead>
+      <thead><tr><th>Library</th><th>Documents</th><th>Chunks</th><th>Used by</th></tr></thead>
       <tbody>
         {% for c in corpora %}
         <tr><td><a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a></td>

@@ -47,6 +47,11 @@ async def _cmd_ingest(paths: list[str], corpus: str) -> int:
         else:
             added += 1
             print(f"  ingested: {p.name}")
+    if added:
+        from .rag import record_version
+
+        v = await record_version(corpus)
+        print(f"library {corpus!r} is now version {v['version']}")
     print(f"\n{added} added, {skipped} skipped. {await store.stats()}")
     await close_pool()
     return 0

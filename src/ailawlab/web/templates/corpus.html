@@ -8,9 +8,16 @@
 {% endblock %}
 {% block content %}
 
-<h1>{{ name }}</h1>
+{% set current = versions[0] if versions else None %}
+<h1>{{ name }}{% if current %} <span class="run-id">version {{ current.version }}</span>{% endif %}</h1>
 <p class="sub">{{ documents|length }} document{{ '' if documents|length == 1 else 's' }}
-  &middot; {{ chunks }} passage{{ '' if chunks == 1 else 's' }} an experiment can retrieve and cite</p>
+  &middot; {{ chunks }} passage{{ '' if chunks == 1 else 's' }} an experiment can retrieve and cite
+  {% if current %}&middot; last changed {{ current.created_at.strftime('%B %-d, %Y') }}{% endif %}</p>
+
+<nav class="jump" aria-label="On this page">
+  <a href="#documents">Documents</a><a href="#citations">Citation list</a><a href="#versions">Versions ({{ versions|length }})</a>
+  <a href="#probe">Try a search</a>
+</nav>
 
 {% if request.query_params.get('msg') %}
 <p class="notice">{{ request.query_params.get('msg') }}</p>
@@ -43,14 +50,14 @@
     {% endfor %}
   </ul>
   {% else %}
-  <p class="empty">No experiment retrieves from this corpus yet. Choose it under
-    &ldquo;Corpus to retrieve from&rdquo; when you <a href="{{ prefix }}/experiments/new">create an experiment</a>.</p>
+  <p class="empty">No experiment retrieves from this library yet. Choose it under
+    &ldquo;Library to retrieve from&rdquo; when you <a href="{{ prefix }}/experiments/new">create an experiment</a>.</p>
   {% endif %}
 </div>
 
-<h2>Try a search</h2>
+<h2 id="probe">Try a search</h2>
 <div class="panel">
-  <p class="hint" style="margin-top:0">See which passages an experiment would retrieve from this corpus for a
+  <p class="hint" style="margin-top:0">See which passages an experiment would retrieve from this library for a
     question, and how closely each matches. Nothing is saved.</p>
   <form class="source-search" id="probe-form">
     <input type="text" name="q" placeholder="e.g. termination for convenience notice period" autocomplete="off">
@@ -59,8 +66,12 @@
   <div id="probe-results" class="probe-results"></div>
 </div>
 
+{% if not documents %}
+<p class="notice">This library has no documents now. Its earlier versions are kept below, because
+  past runs searched them.</p>
+{% endif %}
 <div class="section-head">
-  <h2>Documents</h2>
+  <h2 id="documents">Documents</h2>
   {% if link_docs %}
   <button type="button" class="small-btn" id="check-all">↻ Check all {{ link_docs|length }} web link{{ '' if link_docs|length == 1 else 's' }} for updates</button>
   {% endif %}
@@ -92,7 +103,7 @@
                     aria-label="Check {{ d.title }} for updates">↻</button>
             {% endif %}
             <form method="post" action="{{ prefix }}/sources/documents/{{ d.id }}/delete"
-                  onsubmit="return confirm({{ ('Remove “' ~ d.title ~ '” from ' ~ name ~ '? Experiments will no longer retrieve from it.')|tojson|forceescape }})">
+                  onsubmit="return confirm({{ ('Remove “' ~ d.title ~ '” from ' ~ name ~ '? New runs will no longer retrieve from it; earlier versions keep it.')|tojson|forceescape }})">
               <button type="submit" class="icon-btn" title="Remove this document" aria-label="Remove {{ d.title }}">✕</button>
             </form>
           </div></td>
@@ -103,17 +114,23 @@
   </div>
 </div>
 
-<h2>Delete this corpus</h2>
+{% set download_url = prefix ~ '/sources/corpora/' ~ (name|urlencode) ~ '/citations.txt' %}
+{% include "_citations.html" %}
+
+{% include "_versions.html" %}
+
+<h2>Delete this library</h2>
 <form class="panel danger-zone" method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/delete">
-  <p>Deleting removes all {{ documents|length }} document{{ '' if documents|length == 1 else 's' }} and their
-    passages. This cannot be undone.
+  <p>Deleting removes all {{ documents|length }} document{{ '' if documents|length == 1 else 's' }}, their
+    passages and all {{ versions|length }} version{{ '' if versions|length == 1 else 's' }}. This cannot be undone,
+    and past runs that searched this library can no longer be repeated.
     {% if experiments %}<strong>{{ experiments|length }} experiment{{ ' uses' if experiments|length == 1 else 's use' }}
-    this corpus</strong> and would find nothing to retrieve until it is rebuilt.{% endif %}
-    Past runs keep their results.</p>
+    this library</strong> and would find nothing to retrieve until it is rebuilt.{% endif %}
+    Past runs keep their results. To take out only some documents, remove them above instead.</p>
   <label for="confirm_name">Type <strong>{{ name }}</strong> to confirm</label>
   <div class="source-search">
     <input type="text" id="confirm_name" name="confirm_name" autocomplete="off">
-    <button type="submit" class="danger" id="delete-corpus" disabled>Delete corpus</button>
+    <button type="submit" class="danger" id="delete-corpus" disabled>Delete library</button>
   </div>
 </form>
 

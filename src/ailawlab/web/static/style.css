@@ -604,3 +604,16 @@ a.turn-ref { color: var(--accent); text-decoration: none; border-bottom: 1px dot
 .trace-wrap > summary { font-size: .88rem; margin: 0 0 .6rem; }
 @media (max-width: 620px) { .turn.moderator { margin-left: 0; } }
 a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- library versions and citations */
+
+.corpus-version { font-size: .75rem; font-weight: 600; color: var(--muted); margin-left: .25rem; }
+.citation-list { margin: 0; padding-left: 1.6rem; display: grid; gap: .55rem; font-size: .9rem; line-height: 1.5; }
+.citation-list .cite-title { color: var(--ink); text-decoration: none; }
+.citation-list .cite-title:hover { color: var(--accent); text-decoration: underline; }
+.citation-list .cite-url { display: block; font-size: .8rem; color: var(--accent); overflow-wrap: anywhere; }
+.change-note { font-size: .86rem; min-width: 16rem; }
+.doc-cite { font-size: .9rem; line-height: 1.55; }
+.doc-cite a { color: var(--accent); overflow-wrap: anywhere; }
+.doc-cite .fact-note a { margin-right: .15rem; }
+#version-field[hidden] { display: none; }

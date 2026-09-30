@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS runs (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_runs_experiment ON runs(experiment_id, created_at DESC);
+-- The library a run searched and which version of it (NULL for runs without one, and for
+-- runs from before libraries were versioned).
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS corpus TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS corpus_version INTEGER;
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status) WHERE status IN ('pending', 'running');
 
 -- ---------------------------------------------------------------- trace / eval
@@ -101,10 +105,34 @@ CREATE TABLE IF NOT EXISTS documents (
     source_uri  TEXT,
     doc_type    TEXT NOT NULL DEFAULT 'other',
     metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
-    sha256      TEXT UNIQUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    sha256      TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Documents are never edited or deleted while their library exists, so every past
+    -- version of a library can still be searched exactly as it was. Removing a document
+    -- sets removed_at; re-reading a changed web page or moving a document to another
+    -- library adds a new row and points the old one at it through replaced_by.
+    removed_at  TIMESTAMPTZ,
+    replaced_by BIGINT REFERENCES documents(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_documents_corpus ON documents(corpus);
+-- For databases created before versioning: the same text may now sit in several libraries,
+-- but only once in each library's current contents.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS replaced_by BIGINT REFERENCES documents(id) ON DELETE SET NULL;
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_sha256_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_live_sha ON documents(corpus, sha256)
+    WHERE removed_at IS NULL;
+
+-- A library version is the exact set of documents it held after a change. Runs record the
+-- version they searched, so a result can be traced to, and re-run against, that set.
+CREATE TABLE IF NOT EXISTS corpus_versions (
+    corpus        TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    document_ids  BIGINT[] NOT NULL,
+    change        TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (corpus, version)
+);
 
 CREATE TABLE IF NOT EXISTS chunks (
     id           BIGSERIAL PRIMARY KEY,

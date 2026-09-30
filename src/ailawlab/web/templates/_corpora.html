@@ -2,16 +2,16 @@
 <div class="corpus-grid">
   {% for c in corpora %}
   <a class="corpus-card" href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">
-    <span class="corpus-name">{{ c.corpus }}</span>
+    <span class="corpus-name">{{ c.corpus }}{% if c.version %} <span class="corpus-version">v{{ c.version }}</span>{% endif %}</span>
     <span class="corpus-stats">{{ c.documents }} document{{ '' if c.documents == 1 else 's' }}
       &middot; {{ c.chunks }} passage{{ '' if c.chunks == 1 else 's' }}</span>
     <span class="corpus-meta">
       {% if c.experiments %}used by {{ c.experiments }} experiment{{ '' if c.experiments == 1 else 's' }}{% else %}not used by any experiment yet{% endif %}
-      &middot; last added {{ c.last_added.strftime('%b %-d, %Y') }}</span>
+      &middot; last changed {{ (c.changed or c.last_added).strftime('%b %-d, %Y') }}</span>
     <span class="corpus-open">Inspect →</span>
   </a>
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">No corpora yet. Search a database or upload a document below to start one.</p>
+<p class="empty">No libraries yet. Search a database, add web links or upload a document below to start one.</p>
 {% endif %}

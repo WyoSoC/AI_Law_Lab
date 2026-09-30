@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active = 'sources' %}
+{% block title %}{{ name }} v{{ v.version }} · Legal Sources · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/sources">Legal Sources</a><span class="sep">›</span>
+  <a href="{{ prefix }}/sources/corpora/{{ name|urlencode }}">{{ name }}</a><span class="sep">›</span>
+  <span>Version {{ v.version }}</span>
+</nav>
+{% endblock %}
+{% block content %}
+
+<h1>{{ name }} <span class="run-id">version {{ v.version }}</span></h1>
+<p class="sub">Recorded {{ v.created_at.strftime('%B %-d, %Y at %H:%M') }} UTC
+  &middot; {{ documents|length }} document{{ '' if documents|length == 1 else 's' }}
+  &middot; {% if latest == v.version %}the current version{% else %}the current version is
+  <a href="{{ prefix }}/sources/corpora/{{ name|urlencode }}">v{{ latest }}</a>{% endif %}</p>
+
+<p class="notice">{{ v.change }}</p>
+
+<h2>Documents in this version</h2>
+<div class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th>Now</th></tr></thead>
+      <tbody>
+        {% for d in documents %}
+        <tr>
+          <td><a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a></td>
+          <td>{{ d.doc_type }}</td>
+          <td>{{ d.chunk_count }}</td>
+          <td class="nowrap">{{ d.created_at.strftime('%Y-%m-%d') }}</td>
+          <td class="nowrap">{% if d.replaced_by %}<a href="{{ prefix }}/sources/documents/{{ d.replaced_by }}">replaced</a>
+            {% elif d.removed_at %}removed {{ d.removed_at.strftime('%Y-%m-%d') }}
+            {% else %}<span class="hint">still in the library</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Runs that searched this version</h2>
+<div class="panel">
+  {% if runs %}
+  <ul class="plain-list">
+    {% for r in runs %}
+    <li><a href="{{ prefix }}/runs/{{ r.id }}">{{ r.experiment_name }}, run {{ (r.id|string)[:8] }}</a>
+      <span class="badge {{ r.status }}">{{ r.status }}</span>
+      <span class="hint">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No run has searched this version yet.</p>
+  {% endif %}
+</div>
+
+{% set download_url = prefix ~ '/sources/corpora/' ~ (name|urlencode) ~ '/citations.txt?version=' ~ v.version %}
+{% include "_citations.html" %}
+
+{% endblock %}

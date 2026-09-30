@@ -4,20 +4,19 @@
 {% block content %}
 
 <h1>Legal Sources</h1>
-<p class="sub">Everything an experiment can retrieve from, filed in corpora you name. Open a
-corpus to see what is in it, or add to one by searching the online legal databases or
-uploading your own documents &mdash; each becomes chunked, embedded and citable.</p>
+<p class="sub">Curate your own library of sources for experiments to retrieve from, and keep
+expanding it over time. Each document is chunked, embedded and made citable.</p>
 
 {% if request.query_params.get('msg') %}
 <p class="notice">{{ request.query_params.get('msg') }}</p>
 {% endif %}
 
-<h2>Your corpora</h2>
+<h2>Curated Library</h2>
 <div id="corpus-panel">
   {% include "_corpora.html" %}
 </div>
 
-<h2 id="add">Add to a corpus</h2>
+<h2 id="add">Add to a library</h2>
 <div class="subtabs" role="tablist">
   <button type="button" role="tab" id="tab-search" aria-controls="pane-search" data-tab="search">Search online databases</button>
   <button type="button" role="tab" id="tab-links" aria-controls="pane-links" data-tab="links">Add web links</button>
@@ -70,7 +69,7 @@ uploading your own documents &mdash; each becomes chunked, embedded and citable.
     <button type="button" id="links-add">Add links →</button>
   </div>
   <div id="links-result" class="source-results"></div>
-  <p class="hint">Web pages change. To keep a link current, open its corpus and use
+  <p class="hint">Web pages change. To keep a link current, open its library and use
     <strong>Check for updates</strong>: pages that changed are re-read, the rest are left as they are.</p>
 </div>
 </div>
@@ -84,10 +83,10 @@ uploading your own documents &mdash; each becomes chunked, embedded and citable.
     <label>Add them to</label>
     <div class="corpus-picker" data-default="default"></div>
     <input type="hidden" name="corpus">
-    <p class="hint">Experiments retrieve from one corpus, chosen by name, so keep collections
+    <p class="hint">Experiments retrieve from one library, chosen by name, so keep collections
       separate by topic or project.</p>
 
-    <button type="submit">Add to corpus</button>
+    <button type="submit">Add to library</button>
   </form>
 </div>
 </div>
@@ -133,11 +132,11 @@ function fillPicker(el, wanted) {
   const choice = wanted || PRESET || el.dataset.default || 'default';
   const known = CORPORA.includes(choice);
   el.innerHTML = `
-    <select class="corpus-select" aria-label="Corpus">
+    <select class="corpus-select" aria-label="Library">
       ${CORPORA.map(c => `<option value="${esc(c)}"${c === choice ? ' selected' : ''}>${esc(c)}</option>`).join('')}
-      <option value="${NEW}"${known ? '' : ' selected'}>+ New corpus…</option>
+      <option value="${NEW}"${known ? '' : ' selected'}>+ New library…</option>
     </select>
-    <input type="text" class="corpus-new" placeholder="Name the new corpus" aria-label="New corpus name"
+    <input type="text" class="corpus-new" placeholder="Name the new library" aria-label="New library name"
            value="${known ? '' : esc(choice)}"${known ? ' hidden' : ''}>`;
   const sel = el.querySelector('select'), box = el.querySelector('.corpus-new');
   sel.addEventListener('change', () => {
@@ -165,7 +164,7 @@ document.getElementById('links-add').addEventListener('click', async ev => {
 
 document.getElementById('upload-form').addEventListener('submit', ev => {
   const name = pickedCorpus(ev.target.querySelector('.corpus-picker'));
-  if (!name) { ev.preventDefault(); alert('Name the new corpus first.'); return; }
+  if (!name) { ev.preventDefault(); alert('Name the new library first.'); return; }
   ev.target.corpus.value = name;
 });
 
@@ -212,7 +211,7 @@ function renderHits(pid, hits, defaultCorpus) {
     <div class="ingest-bar">
       <span class="corpus-inline">Add selected to</span>
       <span class="corpus-picker" data-default="${esc(defaultCorpus)}"></span>
-      <button type="button" onclick="ingestSelected('${pid}')">Add to corpus →</button>
+      <button type="button" onclick="ingestSelected('${pid}')">Add to library →</button>
       <span class="ingest-status"></span>
     </div>`;
   fillPicker(box.querySelector('.corpus-picker'));
@@ -224,7 +223,7 @@ async function ingestSelected(pid) {
   const status = box.querySelector('.ingest-status');
   if (!checked.length) { status.textContent = 'select at least one result'; return; }
   const corpus = pickedCorpus(box.querySelector('.corpus-picker'));
-  if (!corpus) { status.textContent = 'name the new corpus first'; return; }
+  if (!corpus) { status.textContent = 'name the new library first'; return; }
   const hits = checked.map(c => HITS[pid][c.value]);
   const btn = box.querySelector('.ingest-bar button');
   btn.disabled = true;

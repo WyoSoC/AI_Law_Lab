@@ -83,7 +83,7 @@ def test_a_roleplay_experiment_view():
 def test_document_and_agentic_experiment_views():
     doc = experiment_view({"mode": "document_analysis", "config": {"corpus": "test"}}, [],
                           corpus_documents=1, now=NOW)
-    assert doc["facts"] == [{"label": "Corpus", "value": "test", "note": "1 document in it"}]
+    assert doc["facts"] == [{"label": "Library", "value": "test", "note": "1 document in it"}]
     agent = experiment_view({"mode": "agentic_workflow", "config": {"max_iterations": "4"}}, [], now=NOW)
     assert [f["value"] for f in agent["facts"]] == ["default", "4", "not allowed"]
 

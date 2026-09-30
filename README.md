@@ -283,6 +283,20 @@ to an existing database.
 Each run snapshots its experiment's `config` at launch into `runs.config_snapshot`. Editing
 an experiment later never rewrites the conditions a past result was produced under.
 
+The library it searched is versioned the same way. After every change (documents added,
+removed, moved, or a web page re-read with new text) `rag.record_version()` stores the set of
+document ids the library then held in `corpus_versions`, with a note of what changed. Documents
+are never edited or deleted while their library exists: removing one sets `removed_at`, and
+re-reading or moving one adds a new row that the old one points to through `replaced_by`, so
+every version can still be searched exactly as it was. Each run records `runs.corpus` and
+`runs.corpus_version`; a run can name `corpus_version` to search an older version, which the
+run page's "run again with this version" link does. Deleting a whole library is the one
+operation that removes its history. The same text may sit in several libraries, but only once
+in each library's current contents.
+
+Each library also has a citation list (`citations.py`): one reference per document, built
+from what its source recorded, for the current contents or any version, to copy or download.
+
 ## Layout
 
 ```

@@ -10,12 +10,15 @@
 {% endblock %}
 {% block content %}
 
+{% set live = not doc.removed_at %}
 <div class="title-row">
   <h1>{{ doc.title }}</h1>
+  {% if live %}
   <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/delete"
         onsubmit="return confirm({{ ('Remove “' ~ doc.title ~ '” from ' ~ doc.corpus ~ '?')|tojson|forceescape }})">
-    <button type="submit" class="small-btn danger">Remove from corpus</button>
+    <button type="submit" class="small-btn danger">Remove from library</button>
   </form>
+  {% endif %}
 </div>
 <p class="sub">{{ doc.doc_type }} &middot; added {{ doc.created_at.strftime('%B %-d, %Y') }}
   &middot; {{ chunks|length }} passage{{ '' if chunks|length == 1 else 's' }}
@@ -27,8 +30,30 @@
 <p class="notice">{{ request.query_params.get('msg') }}</p>
 {% endif %}
 
+{% if replacement %}
+<p class="notice bad-soft">This copy was replaced on {{ doc.removed_at.strftime('%B %-d, %Y') }}
+  {% if replacement.corpus != doc.corpus %}when the document moved to
+  <a href="{{ prefix }}/sources/corpora/{{ replacement.corpus|urlencode }}">{{ replacement.corpus }}</a>{% else %}by
+  a newer reading of its web page{% endif %}:
+  <a href="{{ prefix }}/sources/documents/{{ replacement.id }}">see the current copy</a>.
+  It is kept because earlier versions of the library hold it.</p>
+{% elif not live %}
+<p class="notice bad-soft">This document was removed from
+  <a href="{{ prefix }}/sources/corpora/{{ doc.corpus|urlencode }}">{{ doc.corpus }}</a> on
+  {{ doc.removed_at.strftime('%B %-d, %Y') }}. It is kept because earlier versions of the library hold it.</p>
+{% endif %}
+
+<div class="panel doc-cite">
+  <div class="fact-label">Cite as</div>
+  <div>{{ citation.text }}{% if citation.url %} <a href="{{ citation.url }}" target="_blank" rel="noopener">{{ citation.url }}</a>{% endif %}</div>
+  {% if in_versions %}
+  <div class="fact-note">In {{ doc.corpus }}
+    {% for n in in_versions %}<a href="{{ prefix }}/sources/corpora/{{ doc.corpus|urlencode }}/versions/{{ n }}">v{{ n }}</a>{{ ', ' if not loop.last }}{% endfor %}</div>
+  {% endif %}
+</div>
+
 {% set m = doc.metadata or {} %}
-{% if m.link %}
+{% if m.link and live %}
 <div class="panel link-panel">
   <div class="fact-grid">
     <div><div class="fact-label">Web link</div>
@@ -46,8 +71,9 @@
 </div>
 {% endif %}
 
+{% if live %}
 <details class="config-details">
-  <summary>Rename or move to another corpus</summary>
+  <summary>Rename or move to another library</summary>
   <div class="two-col">
     <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/rename">
       <label for="title">Title</label>
@@ -55,16 +81,17 @@
       <button type="submit" class="small-btn">Rename</button>
     </form>
     <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/move" id="move-form">
-      <label for="move-corpus">Corpus</label>
+      <label for="move-corpus">Library</label>
       <select id="move-corpus" name="corpus">
         {% for c in corpora %}<option value="{{ c }}" {% if c == doc.corpus %}selected{% endif %}>{{ c }}</option>{% endfor %}
-        <option value="__new__">+ New corpus…</option>
+        <option value="__new__">+ New library…</option>
       </select>
-      <input type="text" id="move-new" placeholder="Name the new corpus" hidden>
+      <input type="text" id="move-new" placeholder="Name the new library" hidden>
       <button type="submit" class="small-btn">Move</button>
     </form>
   </div>
 </details>
+{% endif %}
 
 {% if metadata_pretty %}
 <details class="config-details"><summary>Source details</summary><pre>{{ metadata_pretty }}</pre></details>
@@ -91,11 +118,12 @@ const PREFIX = "{{ prefix }}";
 const checkBtn = document.getElementById('check-btn');
 if (checkBtn) checkBtn.addEventListener('click', async () => {
   const r = await LinkUI.check({{ doc.id }}, document.getElementById('check-result'), checkBtn);
-  if (r && r.status === 'updated') location.reload();
+  // A changed page is stored as a new document; go to it.
+  if (r && r.status === 'updated') location.href = `${PREFIX}/sources/documents/${r.document_id}`;
 });
 const moveSel = document.getElementById('move-corpus'), moveNew = document.getElementById('move-new');
-moveSel.addEventListener('change', () => { moveNew.hidden = moveSel.value !== '__new__'; if (!moveNew.hidden) moveNew.focus(); });
-document.getElementById('move-form').addEventListener('submit', ev => {
+if (moveSel) moveSel.addEventListener('change', () => { moveNew.hidden = moveSel.value !== '__new__'; if (!moveNew.hidden) moveNew.focus(); });
+if (moveSel) document.getElementById('move-form').addEventListener('submit', ev => {
   if (moveSel.value !== '__new__') return;
   const name = moveNew.value.trim();
   if (!name) { ev.preventDefault(); moveNew.focus(); return; }

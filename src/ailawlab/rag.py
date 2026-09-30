@@ -71,9 +71,18 @@ def chunk_text(text: str, size: int | None = None, overlap: int | None = None) -
 
 
 class Corpus:
-    def __init__(self, router: LLMRouter, name: str = "default"):
+    """A library: search it, add to it.
+
+    With `document_ids` (a recorded version's contents) search is confined to exactly those
+    documents, removed or replaced since or not, which is what lets a run be repeated
+    against the library as it was. Without, it searches the library's current contents.
+    """
+
+    def __init__(self, router: LLMRouter, name: str = "default",
+                 document_ids: list[int] | None = None):
         self.router = router
         self.name = name
+        self.document_ids = document_ids
 
     async def add_document(
         self,
@@ -85,13 +94,14 @@ class Corpus:
         metadata: dict | None = None,
         page_map: list[tuple[int, int]] | None = None,
     ) -> int | None:
-        """Ingest one document. Returns None if it is already present (by sha256).
+        """Ingest one document. Returns None if this library already holds the same text.
 
         `page_map` is an optional list of (char_offset, page_number) pairs used to anchor
         chunks to pages; PDF ingestion supplies it.
         """
         sha = hashlib.sha256(text.encode()).hexdigest()
-        existing = await fetch_one("SELECT id FROM documents WHERE sha256=%s", (sha,))
+        existing = await fetch_one("SELECT id FROM documents WHERE sha256=%s AND corpus=%s "
+                                   "AND removed_at IS NULL", (sha, self.name))
         if existing:
             log.info("document already ingested: %s", title)
             return None
@@ -157,22 +167,26 @@ class Corpus:
     async def search(self, query: str, top_k: int | None = None) -> list[Passage]:
         top_k = top_k or settings.rag_top_k
         qvec = vec(await self.router.embed_one(query))
+        if self.document_ids is not None:
+            scope, arg = "d.id = ANY(%s)", self.document_ids
+        else:
+            scope, arg = "d.corpus = %s AND d.removed_at IS NULL", self.name
         rows = await fetch_all(
             "SELECT c.id AS chunk_id, c.document_id, d.title, c.content, "
             "       c.page_start, c.page_end, 1 - (c.embedding <=> %s) AS similarity "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.corpus = %s AND c.embedding IS NOT NULL "
+            f"WHERE {scope} AND c.embedding IS NOT NULL "
             "  AND 1 - (c.embedding <=> %s) >= %s "
             "ORDER BY c.embedding <=> %s LIMIT %s",
-            (qvec, self.name, qvec, settings.rag_min_similarity, qvec, top_k),
+            (qvec, arg, qvec, settings.rag_min_similarity, qvec, top_k),
         )
         return [Passage(**r) for r in rows]
 
     async def stats(self) -> dict:
         row = await fetch_one(
             "SELECT COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks "
-            "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id WHERE d.corpus=%s",
-            (self.name,),
+            "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id "
+            "WHERE d.corpus=%s AND d.removed_at IS NULL", (self.name,),
         )
         return {"corpus": self.name, **(row or {})}
 
@@ -194,32 +208,57 @@ def format_passages(passages: list[Passage]) -> str:
     )
 
 
-# ---------------------------------------------------------------- managing corpora
+# ---------------------------------------------------------------- managing libraries
 #
-# A corpus has no table of its own: it is the set of documents sharing a `corpus` name,
-# so it exists while it has a document and disappears with its last one.
+# A library (a "corpus" in the code) has no table of its own: it is the set of current
+# documents sharing a `corpus` name, so it exists while it holds a document. Its history
+# lives in corpus_versions: after every change, record_version() stores the set of document
+# ids it then held. Documents are never edited in place or deleted while the library
+# exists, so every recorded version can still be searched exactly as it was.
 
 
 class CorpusBusy(Exception):
-    """A run that retrieves from this corpus is in progress."""
+    """A run that retrieves from this library is in progress."""
+
+
+_LIVE = "d.removed_at IS NULL"
 
 
 async def list_corpora() -> list[dict]:
-    """Every corpus with its size, when it last grew, and how many experiments use it."""
-    return await fetch_all(
+    """Every library with its size, when it last changed, its current version, and how many
+    experiments use it. A library whose documents have all been removed is still listed
+    (empty) while its versions exist, since past runs point at them."""
+    live = await fetch_all(
         "SELECT d.corpus, COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks, "
         "       MAX(d.created_at) AS last_added, "
+        "       (SELECT MAX(v.version) FROM corpus_versions v WHERE v.corpus = d.corpus) AS version, "
+        "       (SELECT MAX(v.created_at) FROM corpus_versions v WHERE v.corpus = d.corpus) AS changed, "
         "       (SELECT COUNT(*) FROM experiments e WHERE e.deleted_at IS NULL "
         "          AND COALESCE(e.config->>'corpus', 'default') = d.corpus "
         "          AND (e.mode <> 'roleplay' OR e.config ? 'corpus')) AS experiments "
         "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id "
-        "GROUP BY d.corpus ORDER BY d.corpus"
+        f"WHERE {_LIVE} GROUP BY d.corpus ORDER BY lower(d.corpus)"
     )
+    names = {c["corpus"] for c in live}
+    empty = [{"corpus": r["corpus"], "documents": 0, "chunks": 0, "last_added": r["changed"],
+              "changed": r["changed"],
+              "version": r["version"], "experiments": 0}
+             for r in await fetch_all("SELECT corpus, MAX(version) AS version, MAX(created_at) AS changed "
+                                      "FROM corpus_versions GROUP BY corpus")
+             if r["corpus"] not in names]
+    return sorted(live + empty, key=lambda c: c["corpus"].casefold())
 
 
-async def corpus_documents(name: str | None = None) -> list[dict]:
-    """Documents with their chunk counts, newest first; all of them, or one corpus's."""
-    where, params = ("WHERE d.corpus = %s ", (name,)) if name is not None else ("", ())
+async def corpus_documents(name: str | None = None,
+                           ids: list[int] | None = None) -> list[dict]:
+    """Documents with their chunk counts, newest first: a library's current documents, or
+    exactly the documents `ids` names (a recorded version, current or not)."""
+    if ids is not None:
+        where, params = "WHERE d.id = ANY(%s) ", (ids,)
+    elif name is not None:
+        where, params = f"WHERE d.corpus = %s AND {_LIVE} ", (name,)
+    else:
+        where, params = f"WHERE {_LIVE} ", ()
     return await fetch_all(
         "SELECT d.*, COUNT(c.id) AS chunk_count, "
         "       COALESCE(SUM(LENGTH(c.content)), 0) AS chars FROM documents d "
@@ -228,7 +267,7 @@ async def corpus_documents(name: str | None = None) -> list[dict]:
 
 
 async def corpus_experiments(name: str) -> list[dict]:
-    """Experiments (not in the trash) that retrieve from this corpus."""
+    """Experiments (not in the trash) that retrieve from this library."""
     return await fetch_all(
         "SELECT id, name, mode FROM experiments WHERE deleted_at IS NULL "
         "AND (mode <> 'roleplay' OR config ? 'corpus') "
@@ -253,21 +292,128 @@ async def check_idle(name: str) -> None:
         "AND COALESCE(r.inputs->>'corpus', r.config_snapshot->>'corpus', 'default') = %s",
         (name,))
     if row and row["n"]:
-        raise CorpusBusy(f"A run that retrieves from {name!r} is in progress. "
+        raise CorpusBusy(f"A run that retrieves from “{name}” is in progress. "
                          "Wait for it to finish first.")
 
 
+# ---------------------------------------------------------------- versions
+
+
+def describe_change(before: dict[int, str], after: dict[int, str],
+                    replaced: dict[int, int] | None = None,
+                    moved: dict[int, str] | None = None) -> str:
+    """A version's change note from the documents (id -> title) before and after it.
+
+    `replaced` maps an old document id to the id that replaced it, so a re-read web page
+    reads as "updated" rather than as one document removed and another added; `moved` maps
+    an old id to the library it was moved to. Pure.
+    """
+    replaced, moved = replaced or {}, moved or {}
+    updated = [after[new] for old, new in replaced.items() if old in before and new in after
+               and old not in after]
+    skip_old = {old for old, new in replaced.items() if new in after and old not in after}
+    skip_new = {replaced[o] for o in skip_old}
+    added = [t for i, t in after.items() if i not in before and i not in skip_new]
+    removed = [t for i, t in before.items() if i not in after and i not in skip_old and i not in moved]
+    moves: dict[str, list[str]] = {}
+    for i, target in moved.items():
+        if i in before and i not in after:
+            moves.setdefault(target, []).append(before[i])
+
+    def part(verb: str, titles: list[str], where: str = "") -> str:
+        if not titles:
+            return ""
+        shown = "; ".join(f"“{t}”" for t in sorted(titles)[:3])
+        more = f"; and {len(titles) - 3} more" if len(titles) > 3 else ""
+        return f"{verb} {len(titles)}{where}: {shown}{more}"
+
+    parts = [p for p in (part("Added", added), part("Updated", updated),
+                         *(part("Moved", titles, f" to “{t}”") for t, titles in sorted(moves.items())),
+                         part("Removed", removed)) if p]
+    return (". ".join(parts) + ".") if parts else "No change."
+
+
+async def latest_version(name: str) -> dict | None:
+    return await fetch_one("SELECT * FROM corpus_versions WHERE corpus=%s "
+                           "ORDER BY version DESC LIMIT 1", (name,))
+
+
+async def get_version(name: str, version: int) -> dict | None:
+    return await fetch_one("SELECT * FROM corpus_versions WHERE corpus=%s AND version=%s",
+                           (name, version))
+
+
+async def list_versions(name: str) -> list[dict]:
+    """A library's versions, newest first, each with how many runs searched it."""
+    return await fetch_all(
+        "SELECT v.*, cardinality(v.document_ids) AS documents, "
+        "       (SELECT COUNT(*) FROM runs r WHERE r.corpus = v.corpus "
+        "          AND r.corpus_version = v.version) AS runs "
+        "FROM corpus_versions v WHERE v.corpus=%s ORDER BY v.version DESC", (name,))
+
+
+async def record_version(name: str) -> dict | None:
+    """Record the library's current contents as a new version, if they differ from the last
+    recorded version. Returns the current version (new or not), or None for an empty or
+    unknown library.
+
+    Called after every change, and again when a run starts, so a change made some other
+    way (the command line, a script) is still recorded before anything searches it.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        # One writer per library at a time, so two changes cannot claim the same number.
+        await cur.execute("SELECT pg_advisory_xact_lock(hashtext('corpus_version:' || %s))", (name,))
+        await cur.execute("SELECT id, title FROM documents WHERE corpus=%s AND removed_at IS NULL "
+                          "ORDER BY id", (name,))
+        after = {r["id"]: r["title"] for r in await cur.fetchall()}
+        await cur.execute("SELECT * FROM corpus_versions WHERE corpus=%s "
+                          "ORDER BY version DESC LIMIT 1", (name,))
+        last = await cur.fetchone()
+        if last and sorted(last["document_ids"]) == sorted(after):
+            return last
+        if not after and not last:
+            return None
+        before_ids = list(last["document_ids"]) if last else []
+        before: dict[int, str] = {}
+        replaced: dict[int, int] = {}
+        if before_ids:
+            await cur.execute("SELECT d.id, d.title, d.replaced_by, n.corpus AS new_corpus "
+                              "FROM documents d LEFT JOIN documents n ON n.id = d.replaced_by "
+                              "WHERE d.id = ANY(%s)", (before_ids,))
+            moved: dict[int, str] = {}
+            for r in await cur.fetchall():
+                before[r["id"]] = r["title"]
+                if r["replaced_by"] and r["new_corpus"] and r["new_corpus"] != name:
+                    moved[r["id"]] = r["new_corpus"]
+                elif r["replaced_by"]:
+                    replaced[r["id"]] = r["replaced_by"]
+        change = describe_change(before, after, replaced, moved if before_ids else None) if last else (
+            f"First recorded version: {len(after)} document{'' if len(after) == 1 else 's'}.")
+        await cur.execute(
+            "INSERT INTO corpus_versions (corpus, version, document_ids, change) "
+            "VALUES (%s, %s, %s, %s) RETURNING *",
+            (name, (last["version"] + 1) if last else 1, list(after), change))
+        return await cur.fetchone()
+
+
+# ---------------------------------------------------------------- changing a library
+
+
 async def delete_document(document_id: int) -> dict | None:
-    """Remove one document and its chunks. Returns the removed row, or None."""
+    """Take a document out of its library. It stays stored for the versions that hold it."""
     doc = await get_document(document_id)
     if doc is None:
         return None
     await check_idle(doc["corpus"])
-    return await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id, title, corpus",
-                           (document_id,))
+    gone = await fetch_one("UPDATE documents SET removed_at = COALESCE(removed_at, now()) "
+                           "WHERE id=%s RETURNING id, title, corpus", (document_id,))
+    await record_version(doc["corpus"])
+    return gone
 
 
 async def rename_document(document_id: int, title: str) -> dict | None:
+    """Retitle a document. A title is a label, not content, so this makes no new version."""
     title = " ".join(title.split())[:300]
     if not title:
         raise ValueError("A document needs a title.")
@@ -275,27 +421,65 @@ async def rename_document(document_id: int, title: str) -> dict | None:
                            (title, document_id))
 
 
+async def copy_document(doc: dict, corpus: str, **changes) -> int:
+    """A new document row in `corpus`, carrying `doc`'s passages and embeddings over."""
+    fields = {k: doc[k] for k in ("title", "source_uri", "doc_type", "metadata", "sha256")}
+    fields.update(changes)
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        await cur.execute(
+            "INSERT INTO documents (corpus, title, source_uri, doc_type, metadata, sha256) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (corpus, fields["title"], fields["source_uri"], fields["doc_type"],
+             jsonb(fields["metadata"] or {}), fields["sha256"]))
+        new_id = (await cur.fetchone())["id"]
+        await cur.execute(
+            "INSERT INTO chunks (document_id, ordinal, content, page_start, page_end, embedding) "
+            "SELECT %s, ordinal, content, page_start, page_end, embedding FROM chunks "
+            "WHERE document_id=%s", (new_id, doc["id"]))
+    return new_id
+
+
 async def move_document(document_id: int, corpus: str) -> dict | None:
-    """File a document under another corpus (which is created if it does not exist)."""
+    """File a document under another library (created if it does not exist).
+
+    The document is copied into the other library and taken out of this one, so each
+    library's earlier versions still hold what they held.
+    """
     corpus = " ".join(corpus.split())[:120]
     if not corpus:
-        raise ValueError("Choose a corpus to move the document to.")
+        raise ValueError("Choose a library to move the document to.")
     doc = await get_document(document_id)
     if doc is None:
         return None
+    if doc["removed_at"]:
+        raise ValueError("This document is no longer in its library, so it cannot be moved.")
+    if corpus == doc["corpus"]:
+        return {"id": doc["id"], "title": doc["title"], "corpus": corpus}
     await check_idle(doc["corpus"])
     await check_idle(corpus)
-    return await fetch_one("UPDATE documents SET corpus=%s WHERE id=%s RETURNING id, title, corpus",
-                           (corpus, document_id))
+    if await fetch_one("SELECT id FROM documents WHERE corpus=%s AND sha256=%s AND removed_at IS NULL",
+                       (corpus, doc["sha256"])):
+        raise ValueError(f"“{corpus}” already holds the same text.")
+    new_id = await copy_document(doc, corpus)
+    await fetch_one("UPDATE documents SET removed_at=now(), replaced_by=%s WHERE id=%s RETURNING id",
+                    (new_id, document_id))
+    await record_version(doc["corpus"])
+    await record_version(corpus)
+    return {"id": new_id, "title": doc["title"], "corpus": corpus}
 
 
 async def delete_corpus(name: str) -> int:
-    """Remove every document in a corpus, and their chunks. Returns how many documents.
+    """Delete a library outright: every document it ever held, and all its versions.
+    Returns how many current documents it had.
 
-    Past runs keep their results and citation text; a citation's chunk id simply no longer
-    resolves to a passage.
+    Past runs keep their results and citation text, but can no longer be repeated against
+    this library.
     """
     await check_idle(name)
-    rows = await fetch_all("DELETE FROM documents WHERE corpus=%s RETURNING id", (name,))
-    log.info("deleted corpus %s: %d documents", name, len(rows))
-    return len(rows)
+    current = await fetch_one("SELECT COUNT(*) AS n FROM documents WHERE corpus=%s "
+                              "AND removed_at IS NULL", (name,))
+    await fetch_all("DELETE FROM documents WHERE corpus=%s RETURNING id", (name,))
+    await fetch_all("DELETE FROM corpus_versions WHERE corpus=%s RETURNING version", (name,))
+    log.info("deleted library %s", name)
+    return current["n"] if current else 0

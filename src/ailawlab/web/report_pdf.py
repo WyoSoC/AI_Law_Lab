@@ -186,6 +186,9 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
         meta.append(f"started {view['started']}")
     if view.get("took"):
         meta.append(f"took {view['took']}")
+    if view.get("library"):
+        meta.append(f"library {view['library']}"
+                    + (f" v{view['library_version']}" if view.get("library_version") else ""))
     if view.get("turns") is not None and "turns" in view:
         meta.append(f"{view['turns']} turns")
     story += [Paragraph(_plain(title), st["title"]),

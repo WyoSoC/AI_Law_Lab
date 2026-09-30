@@ -29,7 +29,7 @@ from typing import Any
 from . import source_material
 from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb
-from .rag import Corpus, check_idle, get_document
+from .rag import Corpus, check_idle, copy_document, get_document, record_version
 from .router import LLMRouter
 
 log = logging.getLogger(__name__)
@@ -84,9 +84,10 @@ async def _read(link: str) -> source_material.SourceDoc:
     return await source_material.fetch_url(link, max_words=settings.web_link_max_words)
 
 
-async def _holder(sha: str) -> dict | None:
-    """The document that already holds this exact text, if any (sha256 is unique)."""
-    return await fetch_one("SELECT id, title, corpus FROM documents WHERE sha256=%s", (sha,))
+async def _holder(sha: str, corpus: str) -> dict | None:
+    """The document in this library that already holds this exact text, if any."""
+    return await fetch_one("SELECT id, title, corpus FROM documents WHERE sha256=%s "
+                           "AND corpus=%s AND removed_at IS NULL", (sha, corpus))
 
 
 async def add_links(router: LLMRouter, corpus: str, links: list[str]) -> dict[str, Any]:
@@ -100,13 +101,13 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str]) -> dict[st
     await check_idle(corpus)
     known = {r["link"]: r for r in await fetch_all(
         "SELECT id, title, metadata->>'link' AS link FROM documents "
-        "WHERE corpus=%s AND metadata ? 'link'", (corpus,))}
+        "WHERE corpus=%s AND metadata ? 'link' AND removed_at IS NULL", (corpus,))}
 
     async def read(link: str) -> dict[str, Any]:
         if link in known:
             return {"link": link, "status": "exists", "document_id": known[link]["id"],
                     "title": known[link]["title"],
-                    "detail": "Already in this corpus. Use “Check for updates” to re-read it."}
+                    "detail": "Already in this library. Use “Check for updates” to re-read it."}
         try:
             return {"link": link, "doc": await _read(link)}
         except source_material.SourceError as e:
@@ -122,12 +123,11 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str]) -> dict[st
         if doc is None:
             report.append(item)
             continue
-        holder = await _holder(_sha(doc.text))
+        holder = await _holder(_sha(doc.text), corpus)
         if holder:
-            where = "this corpus" if holder["corpus"] == corpus else f"the corpus “{holder['corpus']}”"
             report.append({"link": item["link"], "status": "exists", "document_id": holder["id"],
                            "title": holder["title"],
-                           "detail": f"The same text is already in {where}, as “{holder['title']}”."})
+                           "detail": f"The same text is already in this library, as “{holder['title']}”."})
             continue
         try:
             doc_id = await store.add_document(
@@ -140,12 +140,19 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str]) -> dict[st
             continue
         report.append({"link": item["link"], "status": "added", "document_id": doc_id,
                        "title": doc.title, "detail": _for_corpus(" ".join(doc.warnings))})
-    return {"corpus": corpus, "results": report,
-            "added": sum(1 for r in report if r["status"] == "added")}
+    added = sum(1 for r in report if r["status"] == "added")
+    version = await record_version(corpus) if added else None
+    return {"corpus": corpus, "results": report, "added": added,
+            "version": version["version"] if version else None}
 
 
 async def refresh(router: LLMRouter, document_id: int) -> dict[str, Any]:
-    """Check a link document for changes. Status: unchanged, updated, error, or not_a_link."""
+    """Check a link document for changes. Status: unchanged, updated, error, or not_a_link.
+
+    A changed page is stored as a new document that replaces the old one (whose passages
+    are kept for the library's earlier versions); `document_id` in the result is the new
+    one's, and `replaced` the old one's.
+    """
     doc = await get_document(document_id)
     if doc is None:
         return {"document_id": document_id, "status": "error", "detail": "No such document."}
@@ -154,6 +161,9 @@ async def refresh(router: LLMRouter, document_id: int) -> dict[str, Any]:
     if not link:
         return {"document_id": document_id, "status": "not_a_link", "title": doc["title"],
                 "detail": "This document was not added from a web link."}
+    if doc["removed_at"]:
+        return {"document_id": document_id, "status": "error", "title": doc["title"],
+                "detail": "This copy is no longer in the library, so it is not checked."}
     await check_idle(doc["corpus"])
 
     async def record(status: str, **fields: Any) -> dict[str, Any]:
@@ -178,31 +188,41 @@ async def refresh(router: LLMRouter, document_id: int) -> dict[str, Any]:
                         (jsonb(meta), document_id))
         return await record("unchanged", detail="No change since it was last read.")
 
-    holder = await _holder(sha)
+    holder = await _holder(sha, doc["corpus"])
     if holder:
         meta.update({"checked_at": _now(),
-                     "check_error": f"The page now matches “{holder['title']}” in "
-                                    f"“{holder['corpus']}”, so it was not re-read."})
+                     "check_error": f"The page now matches “{holder['title']}”, already in "
+                                    "this library, so it was not re-read."})
         await fetch_one("UPDATE documents SET metadata=%s WHERE id=%s RETURNING id",
                         (jsonb(meta), document_id))
         return await record("error", detail=meta["check_error"])
 
-    n = await Corpus(router, name=doc["corpus"]).store_chunks(document_id, page.text)
     meta = _meta(page, link, previous=meta)
     meta["changed_at"] = meta["checked_at"]
+    # The new copy keeps the title someone may have given the document; its passages are
+    # built from the new text before the old copy is taken out, so a failure leaves the
+    # library as it was.
+    new_id = await copy_document({**doc, "id": None}, doc["corpus"], sha256=sha, metadata=meta,
+                                 source_uri=page.url or link, doc_type=page.kind)
+    try:
+        n = await Corpus(router, name=doc["corpus"]).store_chunks(new_id, page.text)
+    except Exception:
+        await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id", (new_id,))
+        raise
     pool = await get_pool()
     async with pool.connection() as conn, conn.cursor() as cur:
-        await cur.execute(
-            "UPDATE documents SET sha256=%s, metadata=%s, source_uri=%s, doc_type=%s WHERE id=%s",
-            (sha, jsonb(meta), page.url or link, page.kind, document_id))
-    return await record("updated", passages=n,
-                        detail=f"The page had changed; re-read it into {n} passages.")
+        await cur.execute("UPDATE documents SET removed_at=now(), replaced_by=%s WHERE id=%s",
+                          (new_id, document_id))
+    version = await record_version(doc["corpus"])
+    return {"document_id": new_id, "replaced": document_id, "title": doc["title"], "link": link,
+            "status": "updated", "passages": n, "version": version["version"] if version else None,
+            "detail": f"The page had changed; re-read it into {n} passages."}
 
 
 async def refresh_corpus(router: LLMRouter, corpus: str) -> dict[str, Any]:
     """Check every link in a corpus, one at a time, and summarize."""
     rows = await fetch_all("SELECT id FROM documents WHERE corpus=%s AND metadata ? 'link' "
-                           "ORDER BY created_at", (corpus,))
+                           "AND removed_at IS NULL ORDER BY created_at", (corpus,))
     results = [await refresh(router, r["id"]) for r in rows]
     counts: dict[str, int] = {}
     for r in results:

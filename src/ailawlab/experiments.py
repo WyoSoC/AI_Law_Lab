@@ -18,7 +18,7 @@ from .graphs.agentic_workflow import build_agentic_graph
 from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
-from .rag import Corpus
+from .rag import Corpus, get_version, record_version
 from .router import get_router
 from .tools import default_registry
 from .tracing import Tracer, run_metrics
@@ -168,6 +168,13 @@ async def list_runs(experiment_id: str | None = None, limit: int = 50) -> list[d
     )
 
 
+async def _set_fields(run_id: str, **fields) -> None:
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(f"UPDATE runs SET {sets} WHERE id=%s", [*fields.values(), run_id])
+
+
 async def _set_status(run_id: str, status: str, **fields) -> None:
     sets = ["status=%s"]
     params: list[Any] = [status]
@@ -236,20 +243,17 @@ async def execute_run(run_id: str) -> dict:
     inputs = run["inputs"] or {}
 
     router = await get_router()
-    # A run may name its own corpus (a role-play's legal sources are chosen at launch).
-    corpus = Corpus(router, name=inputs.get("corpus") or config.get("corpus") or "default")
     tracer = Tracer(run_id)
-    ctx = RunContext(run_id=run_id, router=router, tracer=tracer, corpus=corpus, config=config)
-
-    if mode == "agentic_workflow":
-        ctx.config = {**config,
-                      "registry": default_registry(corpus,
-                                                   allow_network=config.get("allow_network", False))}
-
     await _set_status(run_id, "running", started_at=datetime.now(UTC))
     await tracer.note(f"run started (mode={mode})")
 
     try:
+        corpus = await _library_for_run(run_id, mode, {**config, **inputs}, router, tracer)
+        ctx = RunContext(run_id=run_id, router=router, tracer=tracer, corpus=corpus, config=config)
+        if mode == "agentic_workflow":
+            ctx.config = {**config, "registry": default_registry(
+                corpus, allow_network=config.get("allow_network", False))}
+
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
         if mode == "roleplay":
@@ -276,6 +280,39 @@ async def execute_run(run_id: str) -> dict:
         await _set_status(run_id, "failed", error=f"{type(e).__name__}: {e}",
                           finished_at=datetime.now(UTC))
         raise
+
+
+async def _library_for_run(run_id: str, mode: str, merged: dict, router, tracer: Tracer) -> Corpus:
+    """The library this run searches, pinned to one version and recorded on the run.
+
+    A run names its library (a role-play's legal sources can be chosen at launch) and may
+    name a version, to repeat an earlier result against the library as it was then. With
+    no version given, the library's current contents are recorded as a version if they
+    changed since the last one, and that version is used.
+    """
+    name = str(merged.get("corpus") or "").strip()
+    if mode == "roleplay" and not name:
+        return Corpus(router, name="")              # no legal sources: never searched
+    name = name or "default"
+    wanted = merged.get("corpus_version")
+    if wanted not in (None, ""):
+        try:
+            number = int(wanted)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"library version {wanted!r} is not a number") from e
+        version = await get_version(name, number)
+        if version is None:
+            raise ValueError(f"the library “{name}” has no version {number}")
+    else:
+        version = await record_version(name)
+    await _set_fields(run_id, corpus=name, corpus_version=version["version"] if version else None)
+    if version is None:
+        await tracer.note(f"library “{name}” is empty; nothing can be retrieved")
+        return Corpus(router, name=name)
+    n = len(version["document_ids"])
+    await tracer.note(f"searching library “{name}”, version {version['version']} "
+                      f"({n} document{'' if n == 1 else 's'})")
+    return Corpus(router, name=name, document_ids=list(version["document_ids"]))
 
 
 async def _check_roleplay(state: dict, tracer: Tracer) -> None:

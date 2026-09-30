@@ -713,8 +713,12 @@ async def ingest(pid: str, hits: list[dict[str, Any]], corpus_name: str,
         report.append({
             "ref": item["ref"], "title": doc.title,
             "status": "ingested" if doc_id else "duplicate",
-            "detail": "" if doc_id else "already in the corpus (same sha256)",
+            "detail": "" if doc_id else "already in this library (same text)",
         })
 
-    return {"corpus": store.name, "results": report,
-            "ingested": sum(1 for r in report if r["status"] == "ingested")}
+    ingested = sum(1 for r in report if r["status"] == "ingested")
+    if ingested:
+        from .rag import record_version
+
+        await record_version(store.name)
+    return {"corpus": store.name, "results": report, "ingested": ingested}

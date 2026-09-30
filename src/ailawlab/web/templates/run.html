@@ -19,7 +19,10 @@
   &middot; <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
   {% if v.started %}&middot; started {{ v.started }}{% endif %}
   {% if v.took %}&middot; took {{ v.took }}{% endif %}
-  {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}
+  {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}  {% if v.library %}&middot; library
+    <a href="{{ prefix }}/sources/corpora/{{ v.library|urlencode }}{% if v.library_version %}/versions/{{ v.library_version }}{% endif %}">{{ v.library }}{% if v.library_version %} v{{ v.library_version }}{% endif %}</a>
+    {% if v.library_version %}(<a href="{{ prefix }}/experiments/{{ run.experiment_id }}?corpus_version={{ v.library_version }}{% if run.mode == 'roleplay' %}&amp;corpus={{ v.library|urlencode }}{% endif %}#launch">run again with this version</a>){% endif %}
+  {% endif %}
 </p>
 
 <nav class="jump" aria-label="On this page">

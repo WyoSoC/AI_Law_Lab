@@ -36,13 +36,13 @@
       <div class="feature-icon">📄</div>
       <h3>Document analysis</h3>
       <p>Break a question about a contract or opinion into sub-questions, answer each from
-         the document, and ground the answer in the corpus with numbered citations that are
+         the document, and ground the answer in the library with numbered citations that are
          checked afterwards &mdash; an invented citation is flagged, not hidden.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">🛠️</div>
       <h3>Agentic workflows</h3>
-      <p>A tool-using loop that plans, searches the corpus and does damages arithmetic until
+      <p>A tool-using loop that plans, searches the library and does damages arithmetic until
          it can answer, with every tool call recorded for audit.</p>
     </div>
     <div class="feature">
@@ -75,7 +75,7 @@
     <div class="stat">
       <div class="label">Online source families</div>
       <div class="value">{{ topics|length }}</div>
-      <div class="note">searchable and ingestable into the corpus</div>
+      <div class="note">searchable and ready to add to a library</div>
     </div>
     <div class="stat">
       <div class="label">Experiments defined</div>
@@ -83,7 +83,7 @@
       <div class="note"><a href="{{ prefix }}/dashboard">see the dashboard</a></div>
     </div>
     <div class="stat">
-      <div class="label">Corpus collections</div>
+      <div class="label">Curated libraries</div>
       <div class="value">{{ corpora|length }}</div>
       <div class="note">
         {% if corpora %}{% for c in corpora %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}

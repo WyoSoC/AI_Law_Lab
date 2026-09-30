@@ -35,7 +35,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <div class="panel mode-panel" data-mode="document_analysis">
     <h2>Document analysis setup</h2>
     <p class="hint">The document itself is supplied per run. Configure retrieval here.</p>
-    <label for="da_corpus">Corpus to retrieve from</label>
+    <label for="da_corpus">Library to retrieve from</label>
     <select id="da_corpus" class="corpus-pick">
       <option value="default">default</option>
       {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
@@ -48,7 +48,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
     <p class="hint">The task is supplied per run. Configure the tool loop here.</p>
     <div class="two-col">
       <div>
-        <label for="aw_corpus">Corpus to retrieve from</label>
+        <label for="aw_corpus">Library to retrieve from</label>
         <select id="aw_corpus" class="corpus-pick">
           <option value="default">default</option>
           {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
@@ -64,7 +64,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       Allow network tools during the run</label>
     <p class="hint">Off by default: an experiment about model reasoning shouldn't silently
        reach the open internet. No network tools are installed yet, so for now the agent
-       works from corpus search and arithmetic either way.</p>
+       works from library search and arithmetic either way.</p>
   </div>
 
   <!-- ───────────── roleplay ───────────── -->
@@ -102,7 +102,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       <option value="">None: the cast argues from the scenario alone</option>
       {% for c in corpora %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
     </select>
-    <p class="hint">Before each turn the speaker is shown the passages from this corpus closest to
+    <p class="hint">Before each turn the speaker is shown the passages from this library closest to
        their objective and to what was just said, and can cite them as [S1], [S2]. The run page
        shows which sources each turn was given and which it cited. Manage corpora under
        <a href="{{ prefix }}/sources">Legal Sources</a>.</p>

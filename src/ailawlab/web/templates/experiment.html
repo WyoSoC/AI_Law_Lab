@@ -166,12 +166,12 @@
       </div>
     </details>
     <label for="in_corpus">Legal sources for this run</label>
-    <select id="in_corpus" onchange="syncInputs()">
+    <select id="in_corpus" onchange="fillVersions(); syncInputs()">
       <option value="">None</option>
       {% for c in corpora %}<option value="{{ c }}" {% if c == v.corpus %}selected{% endif %}>{{ c }}</option>{% endfor %}
       {% if v.corpus and v.corpus not in corpora %}<option value="{{ v.corpus }}" selected>{{ v.corpus }} (now empty)</option>{% endif %}
     </select>
-    <p class="hint">Passages from this corpus are put before each speaker, who can cite them as
+    <p class="hint">Passages from this library are put before each speaker, who can cite them as
        [S1], [S2]. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
     <p class="estimate" id="estimate"></p>
   {% elif exp.mode == 'document_analysis' %}
@@ -192,8 +192,16 @@
   {% else %}
     <label for="in_task">Task</label>
     <textarea id="in_task" class="short tall" oninput="syncInputs()"
-              placeholder="e.g. Search the corpus and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
+              placeholder="e.g. Search the library and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
   {% endif %}
+
+  <div id="version-field">
+    <label for="in_version">Library version</label>
+    <select id="in_version" onchange="syncInputs()"></select>
+    <p class="hint">Runs normally search the library as it is now, and record which version that
+      was. To repeat an earlier result exactly, choose the version that run used.
+      <a id="version-link" href="#">See this library's versions</a>.</p>
+  </div>
 
   <p class="launch-error" id="launch-error" hidden></p>
   <div class="launch-row">
@@ -253,14 +261,39 @@ function buildInputs() {
     if (words !== BASE.word_limit) inputs.word_limit = words;
     const corpus = $("in_corpus").value;
     if (corpus !== (BASE.corpus || "")) inputs.corpus = corpus;
-    return inputs;
+    return withVersion(inputs);
   }
   if (MODE === "document_analysis") {
     const inputs = {question: $("in_question").value.trim(), document_text: $("in_text").value};
     if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
-    return inputs;
+    return withVersion(inputs);
   }
-  return {task: $("in_task").value.trim()};
+  return withVersion({task: $("in_task").value.trim()});
+}
+
+// ---------------------------------------------------------------- library version
+// Each library's recorded versions, newest first; the run page's "Run again with this
+// version" link arrives with ?corpus_version=N.
+const VERSIONS = {{ library_versions|tojson }};
+const LIBRARY = {{ (exp.config.corpus or 'default')|tojson }};
+const WANTED_VERSION = new URLSearchParams(location.search).get("corpus_version");
+
+function libraryName() { return MODE === "roleplay" ? $("in_corpus").value : LIBRARY; }
+
+function fillVersions() {
+  const name = libraryName(), list = VERSIONS[name] || [];
+  $("version-field").hidden = !name;
+  $("version-link").href = `${PREFIX}/sources/corpora/${encodeURIComponent(name)}#versions`;
+  const keep = $("in_version").value || WANTED_VERSION || "";
+  $("in_version").innerHTML = `<option value="">Current contents${list.length ? ` (v${list[0].version} unless it has changed since)` : ""}</option>`
+    + list.map(v => `<option value="${v.version}">Version ${v.version}: ${v.documents} document${v.documents === 1 ? "" : "s"}, recorded ${v.date}</option>`).join("");
+  if ([...$("in_version").options].some(o => o.value === keep)) $("in_version").value = keep;
+}
+
+function withVersion(inputs) {
+  const v = $("in_version").value;
+  if (v && !$("version-field").hidden) inputs.corpus_version = parseInt(v, 10);
+  return inputs;
 }
 
 // Mirrors views.duration_text and roleplay_policy.estimate_run_seconds.
@@ -353,6 +386,11 @@ async function loadDocument(from) {
   if (from === "file") $("load-file").value = "";
 }
 
+// "Run again with this version" on a role-play run also names the library it used.
+const WANTED_LIBRARY = new URLSearchParams(location.search).get("corpus");
+if (MODE === "roleplay" && WANTED_LIBRARY && [...$("in_corpus").options].some(o => o.value === WANTED_LIBRARY))
+  $("in_corpus").value = WANTED_LIBRARY;
+fillVersions();
 syncInputs();
 </script>
 {% endblock %}

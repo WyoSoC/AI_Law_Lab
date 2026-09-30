@@ -24,11 +24,11 @@ MODE_LABELS = {
 MODE_BLURBS = {
     "document_analysis": (
         "Each run analyzes one document. The question is split into sub-questions, each is "
-        "answered from the document, and the answer is grounded in the corpus with numbered "
+        "answered from the document, and the answer is grounded in the library with numbered "
         "citations that are checked afterwards."),
     "agentic_workflow": (
         "Each run gives an agent one task. It works in a think-then-act loop, calling tools "
-        "such as corpus search, until it can answer."),
+        "such as library search, until it can answer."),
     "roleplay": (
         "Each run plays out the scenario between the cast. A moderator decides who speaks, "
         "steps in when talks stall, and ends the scene; an evaluator then assesses the "
@@ -225,13 +225,13 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
     corpus = str(config.get("corpus") or "default")
     documents = ("" if corpus_documents is None else
                  f"{corpus_documents} document{'' if corpus_documents == 1 else 's'} in it")
-    facts = [_fact("Corpus", corpus, documents)]
+    facts = [_fact("Library", corpus, documents)]
     if mode == "agentic_workflow":
         facts += [
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
                   "think-then-act cycles before it must answer"),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
-                  "none are installed yet, so the agent uses corpus search either way"),
+                  "none are installed yet, so the agent uses library search either way"),
         ]
     view.update(facts=facts, launch_defaults={})
     return view
@@ -306,6 +306,10 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         "started": f"{started:%B} {started.day}, {started:%Y at %H:%M} UTC" if started else "",
         "took": elapsed_text((finished - started).total_seconds()) if started and finished else "",
         "summary_title": "Assessment" if mode == "roleplay" else "Answer",
+        # The library the run searched and its version (absent for runs from before
+        # libraries were versioned, and for role-plays without legal sources).
+        "library": run.get("corpus") or "",
+        "library_version": run.get("corpus_version"),
         "summary_md": result.get("outcome") or result.get("answer") or "",
     }
     view["summary_html"] = link_turns(to_html(view["summary_md"])) if view["summary_md"] else ""
