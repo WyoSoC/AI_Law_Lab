@@ -32,7 +32,7 @@ Users ──▶ Web interface ──▶ Experiment manager
 A full architecture diagram, with a component reference covering each tier, the queue, the
 trace and what does and does not leave campus, is at
 [`src/ailawlab/web/static/docs/architecture.pdf`](src/ailawlab/web/static/docs/architecture.pdf),
-linked from the portal's About page. `docs/architecture/build.py` regenerates it.
+linked from the portal's About page (the landing page, reached by the logo). `docs/architecture/build.py` regenerates it.
 
 ## Quick start
 
@@ -230,6 +230,26 @@ column. `citations` links asserted citations back to chunks with a `grounded` /
 `run_metrics()` aggregates this into performance, grounding rate, and host distribution.
 `queue_share` answers the first question you have about a slow run: was it the model, or
 the cluster being busy?
+
+## The portal
+
+The logo leads to the About page; the tabs are **Legal Sources**, **New experiment** and
+**Dashboard**, and inner pages carry breadcrumbs back to them. A switch in the header picks
+the light or dark theme (saved per browser; otherwise the system setting is followed).
+
+**Legal Sources** lists each corpus with its size and the experiments that use it. Opening one
+shows its documents, lets you read any document as the passages experiments retrieve, and
+has a "Try a search" box that shows what retrieval would return for a question, with
+similarity scores. Documents are added from the online databases or by uploading several files
+at once, into an existing corpus picked from a drop-down or a new one. A document can be
+removed on its own; deleting a whole corpus asks you to type its name. Neither is allowed while
+a run that retrieves from that corpus is in progress.
+
+**Experiments are deleted in two steps.** Moving one to the trash (from the dashboard or the
+experiment's page, with an Undo) only hides it: its runs and results stay, it cannot be run,
+and it can be restored. Deleting it for good from the trash removes its runs, traces and
+citations. `experiments.deleted_at` marks trashed experiments; `db/schema.sql` adds the column
+to an existing database.
 
 ## Reproducibility
 

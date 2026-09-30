@@ -184,3 +184,85 @@ def format_passages(passages: list[Passage]) -> str:
     return "\n\n".join(
         f"[{i}] {p.cite_label()}\n{p.content}" for i, p in enumerate(passages, start=1)
     )
+
+
+# ---------------------------------------------------------------- managing corpora
+#
+# A corpus has no table of its own: it is the set of documents sharing a `corpus` name,
+# so it exists while it has a document and disappears with its last one.
+
+
+class CorpusBusy(Exception):
+    """A run that retrieves from this corpus is in progress."""
+
+
+async def list_corpora() -> list[dict]:
+    """Every corpus with its size, when it last grew, and how many experiments use it."""
+    return await fetch_all(
+        "SELECT d.corpus, COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks, "
+        "       MAX(d.created_at) AS last_added, "
+        "       (SELECT COUNT(*) FROM experiments e WHERE e.deleted_at IS NULL "
+        "          AND COALESCE(e.config->>'corpus', 'default') = d.corpus "
+        "          AND e.mode <> 'roleplay') AS experiments "
+        "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id "
+        "GROUP BY d.corpus ORDER BY d.corpus"
+    )
+
+
+async def corpus_documents(name: str | None = None) -> list[dict]:
+    """Documents with their chunk counts, newest first; all of them, or one corpus's."""
+    where, params = ("WHERE d.corpus = %s ", (name,)) if name is not None else ("", ())
+    return await fetch_all(
+        "SELECT d.*, COUNT(c.id) AS chunk_count, "
+        "       COALESCE(SUM(LENGTH(c.content)), 0) AS chars FROM documents d "
+        f"LEFT JOIN chunks c ON c.document_id = d.id {where}"
+        "GROUP BY d.id ORDER BY d.created_at DESC", params)
+
+
+async def corpus_experiments(name: str) -> list[dict]:
+    """Experiments (not in the trash) that retrieve from this corpus."""
+    return await fetch_all(
+        "SELECT id, name, mode FROM experiments WHERE deleted_at IS NULL AND mode <> 'roleplay' "
+        "AND COALESCE(config->>'corpus', 'default') = %s ORDER BY created_at DESC", (name,))
+
+
+async def get_document(document_id: int) -> dict | None:
+    return await fetch_one("SELECT * FROM documents WHERE id=%s", (document_id,))
+
+
+async def document_chunks(document_id: int) -> list[dict]:
+    return await fetch_all(
+        "SELECT id, ordinal, content, page_start, page_end FROM chunks "
+        "WHERE document_id=%s ORDER BY ordinal", (document_id,))
+
+
+async def _check_idle(name: str) -> None:
+    row = await fetch_one(
+        "SELECT COUNT(*) AS n FROM runs r JOIN experiments e ON e.id = r.experiment_id "
+        "WHERE r.status IN ('pending', 'running') AND e.mode <> 'roleplay' "
+        "AND COALESCE(r.config_snapshot->>'corpus', 'default') = %s", (name,))
+    if row and row["n"]:
+        raise CorpusBusy(f"A run that retrieves from {name!r} is in progress. "
+                         "Wait for it to finish first.")
+
+
+async def delete_document(document_id: int) -> dict | None:
+    """Remove one document and its chunks. Returns the removed row, or None."""
+    doc = await get_document(document_id)
+    if doc is None:
+        return None
+    await _check_idle(doc["corpus"])
+    return await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id, title, corpus",
+                           (document_id,))
+
+
+async def delete_corpus(name: str) -> int:
+    """Remove every document in a corpus, and their chunks. Returns how many documents.
+
+    Past runs keep their results and citation text; a citation's chunk id simply no longer
+    resolves to a passage.
+    """
+    await _check_idle(name)
+    rows = await fetch_all("DELETE FROM documents WHERE corpus=%s RETURNING id", (name,))
+    log.info("deleted corpus %s: %d documents", name, len(rows))
+    return len(rows)

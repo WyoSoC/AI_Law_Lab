@@ -1,4 +1,13 @@
 {% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Run {{ (run.id|string)[:8] }} · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/dashboard">Dashboard</a><span class="sep">›</span>
+  <a href="{{ prefix }}/experiments/{{ run.experiment_id }}">{{ run.experiment_name }}</a><span class="sep">›</span>
+  <span>Run {{ (run.id|string)[:8] }}</span>
+</nav>
+{% endblock %}
 {% block content %}
 
 <h1>Run <code>{{ (run.id|string)[:8] }}</code></h1>

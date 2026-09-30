@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Trash · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/dashboard">Dashboard</a><span class="sep">›</span><span>Trash</span>
+</nav>
+{% endblock %}
+{% block content %}
+
+<div class="title-row">
+  <h1>Trash</h1>
+  {% if experiments %}
+  <form method="post" action="{{ prefix }}/trash/empty"
+        onsubmit="return confirm('Delete all {{ experiments|length }} experiment{{ '' if experiments|length == 1 else 's' }} in the trash for good, with every run, trace and result? This cannot be undone.')">
+    <button type="submit" class="small-btn danger">Empty trash</button>
+  </form>
+  {% endif %}
+</div>
+<p class="sub">Experiments moved here keep their runs, traces and results, and can be restored
+at any time. Deleting one for good removes all of that and cannot be undone.</p>
+
+{% if request.query_params.get('msg') %}
+<p class="notice">{{ request.query_params.get('msg') }}</p>
+{% endif %}
+
+<div class="panel">
+  {% if experiments %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Mode</th><th>Runs</th><th>Moved to trash</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for e in experiments %}
+        <tr>
+          <td><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a></td>
+          <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
+          <td>{{ e.run_count }}</td>
+          <td class="nowrap">{{ e.deleted_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="actions-cell"><div class="row-actions">
+            <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/restore">
+              <button type="submit" class="small-btn">Restore</button>
+            </form>
+            <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/delete"
+                  onsubmit="return confirm({{ ('Delete “' ~ e.name ~ '” for good, with its ' ~ e.run_count ~ ' run' ~ ('' if e.run_count == 1 else 's') ~ '? This cannot be undone.')|tojson|forceescape }})">
+              <button type="submit" class="small-btn danger">Delete for good</button>
+            </form>
+          </div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">The trash is empty.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

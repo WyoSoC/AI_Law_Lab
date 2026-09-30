@@ -1,13 +1,29 @@
 {% extends "base.html" %}
+{% set active = 'sources' %}
 {% block title %}Legal Sources · AI Law Lab{% endblock %}
 {% block content %}
 
 <h1>Legal Sources</h1>
-<p class="sub">Everything an experiment can retrieve from. Upload your own documents, or
-search the online legal databases and pull results in &mdash; each becomes chunked,
-embedded and citable, filed under a corpus you choose.</p>
+<p class="sub">Everything an experiment can retrieve from, filed in corpora you name. Open a
+corpus to see what is in it, or add to one by searching the online legal databases or
+uploading your own documents &mdash; each becomes chunked, embedded and citable.</p>
 
-<h2>Search online databases</h2>
+{% if request.query_params.get('msg') %}
+<p class="notice">{{ request.query_params.get('msg') }}</p>
+{% endif %}
+
+<h2>Your corpora</h2>
+<div id="corpus-panel">
+  {% include "_corpora.html" %}
+</div>
+
+<h2 id="add">Add to a corpus</h2>
+<div class="subtabs" role="tablist">
+  <button type="button" role="tab" id="tab-search" aria-controls="pane-search" data-tab="search">Search online databases</button>
+  <button type="button" role="tab" id="tab-upload" aria-controls="pane-upload" data-tab="upload">Upload documents</button>
+</div>
+
+<div id="pane-search" role="tabpanel" aria-labelledby="tab-search">
 {% for topic in topics %}
 <div class="panel source-topic">
   <div class="topic-head">
@@ -28,8 +44,6 @@ embedded and citable, filed under a corpus you choose.</p>
     {% if p.available %}
     <form class="source-search" onsubmit="return searchSource(event, '{{ p.id }}')">
       <input type="text" name="q" placeholder="{{ p.query_hint }}" autocomplete="off">
-      <label class="corpus-inline">into
-        <input type="text" name="corpus" value="{{ p.corpus }}" size="12"></label>
       <button type="submit">Search</button>
     </form>
     <div class="source-results" id="results-{{ p.id }}"></div>
@@ -38,40 +52,92 @@ embedded and citable, filed under a corpus you choose.</p>
   {% endfor %}
 </div>
 {% endfor %}
-
-<h2>Upload a document</h2>
-<div class="panel">
-  {% if request.query_params.get('msg') %}
-  <p class="provider-note warn">{{ request.query_params.get('msg') }}</p>
-  {% endif %}
-  <form method="post" action="{{ prefix }}/corpus/upload" enctype="multipart/form-data">
-    <label for="file">Document (PDF or plain text)</label>
-    <input type="file" id="file" name="file" required accept=".pdf,.txt,.md">
-
-    <label for="corpus">Corpus name</label>
-    <input type="text" id="corpus" name="corpus" value="default">
-    <p class="hint">Experiments select a corpus by name, so you can keep collections separate by topic.</p>
-
-    <button type="submit">Ingest</button>
-  </form>
 </div>
 
-<h2>In the corpus</h2>
-<div class="panel" id="corpus-panel">
-  {% include "_documents.html" %}
+<div id="pane-upload" role="tabpanel" aria-labelledby="tab-upload" hidden>
+<div class="panel">
+  <form method="post" action="{{ prefix }}/corpus/upload" enctype="multipart/form-data" id="upload-form">
+    <label for="file">Documents (PDF or plain text; you can choose several)</label>
+    <input type="file" id="file" name="files" required multiple accept=".pdf,.txt,.md">
+
+    <label>Add them to</label>
+    <div class="corpus-picker" data-default="default"></div>
+    <input type="hidden" name="corpus">
+    <p class="hint">Experiments retrieve from one corpus, chosen by name, so keep collections
+      separate by topic or project.</p>
+
+    <button type="submit">Add to corpus</button>
+  </form>
+</div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
 const PREFIX = "{{ prefix }}";
+// Existing corpora for the drop-downs; refreshed after every ingest.
+let CORPORA = {{ corpora | map(attribute='corpus') | list | tojson }};
+// "Add documents to this corpus" on a corpus page links here with ?corpus=<name>.
+const PRESET = new URLSearchParams(location.search).get('corpus');
 // Hits from the last search per provider, keyed by ref, so ingest can send back the whole
 // hit (snippet, url, metadata) and not just an id the server would have to re-fetch.
 const HITS = {};
+const NEW = '__new__';
 
 function esc(s) {
   return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
+
+// ---------------------------------------------------------------- tabs
+
+function showTab(name) {
+  document.querySelectorAll('.subtabs [role=tab]').forEach(t => {
+    const on = t.dataset.tab === name;
+    t.setAttribute('aria-selected', on);
+    t.classList.toggle('active', on);
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+  });
+}
+document.querySelectorAll('.subtabs [role=tab]').forEach(t =>
+  t.addEventListener('click', () => showTab(t.dataset.tab)));
+showTab(new URLSearchParams(location.search).get('tab') === 'upload' ? 'upload' : 'search');
+
+// ---------------------------------------------------------------- corpus picker
+//
+// A drop-down of the corpora that already exist, plus "New corpus…", which reveals a box
+// to name one. Picking from a list avoids near-duplicates like "case law" vs "case_law".
+
+function fillPicker(el, wanted) {
+  const choice = wanted || PRESET || el.dataset.default || 'default';
+  const known = CORPORA.includes(choice);
+  el.innerHTML = `
+    <select class="corpus-select" aria-label="Corpus">
+      ${CORPORA.map(c => `<option value="${esc(c)}"${c === choice ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+      <option value="${NEW}"${known ? '' : ' selected'}>+ New corpus…</option>
+    </select>
+    <input type="text" class="corpus-new" placeholder="Name the new corpus" aria-label="New corpus name"
+           value="${known ? '' : esc(choice)}"${known ? ' hidden' : ''}>`;
+  const sel = el.querySelector('select'), box = el.querySelector('.corpus-new');
+  sel.addEventListener('change', () => {
+    box.hidden = sel.value !== NEW;
+    if (!box.hidden) box.focus();
+  });
+}
+
+function pickedCorpus(el) {
+  const sel = el.querySelector('select');
+  return sel.value === NEW ? el.querySelector('.corpus-new').value.trim() : sel.value;
+}
+
+document.querySelectorAll('.corpus-picker').forEach(el => fillPicker(el));
+
+document.getElementById('upload-form').addEventListener('submit', ev => {
+  const name = pickedCorpus(ev.target.querySelector('.corpus-picker'));
+  if (!name) { ev.preventDefault(); alert('Name the new corpus first.'); return; }
+  ev.target.corpus.value = name;
+});
+
+// ---------------------------------------------------------------- search and ingest
 
 async function searchSource(ev, pid) {
   ev.preventDefault();
@@ -84,14 +150,14 @@ async function searchSource(ev, pid) {
     const r = await fetch(`${PREFIX}/api/sources/search?provider=${encodeURIComponent(pid)}&q=${encodeURIComponent(q)}`);
     const d = await r.json();
     if (!r.ok) { box.innerHTML = `<p class="provider-note warn">${esc(d.detail || 'search failed')}</p>`; return false; }
-    renderHits(pid, d.hits, form.corpus.value.trim());
+    renderHits(pid, d.hits, form.closest('.provider').dataset.corpus);
   } catch (e) {
     box.innerHTML = `<p class="provider-note warn">${esc(String(e))}</p>`;
   }
   return false;
 }
 
-function renderHits(pid, hits, corpus) {
+function renderHits(pid, hits, defaultCorpus) {
   const box = document.getElementById('results-' + pid);
   HITS[pid] = {};
   if (!hits.length) { box.innerHTML = '<p class="hint">No results.</p>'; return; }
@@ -112,11 +178,12 @@ function renderHits(pid, hits, corpus) {
   });
   box.innerHTML = `<div class="hit-list">${rows}</div>
     <div class="ingest-bar">
-      <label class="corpus-inline">Ingest into
-        <input type="text" class="ingest-corpus" value="${esc(corpus)}" size="14"></label>
-      <button type="button" onclick="ingestSelected('${pid}')">Ingest selected →</button>
+      <span class="corpus-inline">Add selected to</span>
+      <span class="corpus-picker" data-default="${esc(defaultCorpus)}"></span>
+      <button type="button" onclick="ingestSelected('${pid}')">Add to corpus →</button>
       <span class="ingest-status"></span>
     </div>`;
+  fillPicker(box.querySelector('.corpus-picker'));
 }
 
 async function ingestSelected(pid) {
@@ -124,7 +191,8 @@ async function ingestSelected(pid) {
   const checked = [...box.querySelectorAll('input[type=checkbox]:checked')];
   const status = box.querySelector('.ingest-status');
   if (!checked.length) { status.textContent = 'select at least one result'; return; }
-  const corpus = box.querySelector('.ingest-corpus').value.trim();
+  const corpus = pickedCorpus(box.querySelector('.corpus-picker'));
+  if (!corpus) { status.textContent = 'name the new corpus first'; return; }
   const hits = checked.map(c => HITS[pid][c.value]);
   const btn = box.querySelector('.ingest-bar button');
   btn.disabled = true;
@@ -146,26 +214,36 @@ async function ingestSelected(pid) {
           `<span class="hit-mark" title="${esc(res.detail || res.status)}">${marks[res.status] || '?'}</span> `);
       }
     });
-    status.innerHTML = `${d.ingested} added to <strong>${esc(d.corpus)}</strong>.`;
-    if (d.ingested) await refreshCorpus();
+    status.innerHTML = `${d.ingested} added to <a href="${PREFIX}/sources/corpora/${encodeURIComponent(d.corpus)}"><strong>${esc(d.corpus)}</strong></a>.`;
+    if (d.ingested) await refreshCorpora(d.corpus);
   } catch (e) {
     status.textContent = String(e);
   }
   btn.disabled = false;
 }
 
-// Pull the freshly-rendered "In the corpus" table and swap it in, so newly ingested
-// documents show up below without a full page reload (which would wipe the ✓ marks above).
-async function refreshCorpus() {
+// Swap in fresh corpus cards and drop-down entries, so newly ingested documents (or a
+// newly created corpus) show up without a full page reload, which would wipe the ✓ marks.
+async function refreshCorpora(justUsed) {
   const panel = document.getElementById('corpus-panel');
   try {
-    const r = await fetch(`${PREFIX}/api/sources/documents`);
+    const r = await fetch(`${PREFIX}/api/sources/corpora`);
     if (!r.ok) return;
-    panel.innerHTML = await r.text();
+    const d = await r.json();
+    panel.innerHTML = d.html;
     panel.classList.remove('flash');
     void panel.offsetWidth;  // restart the CSS animation on repeated ingests
     panel.classList.add('flash');
-  } catch (e) { /* leave the old table in place on failure */ }
+    const fresh = d.corpora.map(c => c.name);
+    const added = fresh.filter(c => !CORPORA.includes(c));
+    CORPORA = fresh;
+    // Rebuild pickers only when a corpus appeared, keeping each one's current choice
+    // (or, for the one just used, its newly created corpus).
+    if (added.length) document.querySelectorAll('.corpus-picker').forEach(el => {
+      const cur = pickedCorpus(el);
+      fillPicker(el, cur || justUsed);
+    });
+  } catch (e) { /* leave the old cards in place on failure */ }
 }
 </script>
 {% endblock %}

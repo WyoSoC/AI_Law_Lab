@@ -25,8 +25,13 @@ CREATE TABLE IF NOT EXISTS experiments (
     -- retrieval settings. Snapshotted into each run so later edits don't rewrite history.
     config       JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by   TEXT NOT NULL DEFAULT 'unknown',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Set when the experiment is moved to the trash; NULL while it is in use. Trashed
+    -- experiments keep their runs until they are deleted for good.
+    deleted_at   TIMESTAMPTZ
 );
+-- For databases created before the trash existed.
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS runs (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),

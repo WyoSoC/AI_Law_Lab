@@ -49,17 +49,83 @@ async def create_experiment(name: str, mode: str, description: str = "",
     )
 
 
+_LIST_SQL = (
+    "SELECT e.*, "
+    "  (SELECT COUNT(*) FROM runs r WHERE r.experiment_id = e.id) AS run_count, "
+    "  (SELECT MAX(r.created_at) FROM runs r WHERE r.experiment_id = e.id) AS last_run "
+    "FROM experiments e "
+)
+
+
 async def list_experiments() -> list[dict]:
-    return await fetch_all(
-        "SELECT e.*, "
-        "  (SELECT COUNT(*) FROM runs r WHERE r.experiment_id = e.id) AS run_count, "
-        "  (SELECT MAX(r.created_at) FROM runs r WHERE r.experiment_id = e.id) AS last_run "
-        "FROM experiments e ORDER BY e.created_at DESC"
-    )
+    """Experiments in use, newest first. Trashed ones are listed by list_trash()."""
+    return await fetch_all(_LIST_SQL + "WHERE e.deleted_at IS NULL ORDER BY e.created_at DESC")
 
 
 async def get_experiment(experiment_id: str) -> dict | None:
+    """An experiment whether or not it is in the trash, so links to it keep working."""
     return await fetch_one("SELECT * FROM experiments WHERE id=%s", (experiment_id,))
+
+
+# ---------------------------------------------------------------- trash
+#
+# Deleting an experiment is two steps. Moving it to the trash only hides it: its runs,
+# traces and results stay, and it can be restored. Deleting it for good removes all of
+# that (runs cascade), which is why only an experiment already in the trash can be.
+
+
+class ExperimentBusy(Exception):
+    """The experiment has a run in progress, so it cannot be trashed or deleted."""
+
+
+async def _active_runs(experiment_id: str) -> int:
+    row = await fetch_one(
+        "SELECT COUNT(*) AS n FROM runs WHERE experiment_id=%s "
+        "AND status IN ('pending', 'running')", (experiment_id,))
+    return row["n"] if row else 0
+
+
+async def list_trash() -> list[dict]:
+    return await fetch_all(_LIST_SQL + "WHERE e.deleted_at IS NOT NULL ORDER BY e.deleted_at DESC")
+
+
+async def trash_count() -> int:
+    row = await fetch_one("SELECT COUNT(*) AS n FROM experiments WHERE deleted_at IS NOT NULL")
+    return row["n"] if row else 0
+
+
+async def trash_experiment(experiment_id: str) -> dict | None:
+    """Move an experiment to the trash. Returns it, or None if there is no such experiment."""
+    if await _active_runs(experiment_id):
+        raise ExperimentBusy("A run of this experiment is still in progress. "
+                             "Wait for it to finish before moving the experiment to the trash.")
+    return await fetch_one(
+        "UPDATE experiments SET deleted_at = COALESCE(deleted_at, now()) WHERE id=%s RETURNING *",
+        (experiment_id,))
+
+
+async def restore_experiment(experiment_id: str) -> dict | None:
+    return await fetch_one(
+        "UPDATE experiments SET deleted_at = NULL WHERE id=%s RETURNING *", (experiment_id,))
+
+
+async def delete_experiment(experiment_id: str) -> dict | None:
+    """Delete a trashed experiment for good, with its runs, traces and citations.
+    Returns None if it does not exist or is not in the trash."""
+    if await _active_runs(experiment_id):
+        raise ExperimentBusy("A run of this experiment is still in progress.")
+    return await fetch_one(
+        "DELETE FROM experiments WHERE id=%s AND deleted_at IS NOT NULL RETURNING id, name",
+        (experiment_id,))
+
+
+async def empty_trash() -> int:
+    """Delete every trashed experiment that has no run in progress. Returns how many."""
+    rows = await fetch_all(
+        "DELETE FROM experiments e WHERE e.deleted_at IS NOT NULL AND NOT EXISTS ("
+        "  SELECT 1 FROM runs r WHERE r.experiment_id = e.id "
+        "  AND r.status IN ('pending', 'running')) RETURNING e.id")
+    return len(rows)
 
 
 # ---------------------------------------------------------------- runs
@@ -69,6 +135,8 @@ async def create_run(experiment_id: str, inputs: dict | None = None) -> dict:
     exp = await get_experiment(experiment_id)
     if exp is None:
         raise ValueError(f"no such experiment: {experiment_id}")
+    if exp.get("deleted_at"):
+        raise ValueError("this experiment is in the trash; restore it before running it")
     return await fetch_one(
         "INSERT INTO runs (experiment_id, config_snapshot, inputs, status) "
         "VALUES (%s,%s,%s,'pending') RETURNING *",
@@ -94,7 +162,8 @@ async def list_runs(experiment_id: str | None = None, limit: int = 50) -> list[d
         )
     return await fetch_all(
         "SELECT r.*, e.name AS experiment_name, e.mode FROM runs r "
-        "JOIN experiments e ON e.id = r.experiment_id ORDER BY r.created_at DESC LIMIT %s",
+        "JOIN experiments e ON e.id = r.experiment_id WHERE e.deleted_at IS NULL "
+        "ORDER BY r.created_at DESC LIMIT %s",
         (limit,),
     )
 

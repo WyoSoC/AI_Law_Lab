@@ -1,8 +1,18 @@
 {% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Dashboard · AI Law Lab{% endblock %}
 {% block content %}
 
 <h1>Dashboard</h1>
 <p class="sub">Shared local inference on the DGX Spark cluster &middot; experiments, corpus, and run history.</p>
+
+{% if trashed and trashed.deleted_at %}
+<form class="notice undo" method="post" action="{{ prefix }}/experiments/{{ trashed.id }}/restore">
+  <input type="hidden" name="next" value="dashboard">
+  Moved &ldquo;{{ trashed.name }}&rdquo; to the <a href="{{ prefix }}/trash">trash</a>.
+  <button type="submit" class="link-btn">Undo</button>
+</form>
+{% endif %}
 
 <h2>Inference cluster</h2>
 <div class="grid">
@@ -24,12 +34,18 @@
   </div>
 </div>
 
-<h2>Experiments</h2>
+<div class="section-head">
+  <h2>Experiments</h2>
+  <div class="head-actions">
+    <a class="small-btn" href="{{ prefix }}/experiments/new">+ New experiment</a>
+    <a class="small-btn quiet" href="{{ prefix }}/trash"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg> Trash{% if trash_count %} ({{ trash_count }}){% endif %}</a>
+  </div>
+</div>
 <div class="panel">
   {% if experiments %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Name</th><th>Mode</th><th>Runs</th><th>Last run</th></tr></thead>
+      <thead><tr><th>Name</th><th>Mode</th><th>Runs</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for e in experiments %}
         <tr>
@@ -37,11 +53,19 @@
           <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
           <td>{{ e.run_count }}</td>
           <td>{{ e.last_run.strftime('%Y-%m-%d %H:%M') if e.last_run else '—' }}</td>
+          <td class="actions-cell"><div class="row-actions">
+            <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/trash">
+              <button type="submit" class="icon-btn" title="Move “{{ e.name }}” to the trash"
+                      aria-label="Move {{ e.name }} to the trash"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg></button>
+            </form>
+          </div></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="hint">An experiment moved to the trash keeps its runs and results until you delete it
+    for good from the <a href="{{ prefix }}/trash">trash</a>.</p>
   {% else %}
   <p class="empty">No experiments yet. <a href="{{ prefix }}/experiments/new">Create one</a>.</p>
   {% endif %}
@@ -76,10 +100,12 @@
   {% if corpora %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Corpus</th><th>Documents</th><th>Chunks</th></tr></thead>
+      <thead><tr><th>Corpus</th><th>Documents</th><th>Chunks</th><th>Used by</th></tr></thead>
       <tbody>
         {% for c in corpora %}
-        <tr><td><span class="mode">{{ c.corpus }}</span></td><td>{{ c.documents }}</td><td>{{ c.chunks }}</td></tr>
+        <tr><td><a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a></td>
+            <td>{{ c.documents }}</td><td>{{ c.chunks }}</td>
+            <td>{{ c.experiments }} experiment{{ '' if c.experiments == 1 else 's' }}</td></tr>
         {% endfor %}
       </tbody>
     </table>

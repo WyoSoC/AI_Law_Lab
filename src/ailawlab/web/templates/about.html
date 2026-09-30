@@ -3,7 +3,7 @@
 {% block content %}
 
 <section class="hero">
-  <h1>AI Law Lab</h1>
+  <h1 class="hero-title"><img class="logo" src="{{ prefix }}/static/logo.svg" alt="">AI Law Lab</h1>
   <p class="lede">
     A research platform for running reproducible experiments on how language models reason
     about law &mdash; contracts, case law, statutes and regulation &mdash; executed on the
@@ -86,7 +86,7 @@
       <div class="label">Corpus collections</div>
       <div class="value">{{ corpora|length }}</div>
       <div class="note">
-        {% if corpora %}{{ corpora | map(attribute='corpus') | join(', ') }}
+        {% if corpora %}{% for c in corpora %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}
         {% else %}empty &mdash; <a href="{{ prefix }}/sources">add sources</a>{% endif %}
       </div>
     </div>

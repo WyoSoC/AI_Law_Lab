@@ -7,6 +7,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import agent_spec, cast_assistant, experiments, source_material, sources
+from .. import agent_spec, cast_assistant, experiments, rag, source_material, sources
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..graphs.roleplay_policy import ESTIMATE
@@ -63,14 +64,10 @@ P = settings.url_prefix
 @app.get("/", response_class=HTMLResponse)
 async def about(request: Request):
     """Landing page: what the lab is and what it can do. Dashboard lives at /dashboard."""
-    corpus_stats = await fetch_all(
-        "SELECT d.corpus, COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks "
-        "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id GROUP BY d.corpus"
-    )
     return templates.TemplateResponse(request, "about.html", {
         "modes": experiments.MODES,
         "topics": sources.by_topic(),
-        "corpora": corpus_stats,
+        "corpora": await rag.list_corpora(),
         "exp_count": len(await experiments.list_experiments()),
     })
 
@@ -78,16 +75,81 @@ async def about(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     router = await get_router()
-    corpus_stats = await fetch_all(
-        "SELECT d.corpus, COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks "
-        "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id GROUP BY d.corpus"
-    )
+    trashed_id = request.query_params.get("trashed")
     return templates.TemplateResponse(request, "dashboard.html", {
         "cluster": router.stats(),
         "experiments": await experiments.list_experiments(),
         "runs": await experiments.list_runs(limit=15),
-        "corpora": corpus_stats,
+        "corpora": await rag.list_corpora(),
+        "trash_count": await experiments.trash_count(),
+        "trashed": await experiments.get_experiment(trashed_id) if _is_uuid(trashed_id) else None,
     })
+
+
+# ---------------------------------------------------------------- trash
+
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _is_uuid(value: str | None) -> bool:
+    return bool(value and _UUID.match(value))
+
+
+def _experiment_id(experiment_id: str) -> str:
+    """Reject a malformed id as a 404 rather than letting Postgres raise on the cast."""
+    if not _is_uuid(experiment_id):
+        raise HTTPException(404, "no such experiment")
+    return experiment_id
+
+
+@app.get("/trash", response_class=HTMLResponse)
+async def trash_page(request: Request):
+    return templates.TemplateResponse(request, "trash.html", {
+        "experiments": await experiments.list_trash(),
+    })
+
+
+@app.post("/experiments/{experiment_id}/trash")
+async def trash_experiment(experiment_id: str, next: str = Form("dashboard")):
+    try:
+        exp = await experiments.trash_experiment(_experiment_id(experiment_id))
+    except experiments.ExperimentBusy as e:
+        raise HTTPException(409, str(e)) from e
+    if exp is None:
+        raise HTTPException(404, "no such experiment")
+    if next == "experiment":
+        return RedirectResponse(f"{P}/experiments/{experiment_id}", status_code=303)
+    return RedirectResponse(f"{P}/dashboard?trashed={experiment_id}", status_code=303)
+
+
+@app.post("/experiments/{experiment_id}/restore")
+async def restore_experiment(experiment_id: str, next: str = Form("trash")):
+    exp = await experiments.restore_experiment(_experiment_id(experiment_id))
+    if exp is None:
+        raise HTTPException(404, "no such experiment")
+    target = {"dashboard": "/dashboard", "experiment": f"/experiments/{experiment_id}"}
+    return RedirectResponse(P + target.get(next, "/trash?msg=" + quote(f"Restored “{exp['name']}”.")),
+                            status_code=303)
+
+
+@app.post("/experiments/{experiment_id}/delete")
+async def delete_experiment(experiment_id: str):
+    try:
+        gone = await experiments.delete_experiment(_experiment_id(experiment_id))
+    except experiments.ExperimentBusy as e:
+        raise HTTPException(409, str(e)) from e
+    if gone is None:
+        raise HTTPException(404, "no such experiment in the trash")
+    return RedirectResponse(f"{P}/trash?msg=" + quote(f"Deleted “{gone['name']}” for good."),
+                            status_code=303)
+
+
+@app.post("/trash/empty")
+async def empty_trash():
+    n = await experiments.empty_trash()
+    return RedirectResponse(
+        f"{P}/trash?msg=" + quote(f"Deleted {n} experiment{'' if n == 1 else 's'} for good."),
+        status_code=303)
 
 
 @app.get("/experiments/new", response_class=HTMLResponse)
@@ -128,7 +190,7 @@ async def create_experiment(
 
 @app.get("/experiments/{experiment_id}", response_class=HTMLResponse)
 async def experiment_detail(request: Request, experiment_id: str):
-    exp = await experiments.get_experiment(experiment_id)
+    exp = await experiments.get_experiment(_experiment_id(experiment_id))
     if exp is None:
         raise HTTPException(404, "no such experiment")
     runs = await experiments.list_runs(experiment_id)
@@ -174,7 +236,10 @@ async def launch_run(experiment_id: str, inputs_json: str = Form("{}")):
         inputs = json.loads(inputs_json or "{}")
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"inputs must be valid JSON: {e}") from e
-    run_id = await experiments.launch(experiment_id, inputs)
+    try:
+        run_id = await experiments.launch(experiment_id, inputs)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
     return RedirectResponse(f"{P}/runs/{run_id}", status_code=303)
 
 
@@ -197,29 +262,95 @@ async def run_detail(request: Request, run_id: str):
     })
 
 
-async def _corpus_documents():
-    """Every ingested document with its chunk count, newest first."""
-    return await fetch_all(
-        "SELECT d.*, COUNT(c.id) AS chunk_count FROM documents d "
-        "LEFT JOIN chunks c ON c.document_id = d.id GROUP BY d.id ORDER BY d.created_at DESC"
-    )
-
-
 @app.get("/sources", response_class=HTMLResponse)
 async def sources_page(request: Request):
     return templates.TemplateResponse(request, "sources.html", {
-        "documents": await _corpus_documents(),
+        "corpora": await rag.list_corpora(),
         "topics": sources.by_topic(),
     })
 
 
-@app.get("/api/sources/documents", response_class=HTMLResponse)
-async def api_sources_documents(request: Request):
-    """The "In the corpus" table as an HTML fragment, so the page can refresh it in
-    place after an ingest without a full reload."""
-    return templates.TemplateResponse(request, "_documents.html", {
-        "documents": await _corpus_documents(),
+@app.get("/api/sources/corpora")
+async def api_sources_corpora(request: Request):
+    """The corpus cards as an HTML fragment plus the names for the corpus pickers, so the
+    page can refresh both in place after an ingest without a full reload."""
+    corpora = await rag.list_corpora()
+    html = templates.get_template("_corpora.html").render(
+        corpora=corpora, **_prefix(request))
+    return JSONResponse({"html": html,
+                         "corpora": [{"name": c["corpus"], "documents": c["documents"]}
+                                     for c in corpora]})
+
+
+def _corpus_url(name: str) -> str:
+    return f"{P}/sources/corpora/{quote(name, safe='')}"
+
+
+@app.get("/sources/corpora/{name}", response_class=HTMLResponse)
+async def corpus_page(request: Request, name: str):
+    documents = await rag.corpus_documents(name)
+    if not documents:
+        raise HTTPException(404, f"There is no corpus named {name!r}.")
+    return templates.TemplateResponse(request, "corpus.html", {
+        "name": name,
+        "documents": documents,
+        "chunks": sum(d["chunk_count"] for d in documents),
+        "experiments": await rag.corpus_experiments(name),
     })
+
+
+@app.get("/api/sources/corpora/{name}/search")
+async def api_corpus_search(name: str, q: str):
+    """What an experiment would retrieve from this corpus for a query, with similarity."""
+    if not q.strip():
+        raise HTTPException(400, "empty query")
+    passages = await Corpus(await get_router(), name=name).search(q)
+    return JSONResponse({"passages": [
+        {"document_id": p.document_id, "label": p.cite_label(), "content": p.content,
+         "similarity": round(p.similarity, 3)} for p in passages]})
+
+
+@app.post("/sources/corpora/{name}/delete")
+async def corpus_delete(name: str, confirm_name: str = Form("")):
+    if confirm_name.strip() != name:
+        return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
+            "The name you typed did not match, so nothing was deleted."), status_code=303)
+    try:
+        n = await rag.delete_corpus(name)
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    return RedirectResponse(f"{P}/sources?msg=" + quote(
+        f"Deleted the corpus “{name}” and its {n} document{'' if n == 1 else 's'}."),
+        status_code=303)
+
+
+@app.get("/sources/documents/{document_id}", response_class=HTMLResponse)
+async def document_page(request: Request, document_id: int):
+    doc = await rag.get_document(document_id)
+    if doc is None:
+        raise HTTPException(404, "no such document")
+    return templates.TemplateResponse(request, "document.html", {
+        "doc": doc,
+        "chunks": await rag.document_chunks(document_id),
+        "metadata_pretty": json.dumps(doc["metadata"], indent=2) if doc["metadata"] else None,
+    })
+
+
+@app.post("/sources/documents/{document_id}/delete")
+async def document_delete(document_id: int):
+    try:
+        gone = await rag.delete_document(document_id)
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    if gone is None:
+        raise HTTPException(404, "no such document")
+    remaining = await rag.corpus_documents(gone["corpus"])
+    msg = quote(f"Removed “{gone['title']}”.")
+    if remaining:
+        return RedirectResponse(f"{_corpus_url(gone['corpus'])}?msg={msg}", status_code=303)
+    return RedirectResponse(f"{P}/sources?msg={msg}" + quote(
+        f" That was the last document, so the corpus “{gone['corpus']}” is gone."),
+        status_code=303)
 
 
 # Old bookmark: /corpus was the page's name before it became Legal Sources.
@@ -260,28 +391,40 @@ async def api_sources_ingest(request: Request):
 
 
 @app.post("/corpus/upload")
-async def corpus_upload(file: UploadFile, corpus: str = Form("default")):
-    router = await get_router()
-    store = Corpus(router, name=corpus)
-    raw = await file.read()
-    name = file.filename or "upload"
+async def corpus_upload(files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
+                        corpus: str = Form("default")):
+    """Add one or more uploaded PDFs or text files to a corpus."""
+    corpus = corpus.strip() or "default"
+    store = Corpus(await get_router(), name=corpus)
+    added, refused = [], []
+    for upload in files:
+        name = upload.filename or "upload"
+        raw = await upload.read()
+        if name.lower().endswith(".pdf"):
+            import tempfile
 
-    if name.lower().endswith(".pdf"):
-        import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+                tmp.write(raw)
+                tmp.flush()
+                # Keep the original filename as the title; the temp path is meaningless.
+                doc_id = await store.add_pdf(Path(tmp.name), title=Path(name).stem,
+                                             source_uri=name)
+        else:
+            text = raw.decode("utf-8", errors="replace")
+            doc_id = await store.add_document(title=Path(name).stem, text=text,
+                                              doc_type="text", source_uri=name)
+        (added if doc_id is not None else refused).append(name)
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-            tmp.write(raw)
-            tmp.flush()
-            # Keep the original filename as the title; the temp path is meaningless.
-            doc_id = await store.add_pdf(Path(tmp.name), title=Path(name).stem,
-                                         source_uri=name)
-    else:
-        text = raw.decode("utf-8", errors="replace")
-        doc_id = await store.add_document(title=Path(name).stem, text=text,
-                                          doc_type="text", source_uri=name)
-    if doc_id is None:
-        return RedirectResponse(f"{P}/sources?msg=already+ingested+or+no+text", status_code=303)
-    return RedirectResponse(f"{P}/sources", status_code=303)
+    parts = []
+    if added:
+        parts.append(f"Added {len(added)} document{'' if len(added) == 1 else 's'}.")
+    if refused:
+        parts.append("Not added, because it has no readable text or the same text is already "
+                     "in a corpus: " + ", ".join(f"“{n}”" for n in refused) + ".")
+    msg = quote(" ".join(parts))
+    if not added:
+        return RedirectResponse(f"{P}/sources?tab=upload&msg={msg}", status_code=303)
+    return RedirectResponse(f"{_corpus_url(corpus)}?msg={msg}", status_code=303)
 
 
 # ---------------------------------------------------------------- role-play cast files

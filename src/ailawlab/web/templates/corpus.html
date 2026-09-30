@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% set active = 'sources' %}
+{% block title %}{{ name }} · Legal Sources · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/sources">Legal Sources</a><span class="sep">›</span><span>{{ name }}</span>
+</nav>
+{% endblock %}
+{% block content %}
+
+<h1>{{ name }}</h1>
+<p class="sub">{{ documents|length }} document{{ '' if documents|length == 1 else 's' }}
+  &middot; {{ chunks }} passage{{ '' if chunks == 1 else 's' }} an experiment can retrieve and cite</p>
+
+{% if request.query_params.get('msg') %}
+<p class="notice">{{ request.query_params.get('msg') }}</p>
+{% endif %}
+
+<div class="cta-row">
+  <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}#add">+ Add documents to this corpus</a>
+</div>
+
+<h2>Used by</h2>
+<div class="panel">
+  {% if experiments %}
+  <ul class="plain-list">
+    {% for e in experiments %}
+    <li><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a>
+        <span class="mode">{{ e.mode.replace('_', ' ') }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No experiment retrieves from this corpus yet. Choose it under
+    &ldquo;Corpus to retrieve from&rdquo; when you <a href="{{ prefix }}/experiments/new">create an experiment</a>.</p>
+  {% endif %}
+</div>
+
+<h2>Try a search</h2>
+<div class="panel">
+  <p class="hint" style="margin-top:0">See which passages an experiment would retrieve from this corpus for a
+    question, and how closely each matches. Nothing is saved.</p>
+  <form class="source-search" id="probe-form">
+    <input type="text" name="q" placeholder="e.g. termination for convenience notice period" autocomplete="off">
+    <button type="submit">Search</button>
+  </form>
+  <div id="probe-results" class="probe-results"></div>
+</div>
+
+<h2>Documents</h2>
+<div class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for d in documents %}
+        <tr>
+          <td><a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a>
+            {% if d.source_uri and d.source_uri.startswith('http') %}
+            <a class="provider-home" href="{{ d.source_uri }}" target="_blank" rel="noopener" title="Original source">↗</a>{% endif %}</td>
+          <td>{{ d.doc_type }}</td>
+          <td>{{ d.chunk_count }}</td>
+          <td class="nowrap">{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="actions-cell"><div class="row-actions">
+            <form method="post" action="{{ prefix }}/sources/documents/{{ d.id }}/delete"
+                  onsubmit="return confirm({{ ('Remove “' ~ d.title ~ '” from ' ~ name ~ '? Experiments will no longer retrieve from it.')|tojson|forceescape }})">
+              <button type="submit" class="icon-btn" title="Remove this document" aria-label="Remove {{ d.title }}">✕</button>
+            </form>
+          </div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Delete this corpus</h2>
+<form class="panel danger-zone" method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/delete">
+  <p>Deleting removes all {{ documents|length }} document{{ '' if documents|length == 1 else 's' }} and their
+    passages. This cannot be undone.
+    {% if experiments %}<strong>{{ experiments|length }} experiment{{ ' uses' if experiments|length == 1 else 's use' }}
+    this corpus</strong> and would find nothing to retrieve until it is rebuilt.{% endif %}
+    Past runs keep their results.</p>
+  <label for="confirm_name">Type <strong>{{ name }}</strong> to confirm</label>
+  <div class="source-search">
+    <input type="text" id="confirm_name" name="confirm_name" autocomplete="off">
+    <button type="submit" class="danger" id="delete-corpus" disabled>Delete corpus</button>
+  </div>
+</form>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const PREFIX = "{{ prefix }}";
+const NAME = {{ name|tojson }};
+function esc(s) {
+  return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+document.getElementById('confirm_name').addEventListener('input', e => {
+  document.getElementById('delete-corpus').disabled = e.target.value.trim() !== NAME;
+});
+
+document.getElementById('probe-form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const q = ev.target.q.value.trim(), box = document.getElementById('probe-results');
+  if (!q) return;
+  box.innerHTML = '<p class="hint">Searching…</p>';
+  try {
+    const r = await fetch(`${PREFIX}/api/sources/corpora/${encodeURIComponent(NAME)}/search?q=${encodeURIComponent(q)}`);
+    const d = await r.json();
+    if (!r.ok) { box.innerHTML = `<p class="provider-note warn">${esc(d.detail || 'search failed')}</p>`; return; }
+    if (!d.passages.length) {
+      box.innerHTML = '<p class="hint">No passage is close enough to that question to be retrieved.</p>';
+      return;
+    }
+    box.innerHTML = d.passages.map((p, i) => `
+      <div class="passage">
+        <div class="passage-head"><span>[${i + 1}] <a href="${PREFIX}/sources/documents/${p.document_id}">${esc(p.label)}</a></span>
+          <span class="passage-score" title="Cosine similarity to the question">${p.similarity.toFixed(2)} match</span></div>
+        <div class="passage-text">${esc(p.content)}</div>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<p class="provider-note warn">${esc(String(e))}</p>`;
+  }
+});
+</script>
+{% endblock %}

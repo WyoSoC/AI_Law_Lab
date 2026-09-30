@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% set active = 'sources' %}
+{% block title %}{{ doc.title }} · Legal Sources · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/sources">Legal Sources</a><span class="sep">›</span>
+  <a href="{{ prefix }}/sources/corpora/{{ doc.corpus|urlencode }}">{{ doc.corpus }}</a><span class="sep">›</span>
+  <span>{{ doc.title }}</span>
+</nav>
+{% endblock %}
+{% block content %}
+
+<div class="title-row">
+  <h1>{{ doc.title }}</h1>
+  <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/delete"
+        onsubmit="return confirm({{ ('Remove “' ~ doc.title ~ '” from ' ~ doc.corpus ~ '?')|tojson|forceescape }})">
+    <button type="submit" class="small-btn danger">Remove from corpus</button>
+  </form>
+</div>
+<p class="sub">{{ doc.doc_type }} &middot; added {{ doc.created_at.strftime('%B %-d, %Y') }}
+  &middot; {{ chunks|length }} passage{{ '' if chunks|length == 1 else 's' }}
+  {% if doc.source_uri %}&middot;
+    {% if doc.source_uri.startswith('http') %}<a href="{{ doc.source_uri }}" target="_blank" rel="noopener">original source ↗</a>
+    {% else %}from {{ doc.source_uri }}{% endif %}{% endif %}</p>
+
+{% if metadata_pretty %}
+<details class="config-details"><summary>Source details</summary><pre>{{ metadata_pretty }}</pre></details>
+{% endif %}
+
+<h2>Passages</h2>
+<p class="hint">The document as experiments see it: split into passages, each retrieved and cited
+  on its own. Neighbouring passages overlap slightly so no sentence is cut off from its context.</p>
+{% for c in chunks %}
+<div class="passage" id="p{{ c.ordinal + 1 }}">
+  <div class="passage-head"><span>Passage {{ c.ordinal + 1 }}</span>
+    {% if c.page_start %}<span class="passage-score">{% if c.page_end and c.page_end != c.page_start %}pp. {{ c.page_start }}–{{ c.page_end }}{% else %}p. {{ c.page_start }}{% endif %}</span>{% endif %}</div>
+  <div class="passage-text">{{ c.content }}</div>
+</div>
+{% else %}
+<p class="empty">This document has no passages (no text was extracted).</p>
+{% endfor %}
+
+{% endblock %}
