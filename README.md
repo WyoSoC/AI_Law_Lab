@@ -29,6 +29,11 @@ Users ──▶ Web interface ──▶ Experiment manager
                   Logging and evaluation engine
 ```
 
+A full architecture diagram, with a component reference covering each tier, the queue, the
+trace and what does and does not leave campus, is at
+[`src/ailawlab/web/static/docs/architecture.pdf`](src/ailawlab/web/static/docs/architecture.pdf),
+linked from the portal's About page. `docs/architecture/build.py` regenerates it.
+
 ## Quick start
 
 ```bash
@@ -250,15 +255,20 @@ src/ailawlab/
   graphs/              LangGraph definitions per mode; roleplay_policy.py holds the moderation rules
   web/                 FastAPI app, page views (views.py), templates, static
 db/schema.sql          Postgres schema
-docs/                  method notes and the script that builds them
+docs/                  architecture and method notes, and the scripts that build them
 scripts/               benchmark and utilities
 tests/                 offline unit tests and integration tests against real hardware
 ```
 
-The role-play moderation logic is written up as a short method note with references:
-[`src/ailawlab/web/static/docs/roleplay-moderation.pdf`](src/ailawlab/web/static/docs/roleplay-moderation.pdf)
-(also as Word), linked from the web portal's About page and from each role-play experiment.
-`docs/roleplay-moderation/build.py` regenerates both files.
+Two notes live in `docs/`, each with a script that regenerates it into
+`src/ailawlab/web/static/docs/`, where the portal links to it:
+
+- **[System architecture](src/ailawlab/web/static/docs/architecture.pdf)** --
+  the one-page diagram above in full, plus a component reference
+  (`docs/architecture/build.py`).
+- **[Moderating multi-agent legal role-play](src/ailawlab/web/static/docs/roleplay-moderation.pdf)** --
+  the moderation logic with references, also as Word, linked from each role-play experiment
+  (`docs/roleplay-moderation/build.py`).
 
 ## Tests
 

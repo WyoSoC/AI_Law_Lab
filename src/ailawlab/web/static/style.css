@@ -340,7 +340,7 @@ td.nowrap { white-space: nowrap; }
 
 /* ---------------------------------------------------------------- about: method notes */
 
-.method-notes { list-style: none; padding: 0; margin: 0; max-width: 75ch; }
+.method-notes { list-style: none; padding: 0; margin: 0; max-width: 75ch; display: grid; gap: .6rem; }
 .method-notes li { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: .85rem 1rem; }
 .method-title { font-weight: 650; }
 .method-meta { color: var(--muted); font-size: .84rem; margin-top: .15rem; }
