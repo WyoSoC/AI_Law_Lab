@@ -37,10 +37,10 @@ services:
       KC_HTTP_RELATIVE_PATH: /sso
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
-      # Only used the first time Keycloak starts (empty master realm), to create a temporary
-      # console admin; set them in .env for that start and remove them afterwards.
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # A brand-new Keycloak has no console admin. For that first start only, pass one in,
+      # e.g. `docker compose run` with KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD set; Keycloak
+      # refuses to start if the username is set without a password, so they are not listed
+      # here (see docs/keycloak.md).
     ports:
       # Loopback only: the public route is Apache's /sso/ proxy, over HTTPS.
       - "127.0.0.1:8180:8080"

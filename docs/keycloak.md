@@ -52,8 +52,8 @@ role changes and deletions are written to `audit_log` and shown on the Users pag
    `KC_BOOTSTRAP_ADMIN_PASSWORD` from `.env`. In the *master* realm: Users → Add user (your
    name) → Credentials → set a password → Role mapping → assign `admin`. Sign in as yourself,
    delete `bootstrap-admin`, and set up two-factor for your account (Account console → Signing
-   in → Authenticator application). Then put `KC_ADMIN_USERNAME=<you>` in `.env` and remove
-   `KC_BOOTSTRAP_ADMIN_PASSWORD`; the setup script will ask for your password when it runs.
+   in → Authenticator application). Then put `KC_ADMIN_USERNAME=<you>` in `.env` and remove the
+   `KC_BOOTSTRAP_ADMIN_*` lines; the setup script will ask for your password when it runs.
 
 3. **Your lab account.** Set `AILAWLAB_ADMIN_EMAILS=you@uwyo.edu` in `.env`. Either sign in with
    UW sign-on or Google once they are connected, or create a realm account now:
@@ -102,6 +102,10 @@ users can reach the lab or its sign-in page. External users need UW IT to publis
 ## Running it
 
 - Start / restart: `docker compose -p ai_law_lab up -d keycloak` (from the repository).
+- A brand-new install has no console admin. For its first start only, add
+  `KC_BOOTSTRAP_ADMIN_USERNAME` and `KC_BOOTSTRAP_ADMIN_PASSWORD` to the keycloak service's
+  `environment` (with values), start it, replace that admin as in step 2, then remove both lines
+  again. Keycloak refuses to start if the username is set but the password is empty.
 - Logs: `docker logs ailawlab-keycloak`.
 - Backups: Keycloak's data is the `keycloak` database in the same Postgres volume as the lab;
   back up both, e.g. `docker exec ailawlab-db pg_dump -U ailawlab keycloak > keycloak.sql`.
