@@ -37,9 +37,10 @@ services:
       KC_HTTP_RELATIVE_PATH: /sso
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
-      # Only used the first time Keycloak starts, to create a temporary console admin.
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-bootstrap-admin}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD in .env}
+      # Only used the first time Keycloak starts (empty master realm), to create a temporary
+      # console admin; set them in .env for that start and remove them afterwards.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-}
     ports:
       # Loopback only: the public route is Apache's /sso/ proxy, over HTTPS.
       - "127.0.0.1:8180:8080"
