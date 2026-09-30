@@ -180,3 +180,42 @@ CREATE TABLE IF NOT EXISTS memory_long_term (
 CREATE INDEX IF NOT EXISTS idx_memlt_scope ON memory_long_term(run_id, agent_id);
 CREATE INDEX IF NOT EXISTS idx_memlt_embedding ON memory_long_term
     USING hnsw (embedding vector_cosine_ops);
+
+-- ---------------------------------------------------------------- accounts
+--
+-- People sign in through Keycloak (see docs/keycloak.md); this table holds only what the
+-- app decides about them. `subject` is Keycloak's stable id for the account. Everything in
+-- the lab is shared among approved users, so ownership columns below are attribution --
+-- who created, launched or changed something -- not access control.
+
+CREATE TABLE IF NOT EXISTS users (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject           TEXT NOT NULL UNIQUE,
+    email             TEXT NOT NULL DEFAULT '',
+    email_verified    BOOLEAN NOT NULL DEFAULT FALSE,
+    name              TEXT NOT NULL DEFAULT '',
+    identity_provider TEXT NOT NULL DEFAULT '',     -- uwyo, google, microsoft, or '' (Keycloak account)
+    status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
+    role              TEXT NOT NULL DEFAULT 'researcher' CHECK (role IN ('admin', 'researcher', 'viewer')),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at     TIMESTAMPTZ,
+    approved_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+    approved_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+-- Security-relevant actions: approvals, role changes, and anything deleted for good.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id        BIGSERIAL PRIMARY KEY,
+    at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+    action    TEXT NOT NULL,
+    target    TEXT NOT NULL DEFAULT '',
+    detail    JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC);
+
+ALTER TABLE experiments     ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE runs            ADD COLUMN IF NOT EXISTS launched_by UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE documents       ADD COLUMN IF NOT EXISTS added_by    UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE corpus_versions ADD COLUMN IF NOT EXISTS changed_by  UUID REFERENCES users(id) ON DELETE SET NULL;

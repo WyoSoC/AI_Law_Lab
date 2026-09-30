@@ -19,5 +19,34 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Sign-in service. Keycloak holds accounts (its own, and those brokered from UW sign-on,
+  # Google and Microsoft) in its own database, `keycloak`, in the same Postgres; the app
+  # keeps only who is approved and in what role. Served at https://datahive.uwyo.edu/sso/
+  # through Apache (/auth and /admin belong to Open WebUI on this host). See docs/keycloak.md.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.5
+    container_name: ailawlab-keycloak
+    command: start
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:?set KC_DB_PASSWORD in .env}
+      KC_HOSTNAME: https://datahive.uwyo.edu/sso
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /sso
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      # Only used the first time Keycloak starts, to create a temporary console admin.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-bootstrap-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD in .env}
+    ports:
+      # Loopback only: the public route is Apache's /sso/ proxy, over HTTPS.
+      - "127.0.0.1:8180:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

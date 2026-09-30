@@ -20,7 +20,7 @@
   </form>
   {% endif %}
 </div>
-<p class="sub">{{ doc.doc_type }} &middot; added {{ doc.created_at.strftime('%B %-d, %Y') }}
+<p class="sub">{{ doc.doc_type }} &middot; added {{ doc.created_at.strftime('%B %-d, %Y') }}{% if added_by %} by {{ added_by }}{% endif %}
   &middot; {{ chunks|length }} passage{{ '' if chunks|length == 1 else 's' }}
   {% if doc.source_uri %}&middot;
     {% if doc.source_uri.startswith('http') %}<a href="{{ doc.source_uri }}" target="_blank" rel="noopener">original source ↗</a>

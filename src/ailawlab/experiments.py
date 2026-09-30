@@ -39,13 +39,14 @@ _GRAPHS = {
 
 
 async def create_experiment(name: str, mode: str, description: str = "",
-                            config: dict | None = None, created_by: str = "unknown") -> dict:
+                            config: dict | None = None, created_by: str = "unknown",
+                            owner_id: Any = None) -> dict:
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
     return await fetch_one(
-        "INSERT INTO experiments (name, mode, description, config, created_by) "
-        "VALUES (%s,%s,%s,%s,%s) RETURNING *",
-        (name, mode, description, jsonb(config or {}), created_by),
+        "INSERT INTO experiments (name, mode, description, config, created_by, owner_id) "
+        "VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",
+        (name, mode, description, jsonb(config or {}), created_by, owner_id),
     )
 
 
@@ -131,23 +132,26 @@ async def empty_trash() -> int:
 # ---------------------------------------------------------------- runs
 
 
-async def create_run(experiment_id: str, inputs: dict | None = None) -> dict:
+async def create_run(experiment_id: str, inputs: dict | None = None,
+                     launched_by: Any = None) -> dict:
     exp = await get_experiment(experiment_id)
     if exp is None:
         raise ValueError(f"no such experiment: {experiment_id}")
     if exp.get("deleted_at"):
         raise ValueError("this experiment is in the trash; restore it before running it")
     return await fetch_one(
-        "INSERT INTO runs (experiment_id, config_snapshot, inputs, status) "
-        "VALUES (%s,%s,%s,'pending') RETURNING *",
-        (experiment_id, jsonb(exp["config"]), jsonb(inputs or {})),
+        "INSERT INTO runs (experiment_id, config_snapshot, inputs, status, launched_by) "
+        "VALUES (%s,%s,%s,'pending',%s) RETURNING *",
+        (experiment_id, jsonb(exp["config"]), jsonb(inputs or {}), launched_by),
     )
 
 
 async def get_run(run_id: str) -> dict | None:
     return await fetch_one(
-        "SELECT r.*, e.name AS experiment_name, e.mode "
-        "FROM runs r JOIN experiments e ON e.id = r.experiment_id WHERE r.id=%s",
+        "SELECT r.*, e.name AS experiment_name, e.mode, "
+        "       COALESCE(NULLIF(u.name, ''), u.email) AS launched_by_name "
+        "FROM runs r JOIN experiments e ON e.id = r.experiment_id "
+        "LEFT JOIN users u ON u.id = r.launched_by WHERE r.id=%s",
         (run_id,),
     )
 
@@ -360,9 +364,9 @@ def _summarize(mode: str, final: dict) -> dict:
 _background_runs: set[asyncio.Task] = set()
 
 
-async def launch(experiment_id: str, inputs: dict | None = None) -> str:
+async def launch(experiment_id: str, inputs: dict | None = None, launched_by: Any = None) -> str:
     """Create a run and execute it in the background. Returns the run id immediately."""
-    run = await create_run(experiment_id, inputs)
+    run = await create_run(experiment_id, inputs, launched_by)
     run_id = str(run["id"])
 
     async def _bg() -> None:

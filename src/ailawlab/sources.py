@@ -666,7 +666,7 @@ async def search(pid: str, query: str, limit: int | None = None) -> list[SourceH
 
 
 async def ingest(pid: str, hits: list[dict[str, Any]], corpus_name: str,
-                 router) -> dict[str, Any]:
+                 router, by: Any = None) -> dict[str, Any]:
     """Fetch the selected hits and add them to `corpus_name`. Returns a per-hit report.
 
     Takes whole hits rather than bare refs so providers can reuse search metadata (see
@@ -678,7 +678,7 @@ async def ingest(pid: str, hits: list[dict[str, Any]], corpus_name: str,
 
     provider = get_provider(pid)
     hits = hits[:settings.source_max_ingest]
-    store = Corpus(router, name=corpus_name or provider.corpus)
+    store = Corpus(router, name=corpus_name or provider.corpus, added_by=by)
 
     async def one(hit: dict[str, Any]) -> dict[str, Any]:
         ref = hit.get("ref", "")
@@ -720,5 +720,5 @@ async def ingest(pid: str, hits: list[dict[str, Any]], corpus_name: str,
     if ingested:
         from .rag import record_version
 
-        await record_version(store.name)
+        await record_version(store.name, by)
     return {"corpus": store.name, "results": report, "ingested": ingested}

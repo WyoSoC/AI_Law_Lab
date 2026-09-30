@@ -119,6 +119,7 @@
 
 {% include "_versions.html" %}
 
+{% if is_admin %}
 <h2>Delete this library</h2>
 <form class="panel danger-zone" method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/delete">
   <p>Deleting removes all {{ documents|length }} document{{ '' if documents|length == 1 else 's' }}, their
@@ -133,6 +134,7 @@
     <button type="submit" class="danger" id="delete-corpus" disabled>Delete library</button>
   </div>
 </form>
+{% endif %}
 
 {% endblock %}
 {% block scripts %}
@@ -165,7 +167,7 @@ function esc(s) {
   return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
-document.getElementById('confirm_name').addEventListener('input', e => {
+if (document.getElementById('confirm_name')) document.getElementById('confirm_name').addEventListener('input', e => {
   document.getElementById('delete-corpus').disabled = e.target.value.trim() !== NAME;
 });
 

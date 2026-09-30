@@ -14,8 +14,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from .. import (
+    accounts,
     agent_spec,
     cast_assistant,
     citations,
@@ -31,7 +33,8 @@ from ..graphs.roleplay_policy import ESTIMATE
 from ..rag import Corpus
 from ..router import get_router
 from ..tracing import run_metrics
-from . import views
+from . import auth, views
+from .auth import require, user_id
 
 log = logging.getLogger(__name__)
 BASE = Path(__file__).parent
@@ -52,6 +55,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AI Law Lab", lifespan=lifespan, root_path=settings.url_prefix)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
+# Sign-in (web/auth.py). Middleware added last runs first, so the session cookie is read
+# before the gate asks who is signed in.
+if settings.auth_required and not (settings.session_secret and settings.oidc_client_secret):
+    raise RuntimeError("Sign-in is required but AILAWLAB_SESSION_SECRET or AILAWLAB_OIDC_CLIENT_SECRET "
+                       "is not set. See docs/keycloak.md (or set AILAWLAB_AUTH_REQUIRED=false for "
+                       "local development).")
+app.add_middleware(auth.AuthGate)
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret or "development-only",
+                   session_cookie="ailawlab_session", max_age=settings.session_hours * 3600,
+                   path=settings.url_prefix or "/", same_site="lax",
+                   https_only=settings.public_url.startswith("https://"))
+app.include_router(auth.router)
+
 
 def _prefix(request: Request) -> dict[str, str]:
     """Expose the mount path to templates as `prefix`.
@@ -60,7 +76,11 @@ def _prefix(request: Request) -> dict[str, str]:
     the proxy path and configured url_prefix shows up as broken links immediately,
     instead of links that work only until the proxy is moved.
     """
-    return {"prefix": request.scope.get("root_path", ""), "asset_version": _asset_version()}
+    user = getattr(request.state, "user", None)
+    return {"prefix": request.scope.get("root_path", ""), "asset_version": _asset_version(),
+            "user": user, "user_name": accounts.display_name(user),
+            "can_write": auth.may(user, "write"), "is_admin": auth.may(user, "admin"),
+            "pending_accounts": getattr(request.state, "pending_accounts", 0)}
 
 
 def _asset_version() -> str:
@@ -103,6 +123,52 @@ async def dashboard(request: Request):
         "trash_count": await experiments.trash_count(),
         "trashed": await experiments.get_experiment(trashed_id) if _is_uuid(trashed_id) else None,
     })
+
+
+# ---------------------------------------------------------------- accounts
+
+
+@app.get("/auth/pending", response_class=HTMLResponse)
+async def account_pending(request: Request):
+    return templates.TemplateResponse(request, "account_status.html", {"state": "pending"})
+
+
+@app.get("/auth/disabled", response_class=HTMLResponse)
+async def account_disabled(request: Request):
+    return templates.TemplateResponse(request, "account_status.html", {"state": "disabled"})
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(request: Request):
+    require(request, "admin")
+    return templates.TemplateResponse(request, "admin_users.html", {
+        "users": await accounts.list_users(),
+        "audit": await accounts.recent_audit(40),
+        "roles": accounts.ROLES,
+        "auto_domains": settings.auto_approve_domains,
+    })
+
+
+@app.post("/admin/users/{account_id}")
+async def admin_user_update(request: Request, account_id: str, action: str = Form(...),
+                            role: str = Form("")):
+    """approve (with a role), role (change it), disable, enable."""
+    actor = require(request, "admin")
+    if not _is_uuid(account_id):
+        raise HTTPException(404, "no such account")
+    changes = {"approve": {"status": "active", "role": role or "researcher"},
+               "role": {"role": role}, "disable": {"status": "disabled"},
+               "enable": {"status": "active"}}.get(action)
+    if changes is None or ("role" in changes and changes["role"] not in accounts.ROLES):
+        raise HTTPException(400, "unknown action or role")
+    try:
+        user = await accounts.set_access(actor, account_id, **changes)
+    except accounts.AccountError as e:
+        return RedirectResponse(f"{P}/admin/users?msg=" + quote(str(e)), status_code=303)
+    who = accounts.display_name(user)
+    done = {"approve": f"Approved {who} as {user['role']}.", "role": f"{who} is now {user['role']}.",
+            "disable": f"Disabled {who}.", "enable": f"Re-enabled {who}."}[action]
+    return RedirectResponse(f"{P}/admin/users?msg=" + quote(done), status_code=303)
 
 
 # ---------------------------------------------------------------- trash
@@ -158,20 +224,29 @@ async def restore_experiment(experiment_id: str, next: str = Form("trash")):
 
 
 @app.post("/experiments/{experiment_id}/delete")
-async def delete_experiment(experiment_id: str):
+async def delete_experiment(request: Request, experiment_id: str):
+    """Delete a trashed experiment for good: its creator or an admin only."""
+    user = require(request, "write")
+    exp = await experiments.get_experiment(_experiment_id(experiment_id))
+    if exp and not auth.may(user, "admin") and str(exp.get("owner_id")) != str(user.get("id")):
+        raise HTTPException(403, "Only the person who created this experiment, or an administrator, "
+                                 "can delete it for good. Anyone can restore it.")
     try:
-        gone = await experiments.delete_experiment(_experiment_id(experiment_id))
+        gone = await experiments.delete_experiment(experiment_id)
     except experiments.ExperimentBusy as e:
         raise HTTPException(409, str(e)) from e
     if gone is None:
         raise HTTPException(404, "no such experiment in the trash")
+    await accounts.audit(user_id(request), "experiment.deleted", gone["name"], id=str(gone["id"]))
     return RedirectResponse(f"{P}/trash?msg=" + quote(f"Deleted “{gone['name']}” for good."),
                             status_code=303)
 
 
 @app.post("/trash/empty")
-async def empty_trash():
+async def empty_trash(request: Request):
+    require(request, "admin")
     n = await experiments.empty_trash()
+    await accounts.audit(user_id(request), "trash.emptied", f"{n} experiments")
     return RedirectResponse(
         f"{P}/trash?msg=" + quote(f"Deleted {n} experiment{'' if n == 1 else 's'} for good."),
         status_code=303)
@@ -193,11 +268,11 @@ async def new_experiment_form(request: Request):
 
 @app.post("/experiments")
 async def create_experiment(
+    request: Request,
     name: str = Form(...),
     mode: str = Form(...),
     description: str = Form(""),
     config_json: str = Form("{}"),
-    created_by: str = Form("unknown"),
 ):
     """Create an experiment from the config the form assembled.
 
@@ -210,7 +285,9 @@ async def create_experiment(
         raise HTTPException(400, f"config must be valid JSON: {e}") from e
     if not isinstance(config, dict):
         raise HTTPException(400, "config must be a JSON object")
-    exp = await experiments.create_experiment(name, mode, description, config, created_by)
+    user = auth.current_user(request)
+    exp = await experiments.create_experiment(name, mode, description, config,
+                                              accounts.display_name(user) or "unknown", user_id(request))
     return RedirectResponse(f"{P}/experiments/{exp['id']}", status_code=303)
 
 
@@ -272,13 +349,13 @@ async def experiment_cast_file(experiment_id: str):
 
 
 @app.post("/experiments/{experiment_id}/launch")
-async def launch_run(experiment_id: str, inputs_json: str = Form("{}")):
+async def launch_run(request: Request, experiment_id: str, inputs_json: str = Form("{}")):
     try:
         inputs = json.loads(inputs_json or "{}")
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"inputs must be valid JSON: {e}") from e
     try:
-        run_id = await experiments.launch(experiment_id, inputs)
+        run_id = await experiments.launch(experiment_id, inputs, user_id(request))
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     return RedirectResponse(f"{P}/runs/{run_id}", status_code=303)
@@ -400,7 +477,8 @@ async def api_corpus_search(name: str, q: str):
 
 
 @app.post("/sources/corpora/{name}/delete")
-async def corpus_delete(name: str, confirm_name: str = Form("")):
+async def corpus_delete(request: Request, name: str, confirm_name: str = Form("")):
+    require(request, "admin")
     if confirm_name.strip() != name:
         return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
             "The name you typed did not match, so nothing was deleted."), status_code=303)
@@ -409,6 +487,7 @@ async def corpus_delete(name: str, confirm_name: str = Form("")):
         n = await rag.delete_corpus(name)
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
+    await accounts.audit(user_id(request), "library.deleted", name, documents=n)
     return RedirectResponse(f"{P}/sources?msg=" + quote(
         f"Deleted the library “{name}”, its {n} document{'' if n == 1 else 's'} and all its versions."),
         status_code=303)
@@ -420,12 +499,15 @@ async def document_page(request: Request, document_id: int):
     if doc is None:
         raise HTTPException(404, "no such document")
     replacement = await rag.get_document(doc["replaced_by"]) if doc["replaced_by"] else None
+    added_by = await fetch_one("SELECT COALESCE(NULLIF(name, ''), email) AS who FROM users WHERE id=%s",
+                               (doc["added_by"],)) if doc.get("added_by") else None
     in_versions = await fetch_all(
         "SELECT version FROM corpus_versions WHERE corpus=%s AND %s = ANY(document_ids) "
         "ORDER BY version", (doc["corpus"], document_id))
     return templates.TemplateResponse(request, "document.html", {
         "doc": doc,
         "replacement": replacement,
+        "added_by": added_by["who"] if added_by else "",
         "in_versions": [r["version"] for r in in_versions],
         "citation": citations.citation(doc),
         "chunks": await rag.document_chunks(document_id),
@@ -447,7 +529,7 @@ async def api_sources_links(request: Request):
     if not corpus:
         raise HTTPException(400, "Choose a corpus, or name a new one.")
     try:
-        report = await web_links.add_links(await get_router(), corpus, links)
+        report = await web_links.add_links(await get_router(), corpus, links, user_id(request))
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
     skipped = len(links) - len(report["results"])
@@ -458,19 +540,19 @@ async def api_sources_links(request: Request):
 
 
 @app.post("/api/sources/documents/{document_id}/refresh")
-async def api_document_refresh(document_id: int):
+async def api_document_refresh(request: Request, document_id: int):
     """Re-read a web-link document and rebuild its passages if the page changed."""
     try:
-        return JSONResponse(await web_links.refresh(await get_router(), document_id))
+        return JSONResponse(await web_links.refresh(await get_router(), document_id, user_id(request)))
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
 
 
 @app.post("/api/sources/corpora/{name}/refresh")
-async def api_corpus_refresh(name: str):
+async def api_corpus_refresh(request: Request, name: str):
     """Check every web link in a corpus for changes."""
     try:
-        return JSONResponse(await web_links.refresh_corpus(await get_router(), name))
+        return JSONResponse(await web_links.refresh_corpus(await get_router(), name, user_id(request)))
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
 
@@ -488,9 +570,9 @@ async def document_rename(document_id: int, title: str = Form("")):
 
 
 @app.post("/sources/documents/{document_id}/move")
-async def document_move(document_id: int, corpus: str = Form("")):
+async def document_move(request: Request, document_id: int, corpus: str = Form("")):
     try:
-        doc = await rag.move_document(document_id, corpus)
+        doc = await rag.move_document(document_id, corpus, user_id(request))
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except rag.CorpusBusy as e:
@@ -502,9 +584,9 @@ async def document_move(document_id: int, corpus: str = Form("")):
 
 
 @app.post("/sources/documents/{document_id}/delete")
-async def document_delete(document_id: int):
+async def document_delete(request: Request, document_id: int):
     try:
-        gone = await rag.delete_document(document_id)
+        gone = await rag.delete_document(document_id, user_id(request))
     except rag.CorpusBusy as e:
         raise HTTPException(409, str(e)) from e
     if gone is None:
@@ -545,18 +627,19 @@ async def api_sources_ingest(request: Request):
         raise HTTPException(400, "no hits selected")
     router = await get_router()
     try:
-        report = await sources.ingest(provider, hits, corpus_name, router)
+        report = await sources.ingest(provider, hits, corpus_name, router, user_id(request))
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     return JSONResponse(report)
 
 
 @app.post("/corpus/upload")
-async def corpus_upload(files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
+async def corpus_upload(request: Request,
+                        files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
                         corpus: str = Form("default")):
     """Add one or more uploaded PDFs or text files to a corpus."""
     corpus = corpus.strip() or "default"
-    store = Corpus(await get_router(), name=corpus)
+    store = Corpus(await get_router(), name=corpus, added_by=user_id(request))
     added, refused = [], []
     for upload in files:
         name = upload.filename or "upload"
@@ -576,7 +659,7 @@ async def corpus_upload(files: list[UploadFile] = File(...),  # noqa: B008 - Fas
                                               doc_type="text", source_uri=name)
         (added if doc_id is not None else refused).append(name)
     if added:
-        await rag.record_version(corpus)
+        await rag.record_version(corpus, user_id(request))
 
     parts = []
     if added:

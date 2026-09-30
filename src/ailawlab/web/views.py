@@ -308,6 +308,7 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         "summary_title": "Assessment" if mode == "roleplay" else "Answer",
         # The library the run searched and its version (absent for runs from before
         # libraries were versioned, and for role-plays without legal sources).
+        "launched_by": run.get("launched_by_name") or "",
         "library": run.get("corpus") or "",
         "library_version": run.get("corpus_version"),
         "summary_md": result.get("outcome") or result.get("answer") or "",

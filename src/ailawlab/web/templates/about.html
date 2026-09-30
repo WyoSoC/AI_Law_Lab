@@ -9,11 +9,21 @@
     about law &mdash; contracts, case law, statutes and regulation &mdash; executed on the
     University of Wyoming's own DGX Spark cluster, so no document or query ever leaves campus.
   </p>
+  {% if request.query_params.get('signin') == 'out' %}<p class="notice">You have signed out.</p>
+  {% elif request.query_params.get('signin') == 'cancelled' %}<p class="notice">Sign-in was cancelled.</p>{% endif %}
+  {% if user and user.status == 'active' %}
   <div class="cta-row">
-    <a class="btn primary" href="{{ prefix }}/experiments/new">Design an experiment</a>
+    {% if can_write %}<a class="btn primary" href="{{ prefix }}/experiments/new">Design an experiment</a>{% endif %}
     <a class="btn" href="{{ prefix }}/sources">Browse legal sources</a>
     <a class="btn ghost" href="{{ prefix }}/dashboard">Open the dashboard</a>
   </div>
+  {% else %}
+  <div class="cta-row">
+    <a class="btn primary" href="{{ prefix }}/auth/login">Sign in</a>
+  </div>
+  <p class="hint">Sign in with UW sign-on, Google, Microsoft, or an AI Law Lab account. University of
+    Wyoming accounts are approved automatically; others are approved by an administrator.</p>
+  {% endif %}
 </section>
 
 <section>
@@ -86,7 +96,8 @@
       <div class="label">Curated libraries</div>
       <div class="value">{{ corpora|length }}</div>
       <div class="note">
-        {% if corpora %}{% for c in corpora %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}
+        {% if not user %}sign in to browse them
+        {% elif corpora %}{% for c in corpora %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}
         {% else %}empty &mdash; <a href="{{ prefix }}/sources">add sources</a>{% endif %}
       </div>
     </div>

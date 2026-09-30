@@ -225,6 +225,16 @@ show their full text. **Export PDF** (`web/report_pdf.py`, reportlab) writes the
 scenario and cast, and the full transcript in the same colours; private notes and reasoning
 are included only when asked for.
 
+## Accounts
+
+Everything but the About page needs a sign-in, through a self-hosted Keycloak at `/sso/`
+(UW sign-on, Google, Microsoft, or an AI Law Lab account). Verified `@uwyo.edu` addresses are
+approved automatically as researchers; others wait for an admin on the Users page. Roles are
+viewer, researcher and admin; everything is shared lab-wide, with experiments, runs, documents
+and library versions attributed to the person who made them. Setup, providers, email, backups
+and upgrades: [`docs/keycloak.md`](docs/keycloak.md). The sign-in itself is in `web/auth.py`,
+the approval rules in `accounts.py`.
+
 ## Memory
 
 Ported from `ollama-chat-agent/memory.py`, preserving its two-tier design — a verbatim

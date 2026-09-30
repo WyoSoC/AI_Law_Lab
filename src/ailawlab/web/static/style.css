@@ -617,3 +617,24 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .doc-cite a { color: var(--accent); overflow-wrap: anywhere; }
 .doc-cite .fact-note a { margin-right: .15rem; }
 #version-field[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- accounts */
+
+.count-badge { display: inline-block; min-width: 1.2rem; padding: 0 .35rem; margin-left: .2rem; border-radius: 999px;
+               background: var(--bad); color: var(--on-accent); font-size: .72rem; font-weight: 700; text-align: center; }
+.user-menu { position: relative; }
+.user-menu > summary { list-style: none; display: flex; align-items: center; gap: .45rem; cursor: pointer; margin: 0;
+                       color: var(--ink); font-size: .88rem; font-weight: 600; }
+.user-menu > summary::-webkit-details-marker { display: none; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center;
+          background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: .85rem; }
+.user-menu-body { position: absolute; right: 0; top: calc(100% + .5rem); z-index: 20; min-width: 16rem;
+                  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+                  box-shadow: 0 8px 24px rgb(0 0 0 / .12); padding: .8rem .9rem; display: grid; gap: .5rem; font-size: .88rem; }
+.user-menu-body .small-btn { justify-self: start; }
+@media (max-width: 700px) { .user-name { display: none; } }
+.status-card { max-width: 38rem; margin: 3rem auto; padding: 1.6rem 1.8rem; }
+.status-card h1 { margin-bottom: .8rem; }
+.static-field { margin: .35rem 0 0; padding: .5rem 0; font-weight: 600; }
+.inline-form { display: inline-flex; gap: .35rem; align-items: center; margin: 0; }
+.inline-form select { width: auto; padding: .25rem .4rem; }

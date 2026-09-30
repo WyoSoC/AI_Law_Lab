@@ -11,6 +11,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb, vec
@@ -79,10 +80,11 @@ class Corpus:
     """
 
     def __init__(self, router: LLMRouter, name: str = "default",
-                 document_ids: list[int] | None = None):
+                 document_ids: list[int] | None = None, added_by: Any = None):
         self.router = router
         self.name = name
         self.document_ids = document_ids
+        self.added_by = added_by            # user id recorded on documents this adds
 
     async def add_document(
         self,
@@ -107,9 +109,9 @@ class Corpus:
             return None
 
         row = await fetch_one(
-            "INSERT INTO documents (corpus, title, source_uri, doc_type, metadata, sha256) "
-            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-            (self.name, title, source_uri, doc_type, jsonb(metadata or {}), sha),
+            "INSERT INTO documents (corpus, title, source_uri, doc_type, metadata, sha256, added_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (self.name, title, source_uri, doc_type, jsonb(metadata or {}), sha, self.added_by),
         )
         doc_id = row["id"]
         n = await self.store_chunks(doc_id, text, page_map)
@@ -347,12 +349,14 @@ async def list_versions(name: str) -> list[dict]:
     """A library's versions, newest first, each with how many runs searched it."""
     return await fetch_all(
         "SELECT v.*, cardinality(v.document_ids) AS documents, "
+        "       COALESCE(NULLIF(u.name, ''), u.email) AS changed_by_name, "
         "       (SELECT COUNT(*) FROM runs r WHERE r.corpus = v.corpus "
         "          AND r.corpus_version = v.version) AS runs "
-        "FROM corpus_versions v WHERE v.corpus=%s ORDER BY v.version DESC", (name,))
+        "FROM corpus_versions v LEFT JOIN users u ON u.id = v.changed_by "
+        "WHERE v.corpus=%s ORDER BY v.version DESC", (name,))
 
 
-async def record_version(name: str) -> dict | None:
+async def record_version(name: str, changed_by: Any = None) -> dict | None:
     """Record the library's current contents as a new version, if they differ from the last
     recorded version. Returns the current version (new or not), or None for an empty or
     unknown library.
@@ -391,16 +395,16 @@ async def record_version(name: str) -> dict | None:
         change = describe_change(before, after, replaced, moved if before_ids else None) if last else (
             f"First recorded version: {len(after)} document{'' if len(after) == 1 else 's'}.")
         await cur.execute(
-            "INSERT INTO corpus_versions (corpus, version, document_ids, change) "
-            "VALUES (%s, %s, %s, %s) RETURNING *",
-            (name, (last["version"] + 1) if last else 1, list(after), change))
+            "INSERT INTO corpus_versions (corpus, version, document_ids, change, changed_by) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            (name, (last["version"] + 1) if last else 1, list(after), change, changed_by))
         return await cur.fetchone()
 
 
 # ---------------------------------------------------------------- changing a library
 
 
-async def delete_document(document_id: int) -> dict | None:
+async def delete_document(document_id: int, by: Any = None) -> dict | None:
     """Take a document out of its library. It stays stored for the versions that hold it."""
     doc = await get_document(document_id)
     if doc is None:
@@ -408,7 +412,7 @@ async def delete_document(document_id: int) -> dict | None:
     await check_idle(doc["corpus"])
     gone = await fetch_one("UPDATE documents SET removed_at = COALESCE(removed_at, now()) "
                            "WHERE id=%s RETURNING id, title, corpus", (document_id,))
-    await record_version(doc["corpus"])
+    await record_version(doc["corpus"], by)
     return gone
 
 
@@ -421,17 +425,17 @@ async def rename_document(document_id: int, title: str) -> dict | None:
                            (title, document_id))
 
 
-async def copy_document(doc: dict, corpus: str, **changes) -> int:
+async def copy_document(doc: dict, corpus: str, by: Any = None, **changes) -> int:
     """A new document row in `corpus`, carrying `doc`'s passages and embeddings over."""
     fields = {k: doc[k] for k in ("title", "source_uri", "doc_type", "metadata", "sha256")}
     fields.update(changes)
     pool = await get_pool()
     async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
         await cur.execute(
-            "INSERT INTO documents (corpus, title, source_uri, doc_type, metadata, sha256) "
-            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            "INSERT INTO documents (corpus, title, source_uri, doc_type, metadata, sha256, added_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (corpus, fields["title"], fields["source_uri"], fields["doc_type"],
-             jsonb(fields["metadata"] or {}), fields["sha256"]))
+             jsonb(fields["metadata"] or {}), fields["sha256"], by))
         new_id = (await cur.fetchone())["id"]
         await cur.execute(
             "INSERT INTO chunks (document_id, ordinal, content, page_start, page_end, embedding) "
@@ -440,7 +444,7 @@ async def copy_document(doc: dict, corpus: str, **changes) -> int:
     return new_id
 
 
-async def move_document(document_id: int, corpus: str) -> dict | None:
+async def move_document(document_id: int, corpus: str, by: Any = None) -> dict | None:
     """File a document under another library (created if it does not exist).
 
     The document is copied into the other library and taken out of this one, so each
@@ -461,11 +465,11 @@ async def move_document(document_id: int, corpus: str) -> dict | None:
     if await fetch_one("SELECT id FROM documents WHERE corpus=%s AND sha256=%s AND removed_at IS NULL",
                        (corpus, doc["sha256"])):
         raise ValueError(f"“{corpus}” already holds the same text.")
-    new_id = await copy_document(doc, corpus)
+    new_id = await copy_document(doc, corpus, by)
     await fetch_one("UPDATE documents SET removed_at=now(), replaced_by=%s WHERE id=%s RETURNING id",
                     (new_id, document_id))
-    await record_version(doc["corpus"])
-    await record_version(corpus)
+    await record_version(doc["corpus"], by)
+    await record_version(corpus, by)
     return {"id": new_id, "title": doc["title"], "corpus": corpus}
 
 

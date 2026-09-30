@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set active = 'admin' %}
+{% block title %}Users · AI Law Lab{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<p class="sub">People sign in through UW sign-on, Google, Microsoft or an AI Law Lab account.
+Verified addresses at {{ auto_domains }} are approved automatically as researchers; everyone else
+waits here for an administrator. Viewers can read and export; researchers can also create, run and
+curate; admins can also manage people and delete things for good.
+</p>
+
+{% if request.query_params.get('msg') %}<p class="notice">{{ request.query_params.get('msg') }}</p>{% endif %}
+
+{% set pending = users | selectattr('status', 'equalto', 'pending') | list %}
+{% if pending %}
+<h2>Waiting for approval ({{ pending|length }})</h2>
+<div class="panel">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Name</th><th>Email</th><th>Signed in with</th><th>First seen</th><th>Approve as</th></tr></thead>
+    <tbody>
+    {% for u in pending %}
+    <tr>
+      <td>{{ u.name or '—' }}</td>
+      <td>{{ u.email }}{% if not u.email_verified %} <span class="hint">(unverified)</span>{% endif %}</td>
+      <td>{{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
+      <td class="nowrap">{{ u.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td class="actions-cell"><div class="row-actions">
+        <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
+          <input type="hidden" name="action" value="approve">
+          <select name="role" aria-label="Role">{% for r in roles %}<option value="{{ r }}" {% if r == 'researcher' %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+          <button type="submit" class="small-btn">Approve</button>
+        </form>
+        <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}">
+          <input type="hidden" name="action" value="disable">
+          <button type="submit" class="small-btn danger">Refuse</button>
+        </form>
+      </div></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<h2>Everyone</h2>
+<div class="panel">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Name</th><th>Email</th><th>Signed in with</th><th>Status</th><th>Role</th><th>Last sign-in</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for u in users if u.status != 'pending' %}
+    <tr>
+      <td>{{ u.name or '—' }}{% if user and u.id == user.id %} <span class="hint">(you)</span>{% endif %}</td>
+      <td>{{ u.email }}</td>
+      <td>{{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
+      <td><span class="badge {{ 'succeeded' if u.status == 'active' else 'failed' }}">{{ u.status }}</span></td>
+      <td>
+        <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
+          <input type="hidden" name="action" value="role">
+          <select name="role" aria-label="Role for {{ u.email }}" onchange="this.form.submit()">
+            {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ r }}</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+      <td class="nowrap">{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else '—' }}</td>
+      <td class="actions-cell"><div class="row-actions">
+        <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}">
+          {% if u.status == 'active' %}<input type="hidden" name="action" value="disable"><button type="submit" class="small-btn danger">Disable</button>
+          {% else %}<input type="hidden" name="action" value="enable"><button type="submit" class="small-btn">Enable</button>{% endif %}
+        </form>
+      </div></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">Nobody yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">Accounts themselves (names, passwords, linked Google or Microsoft identities, two-factor)
+    live in Keycloak: <a href="/sso/admin/master/console/#/ailawlab/users" target="_blank" rel="noopener">open the Keycloak console</a>.</p>
+</div>
+
+<h2>Recent activity</h2>
+<div class="panel">
+  <div class="table-wrap"><table>
+    <thead><tr><th>When</th><th>Who</th><th>What</th><th>On</th></tr></thead>
+    <tbody>
+    {% for a in audit %}
+    <tr><td class="nowrap">{{ a.at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ a.user_name or a.user_email or '—' }}</td>
+        <td>{{ a.action }}</td><td>{{ a.target }}{% if a.detail.status %} <span class="hint">→ {{ a.detail.status }}, {{ a.detail.role }}</span>{% endif %}</td></tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">Nothing yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

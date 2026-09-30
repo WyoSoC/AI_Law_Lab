@@ -7,7 +7,7 @@
     can be repeated against exactly the library it saw.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Version</th><th>Recorded</th><th>Documents</th><th>What changed</th><th>Runs</th></tr></thead>
+      <thead><tr><th>Version</th><th>Recorded</th><th>Documents</th><th>What changed</th><th>By</th><th>Runs</th></tr></thead>
       <tbody>
         {% for v in versions %}
         <tr>
@@ -16,6 +16,7 @@
           <td class="nowrap">{{ v.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td>{{ v.documents }}</td>
           <td class="change-note">{{ v.change }}</td>
+          <td>{{ v.changed_by_name or '—' }}</td>
           <td>{{ v.runs or '—' }}</td>
         </tr>
         {% endfor %}

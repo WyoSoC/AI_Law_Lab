@@ -10,7 +10,7 @@
 
 <div class="title-row">
   <h1>Trash</h1>
-  {% if experiments %}
+  {% if experiments and is_admin %}
   <form method="post" action="{{ prefix }}/trash/empty"
         onsubmit="return confirm('Delete all {{ experiments|length }} experiment{{ '' if experiments|length == 1 else 's' }} in the trash for good, with every run, trace and result? This cannot be undone.')">
     <button type="submit" class="small-btn danger">Empty trash</button>
@@ -40,10 +40,12 @@ at any time. Deleting one for good removes all of that and cannot be undone.</p>
             <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/restore">
               <button type="submit" class="small-btn">Restore</button>
             </form>
+            {% if is_admin or (user and e.owner_id and (e.owner_id|string) == (user.id|string)) %}
             <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/delete"
                   onsubmit="return confirm({{ ('Delete “' ~ e.name ~ '” for good, with its ' ~ e.run_count ~ ' run' ~ ('' if e.run_count == 1 else 's') ~ '? This cannot be undone.')|tojson|forceescape }})">
               <button type="submit" class="small-btn danger">Delete for good</button>
             </form>
+            {% endif %}
           </div></td>
         </tr>
         {% endfor %}

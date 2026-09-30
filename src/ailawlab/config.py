@@ -95,6 +95,27 @@ class Settings(BaseSettings):
     # in the UI is built from this, so it must match the proxy's ProxyPass path exactly.
     url_prefix: str = ""
 
+    # --- accounts (see docs/keycloak.md) ---------------------------------
+    # Sign-in is required everywhere but the About page and static files. Turning it off
+    # is for local development only: every request then acts as a built-in admin.
+    auth_required: bool = True
+    # Where browsers reach the app, used to build the sign-in callback address.
+    public_url: str = "https://datahive.uwyo.edu/ai_law_lab"
+    # Keycloak's realm as browsers see it (it is also the tokens' issuer), and as this
+    # server reaches it: datahive cannot reach its own public address, so token exchange
+    # and key lookups go over loopback.
+    oidc_issuer: str = "https://datahive.uwyo.edu/sso/realms/ailawlab"
+    oidc_internal_url: str = "http://127.0.0.1:8180/sso/realms/ailawlab"
+    oidc_client_id: str = "ai-law-lab"
+    oidc_client_secret: str = ""
+    # Signs the session cookie. Generated into .env; changing it signs everyone out.
+    session_secret: str = ""
+    session_hours: int = 12
+    # Verified addresses made admins on sign-in (comma-separated), and domains whose
+    # verified addresses are approved as researchers without waiting for an admin.
+    admin_emails: str = ""
+    auto_approve_domains: str = "uwyo.edu"
+
     @field_validator("url_prefix")
     @classmethod
     def _normalise_prefix(cls, v: str) -> str:

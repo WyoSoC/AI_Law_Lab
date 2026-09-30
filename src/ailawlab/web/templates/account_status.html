@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Account · AI Law Lab{% endblock %}
+{% block content %}
+<div class="status-card panel">
+  {% if state == 'pending' %}
+  <h1>Waiting for approval</h1>
+  <p>Thanks{% if user_name %}, {{ user_name }}{% endif %}. You are signed in as
+    <strong>{{ user.email or 'your account' }}</strong>, and an AI Law Lab administrator needs to
+    approve the account before you can use the lab. You will be able to sign in as soon as they do.</p>
+  <p class="hint">University of Wyoming addresses are approved automatically when you sign in with
+    UW sign-on or Google. If you have one, sign out and sign in with it instead.</p>
+  {% else %}
+  <h1>Account disabled</h1>
+  <p>The account <strong>{{ user.email or '' }}</strong> has been disabled by an administrator.
+    Contact the AI Law Lab if you think this is a mistake.</p>
+  {% endif %}
+  <a class="btn" href="{{ prefix }}/auth/logout">Sign out</a>
+</div>
+{% endblock %}

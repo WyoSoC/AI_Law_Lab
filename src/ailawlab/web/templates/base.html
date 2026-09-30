@@ -33,10 +33,24 @@
     </a>
     <nav class="tabs" aria-label="Main">
       <a href="{{ prefix }}/sources" {% if active == 'sources' %}class="active" aria-current="page"{% endif %}>Legal Sources</a>
-      <a href="{{ prefix }}/experiments/new" {% if active == 'new' %}class="active" aria-current="page"{% endif %}>New experiment</a>
+      {% if can_write or not user %}<a href="{{ prefix }}/experiments/new" {% if active == 'new' %}class="active" aria-current="page"{% endif %}>New experiment</a>{% endif %}
       <a href="{{ prefix }}/dashboard" {% if active == 'dashboard' %}class="active" aria-current="page"{% endif %}>Dashboard</a>
+      {% if is_admin %}<a href="{{ prefix }}/admin/users" {% if active == 'admin' %}class="active" aria-current="page"{% endif %}>Users{% if pending_accounts %} <span class="count-badge" title="Waiting for approval">{{ pending_accounts }}</span>{% endif %}</a>{% endif %}
     </nav>
-    <span class="cluster-pill" id="cluster-pill" title="Inference cluster">&hellip;</span>
+    {% if user and user.status == 'active' %}<span class="cluster-pill" id="cluster-pill" title="Inference cluster">&hellip;</span>{% endif %}
+    {% if user and not user.dev %}
+    <details class="user-menu">
+      <summary title="{{ user.email }}"><span class="avatar" aria-hidden="true">{{ (user_name or '?')[:1]|upper }}</span><span class="user-name">{{ user_name }}</span></summary>
+      <div class="user-menu-body">
+        <div class="user-menu-who"><strong>{{ user_name }}</strong><br><span class="hint">{{ user.email }}</span></div>
+        <div class="hint">{{ user.role|capitalize }}{% if user.status != 'active' %} &middot; {{ user.status }}{% endif %}
+          &middot; signed in with {{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(user.identity_provider, 'an AI Law Lab account') }}</div>
+        <a class="small-btn quiet" href="{{ prefix }}/auth/logout">Sign out</a>
+      </div>
+    </details>
+    {% elif not user %}
+    <a class="small-btn" href="{{ prefix }}/auth/login">Sign in</a>
+    {% endif %}
     <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Switch to dark theme">
       <svg class="icon-moon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
       <svg class="icon-sun" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
@@ -85,8 +99,10 @@
         pill.className = 'cluster-pill bad';
       }
     }
-    refreshCluster();
-    setInterval(refreshCluster, 5000);
+    if (document.getElementById('cluster-pill')) {
+      refreshCluster();
+      setInterval(refreshCluster, 5000);
+    }
   </script>
   {% block scripts %}{% endblock %}
 </body>
