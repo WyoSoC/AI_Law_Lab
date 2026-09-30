@@ -495,3 +495,24 @@ form .corpus-picker { display: flex; }
 /* about: logo beside the title */
 .hero-title { display: flex; align-items: center; gap: .8rem; }
 .hero-title .logo { width: 48px; height: 48px; }
+
+/* ---------------------------------------------------------------- web links */
+
+.link-results { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .45rem; }
+.link-result { display: flex; gap: .5rem; align-items: baseline; font-size: .88rem; }
+.link-result > span:last-child { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.link-result a { color: var(--accent); }
+.link-url { overflow-wrap: anywhere; font-size: .86rem; }
+.link-url a { color: var(--accent); }
+.link-status { font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.link-result.added .hit-mark, .link-result.updated .hit-mark { color: var(--data); }
+.link-result.unchanged .hit-mark, .link-result.exists .hit-mark { color: var(--muted); }
+.link-result.error .hit-mark { color: var(--bad); }
+.check-cell { font-size: .84rem; white-space: nowrap; }
+.check-cell .link-result { display: inline-flex; white-space: normal; }
+td.check-cell .provider-note { margin: 0; white-space: normal; }
+.add-links-panel { margin-top: 1rem; }
+#check-all-result:not(:empty) { margin-bottom: .8rem; }
+.link-panel .fact-grid { grid-template-columns: 2fr 1fr 1fr; }
+@media (max-width: 620px) { .link-panel .fact-grid { grid-template-columns: 1fr; } }
+.cta-row button.btn { margin: 0; font: inherit; font-size: .92rem; font-weight: 600; cursor: pointer; }

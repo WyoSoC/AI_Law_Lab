@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     source_max_words: int = 12_000
     source_max_bytes: int = 8_000_000
 
+    # --- web links kept in a corpus ---------------------------------------
+    # A corpus link is chunked, not put in one prompt, so it keeps far more than a drafting
+    # source: 100k words covers a long opinion or a statute chapter page. How many links one
+    # request adds is capped, because each one occupies embedding slots on the cluster.
+    web_link_max_words: int = 100_000
+    web_link_max_per_request: int = 20
+
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per
     # side, which tends to end with positions restated rather than shifted. The moderator

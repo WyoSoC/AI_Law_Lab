@@ -186,7 +186,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
 
 {% endblock %}
 {% block scripts %}
-<script src="{{ prefix }}/static/cast_builder.js"></script>
+<script src="{{ prefix }}/static/cast_builder.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
 // Once someone hand-edits the JSON, the builder stops overwriting it: their text is the

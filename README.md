@@ -240,8 +240,15 @@ the light or dark theme (saved per browser; otherwise the system setting is foll
 **Legal Sources** lists each corpus with its size and the experiments that use it. Opening one
 shows its documents, lets you read any document as the passages experiments retrieve, and
 has a "Try a search" box that shows what retrieval would return for a question, with
-similarity scores. Documents are added from the online databases or by uploading several files
-at once, into an existing corpus picked from a drop-down or a new one. A document can be
+similarity scores. Documents are added from the online databases, from web links, or by
+uploading several files at once, into an existing corpus picked from a drop-down or a new one.
+
+**Web links** can be pasted in any layout (one per line, or inside a paragraph), up to 20 at a
+time. Each page's main text is kept as a document, up to 100,000 words, fetched with the same
+public-address and redirect checks as cast sources (`web_links.py`). Because pages change, a
+link remembers its address: **Check for updates**, per link or for the whole corpus, re-reads
+it and rebuilds its passages only if the text changed, recording when it was last checked and
+last changed. Any document can be renamed or moved to another corpus. A document can be
 removed on its own; deleting a whole corpus asks you to type its name. Neither is allowed while
 a run that retrieves from that corpus is in progress.
 

@@ -16,8 +16,21 @@
 <p class="notice">{{ request.query_params.get('msg') }}</p>
 {% endif %}
 
+{% set link_docs = documents | selectattr('metadata.link', 'defined') | list %}
 <div class="cta-row">
-  <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}#add">+ Add documents to this corpus</a>
+  <button type="button" class="btn" id="show-add-links">+ Add web links</button>
+  <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}&amp;tab=search#add">Search databases</a>
+  <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}&amp;tab=upload#add">Upload documents</a>
+</div>
+
+<div class="panel add-links-panel" id="add-links" hidden>
+  <label for="links-text" style="margin-top:0">Web links to add to {{ name }} (one per line)</label>
+  <textarea id="links-text" class="short" spellcheck="false" placeholder="https://..."></textarea>
+  <div class="launch-row">
+    <button type="button" id="links-add">Add links →</button>
+    <span class="hint">Pages that need a login or load their text with JavaScript cannot be read.</span>
+  </div>
+  <div id="links-result" class="source-results"></div>
 </div>
 
 <h2>Used by</h2>
@@ -46,13 +59,20 @@
   <div id="probe-results" class="probe-results"></div>
 </div>
 
-<h2>Documents</h2>
+<div class="section-head">
+  <h2>Documents</h2>
+  {% if link_docs %}
+  <button type="button" class="small-btn" id="check-all">↻ Check all {{ link_docs|length }} web link{{ '' if link_docs|length == 1 else 's' }} for updates</button>
+  {% endif %}
+</div>
+<div id="check-all-result" class="source-results"></div>
 <div class="panel">
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th>Web link checked</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for d in documents %}
+        {% set m = d.metadata or {} %}
         <tr>
           <td><a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a>
             {% if d.source_uri and d.source_uri.startswith('http') %}
@@ -60,7 +80,17 @@
           <td>{{ d.doc_type }}</td>
           <td>{{ d.chunk_count }}</td>
           <td class="nowrap">{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="check-cell" id="check-{{ d.id }}">
+            {% if m.link %}
+              {% if m.check_error %}<span class="link-result error" title="{{ m.check_error }}"><span class="hit-mark">✕</span> could not check {{ m.checked_at[:10] }}</span>
+              {% else %}{{ m.checked_at[:10] if m.checked_at else '—' }}{% if m.changed_at %} <span class="hint">(changed {{ m.changed_at[:10] }})</span>{% endif %}{% endif %}
+            {% else %}<span class="hint">not a web link</span>{% endif %}
+          </td>
           <td class="actions-cell"><div class="row-actions">
+            {% if m.link %}
+            <button type="button" class="icon-btn check-btn" data-doc="{{ d.id }}" title="Check this link for updates"
+                    aria-label="Check {{ d.title }} for updates">↻</button>
+            {% endif %}
             <form method="post" action="{{ prefix }}/sources/documents/{{ d.id }}/delete"
                   onsubmit="return confirm({{ ('Remove “' ~ d.title ~ '” from ' ~ name ~ '? Experiments will no longer retrieve from it.')|tojson|forceescape }})">
               <button type="submit" class="icon-btn" title="Remove this document" aria-label="Remove {{ d.title }}">✕</button>
@@ -89,9 +119,31 @@
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ prefix }}/static/web_links.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
 const NAME = {{ name|tojson }};
+
+// ---------------------------------------------------------------- web links
+const addPanel = document.getElementById('add-links');
+document.getElementById('show-add-links').addEventListener('click', () => {
+  addPanel.hidden = !addPanel.hidden;
+  if (!addPanel.hidden) document.getElementById('links-text').focus();
+});
+document.getElementById('links-add').addEventListener('click', async ev => {
+  const d = await LinkUI.add(NAME, document.getElementById('links-text').value,
+                             document.getElementById('links-result'), ev.target);
+  if (d && d.added) {
+    document.getElementById('links-result').insertAdjacentHTML('beforeend',
+      '<p class="hint"><a href="">Reload the page</a> to see them in the list below.</p>');
+    document.getElementById('links-text').value = '';
+  }
+});
+document.querySelectorAll('.check-btn').forEach(b => b.addEventListener('click', () =>
+  LinkUI.check(b.dataset.doc, document.getElementById('check-' + b.dataset.doc), b)));
+const checkAll = document.getElementById('check-all');
+if (checkAll) checkAll.addEventListener('click', () =>
+  LinkUI.checkAll(NAME, document.getElementById('check-all-result'), checkAll));
 function esc(s) {
   return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }

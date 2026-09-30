@@ -102,10 +102,18 @@ class Corpus:
             (self.name, title, source_uri, doc_type, jsonb(metadata or {}), sha),
         )
         doc_id = row["id"]
+        n = await self.store_chunks(doc_id, text, page_map)
+        log.info("ingested %s: %d chunks", title, n)
+        return doc_id
 
+    async def store_chunks(self, doc_id: int, text: str,
+                           page_map: list[tuple[int, int]] | None = None) -> int:
+        """Chunk and embed `text` as the document's passages, replacing any it had.
+
+        Embeds first and swaps the passages in one transaction, so a document being
+        re-read keeps its old passages if embedding fails partway.
+        """
         chunks = chunk_text(text)
-        if not chunks:
-            return doc_id
 
         # Embed in batches so a large document does not occupy a slot indefinitely.
         vectors: list[list[float]] = []
@@ -114,7 +122,8 @@ class Corpus:
 
         offset = 0
         pool = await get_pool()
-        async with pool.connection() as conn, conn.cursor() as cur:
+        async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+            await cur.execute("DELETE FROM chunks WHERE document_id=%s", (doc_id,))
             for ordinal, (content, vector) in enumerate(zip(chunks, vectors)):
                 page = _page_for_offset(page_map, offset) if page_map else None
                 end_page = _page_for_offset(page_map, offset + len(content)) if page_map else None
@@ -124,8 +133,7 @@ class Corpus:
                     (doc_id, ordinal, content, page, end_page, vec(vector)),
                 )
                 offset += len(content)
-        log.info("ingested %s: %d chunks", title, len(chunks))
-        return doc_id
+        return len(chunks)
 
     async def add_pdf(self, path: Path, **kw) -> int | None:
         from pypdf import PdfReader
@@ -236,7 +244,7 @@ async def document_chunks(document_id: int) -> list[dict]:
         "WHERE document_id=%s ORDER BY ordinal", (document_id,))
 
 
-async def _check_idle(name: str) -> None:
+async def check_idle(name: str) -> None:
     row = await fetch_one(
         "SELECT COUNT(*) AS n FROM runs r JOIN experiments e ON e.id = r.experiment_id "
         "WHERE r.status IN ('pending', 'running') AND e.mode <> 'roleplay' "
@@ -251,9 +259,31 @@ async def delete_document(document_id: int) -> dict | None:
     doc = await get_document(document_id)
     if doc is None:
         return None
-    await _check_idle(doc["corpus"])
+    await check_idle(doc["corpus"])
     return await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id, title, corpus",
                            (document_id,))
+
+
+async def rename_document(document_id: int, title: str) -> dict | None:
+    title = " ".join(title.split())[:300]
+    if not title:
+        raise ValueError("A document needs a title.")
+    return await fetch_one("UPDATE documents SET title=%s WHERE id=%s RETURNING id, title, corpus",
+                           (title, document_id))
+
+
+async def move_document(document_id: int, corpus: str) -> dict | None:
+    """File a document under another corpus (which is created if it does not exist)."""
+    corpus = " ".join(corpus.split())[:120]
+    if not corpus:
+        raise ValueError("Choose a corpus to move the document to.")
+    doc = await get_document(document_id)
+    if doc is None:
+        return None
+    await check_idle(doc["corpus"])
+    await check_idle(corpus)
+    return await fetch_one("UPDATE documents SET corpus=%s WHERE id=%s RETURNING id, title, corpus",
+                           (corpus, document_id))
 
 
 async def delete_corpus(name: str) -> int:
@@ -262,7 +292,7 @@ async def delete_corpus(name: str) -> int:
     Past runs keep their results and citation text; a citation's chunk id simply no longer
     resolves to a passage.
     """
-    await _check_idle(name)
+    await check_idle(name)
     rows = await fetch_all("DELETE FROM documents WHERE corpus=%s RETURNING id", (name,))
     log.info("deleted corpus %s: %d documents", name, len(rows))
     return len(rows)

@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import agent_spec, cast_assistant, experiments, rag, source_material, sources
+from .. import agent_spec, cast_assistant, experiments, rag, source_material, sources, web_links
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..graphs.roleplay_policy import ESTIMATE
@@ -55,11 +55,12 @@ def _prefix(request: Request) -> dict[str, str]:
 
 
 def _asset_version() -> str:
-    """The stylesheet's modification time, appended to its URL so a browser fetches the new
-    one after a deploy instead of reusing a cached copy that lacks newer rules."""
+    """The newest modification time among the stylesheet and scripts, appended to their URLs
+    so a browser fetches new ones after a deploy instead of reusing stale cached copies."""
+    static = BASE / "static"
     try:
-        return str(int((BASE / "static" / "style.css").stat().st_mtime))
-    except OSError:
+        return str(int(max(f.stat().st_mtime for f in (static / "style.css", *static.glob("*.js")))))
+    except (OSError, ValueError):
         return "0"
 
 
@@ -276,6 +277,7 @@ async def sources_page(request: Request):
     return templates.TemplateResponse(request, "sources.html", {
         "corpora": await rag.list_corpora(),
         "topics": sources.by_topic(),
+        "link_limit": settings.web_link_max_per_request,
     })
 
 
@@ -341,8 +343,76 @@ async def document_page(request: Request, document_id: int):
     return templates.TemplateResponse(request, "document.html", {
         "doc": doc,
         "chunks": await rag.document_chunks(document_id),
+        "corpora": [c["corpus"] for c in await rag.list_corpora()],
         "metadata_pretty": json.dumps(doc["metadata"], indent=2) if doc["metadata"] else None,
     })
+
+
+@app.post("/api/sources/links")
+async def api_sources_links(request: Request):
+    """Read web links into a corpus. Body: {corpus, text}, where text holds the links in any
+    layout (one per line, separated by spaces or commas, or inside a paragraph)."""
+    body = await request.json()
+    links = web_links.parse_links(str(body.get("text") or ""))
+    if not links:
+        raise HTTPException(400, "No web links were found. Paste addresses such as "
+                                 "https://www.wyoleg.gov/... , one per line.")
+    corpus = str(body.get("corpus") or "").strip()
+    if not corpus:
+        raise HTTPException(400, "Choose a corpus, or name a new one.")
+    try:
+        report = await web_links.add_links(await get_router(), corpus, links)
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    skipped = len(links) - len(report["results"])
+    if skipped:
+        report["note"] = (f"Only the first {settings.web_link_max_per_request} links were read; "
+                          f"add the other {skipped} in another batch.")
+    return JSONResponse(report)
+
+
+@app.post("/api/sources/documents/{document_id}/refresh")
+async def api_document_refresh(document_id: int):
+    """Re-read a web-link document and rebuild its passages if the page changed."""
+    try:
+        return JSONResponse(await web_links.refresh(await get_router(), document_id))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/sources/corpora/{name}/refresh")
+async def api_corpus_refresh(name: str):
+    """Check every web link in a corpus for changes."""
+    try:
+        return JSONResponse(await web_links.refresh_corpus(await get_router(), name))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/sources/documents/{document_id}/rename")
+async def document_rename(document_id: int, title: str = Form("")):
+    try:
+        doc = await rag.rename_document(document_id, title)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if doc is None:
+        raise HTTPException(404, "no such document")
+    return RedirectResponse(f"{P}/sources/documents/{document_id}?msg=" + quote("Renamed."),
+                            status_code=303)
+
+
+@app.post("/sources/documents/{document_id}/move")
+async def document_move(document_id: int, corpus: str = Form("")):
+    try:
+        doc = await rag.move_document(document_id, corpus)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    if doc is None:
+        raise HTTPException(404, "no such document")
+    return RedirectResponse(f"{P}/sources/documents/{document_id}?msg=" + quote(
+        f"Moved to “{doc['corpus']}”."), status_code=303)
 
 
 @app.post("/sources/documents/{document_id}/delete")

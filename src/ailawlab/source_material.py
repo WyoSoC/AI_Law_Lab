@@ -261,7 +261,7 @@ def _first_words(text: str, limit: int) -> str:
     return text
 
 
-def _finish(doc: SourceDoc) -> SourceDoc:
+def _finish(doc: SourceDoc, max_words: int | None = None) -> SourceDoc:
     text = doc.text.replace("\r\n", "\n").replace("\u200b", "")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n[ \t]*\n\s*", "\n\n", text).strip()
@@ -270,7 +270,7 @@ def _finish(doc: SourceDoc) -> SourceDoc:
         raise SourceError("No readable text was found. If this is a web page that needs a "
                           "login or loads its text with JavaScript, copy the text and paste "
                           "it instead.")
-    limit = settings.source_max_words
+    limit = max_words or settings.source_max_words
     if total > limit:
         text = _first_words(text, limit)
         doc.truncated = True
@@ -287,8 +287,9 @@ def _finish(doc: SourceDoc) -> SourceDoc:
 
 
 def from_bytes(data: bytes, *, content_type: str = "", filename: str = "",
-               url: str = "") -> SourceDoc:
-    """Read a fetched response or an uploaded file: PDF, HTML, or plain text."""
+               url: str = "", max_words: int | None = None) -> SourceDoc:
+    """Read a fetched response or an uploaded file: PDF, HTML, or plain text.
+    `max_words` overrides the drafting cap (settings.source_max_words)."""
     ctype = content_type.split(";")[0].strip().lower()
     name = filename.lower()
     fallback_title = PurePosixPath(filename).stem if filename else _title_from_url(url)
@@ -299,7 +300,7 @@ def from_bytes(data: bytes, *, content_type: str = "", filename: str = "",
             raise SourceError("No text could be read from that PDF. It may be a scanned "
                               "image; if so, copy the text and paste it instead.")
         return _finish(SourceDoc(title=fallback_title, text=text, kind="PDF", url=url,
-                                 site=_host(url)))
+                                 site=_host(url)), max_words)
 
     decoded = _decode(data, content_type)
     head = decoded[:1000].lstrip().lower()
@@ -312,11 +313,11 @@ def from_bytes(data: bytes, *, content_type: str = "", filename: str = "",
             doc.text = strip_markup(decoded)
             doc.warnings.append("The main article could not be picked out, so all of the "
                                 "page's text was used. Check the preview.")
-        return _finish(doc)
+        return _finish(doc, max_words)
 
     if ctype.startswith("text/") or name.endswith((".txt", ".md", ".markdown")) or not (ctype or name):
         return _finish(SourceDoc(title=fallback_title or "Text", text=decoded, kind="text file",
-                                 url=url, site=_host(url)))
+                                 url=url, site=_host(url)), max_words)
     raise SourceError("That kind of file cannot be read. Use a web page, a PDF, or plain text.")
 
 
@@ -348,7 +349,7 @@ def from_client(data: dict[str, Any]) -> SourceDoc:
 # ---------------------------------------------------------------- fetching links
 
 
-def _normalize_link(raw: str) -> str:
+def normalize_link(raw: str) -> str:
     link = raw.strip()
     if link and "://" not in link and re.match(r"^[\w-]+(\.[\w-]+)+(:\d+)?(/|$)", link):
         link = f"https://{link}"                     # "oilcity.news/..." pasted without a scheme
@@ -385,9 +386,11 @@ async def check_public_url(url: str) -> None:
                               "which this server will not fetch.")
 
 
-async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> SourceDoc:
-    """Fetch a link and read it. `transport` exists so tests can stand in for the network."""
-    url = _normalize_link(raw_url)
+async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None,
+                    max_words: int | None = None) -> SourceDoc:
+    """Fetch a link and read it. `transport` exists so tests can stand in for the network;
+    `max_words` overrides the drafting cap, for links kept whole in a corpus."""
+    url = normalize_link(raw_url)
     headers = {"User-Agent": settings.sec_user_agent,
                "Accept": "text/html,application/xhtml+xml,application/pdf,text/plain;q=0.9,*/*;q=0.5"}
     async with httpx.AsyncClient(timeout=settings.source_timeout_s, follow_redirects=False,
@@ -410,7 +413,7 @@ async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None 
                     # PDF extraction is CPU-bound; keep it off the event loop.
                     return await asyncio.to_thread(
                         from_bytes, bytes(body), content_type=r.headers.get("content-type", ""),
-                        url=url)
+                        url=url, max_words=max_words)
             except httpx.RequestError as e:
                 raise SourceError(f"Could not reach {_host(url) or 'that website'}: it did not "
                                   "respond. Check the link, or paste the text instead.") from e

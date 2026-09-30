@@ -20,6 +20,7 @@ uploading your own documents &mdash; each becomes chunked, embedded and citable.
 <h2 id="add">Add to a corpus</h2>
 <div class="subtabs" role="tablist">
   <button type="button" role="tab" id="tab-search" aria-controls="pane-search" data-tab="search">Search online databases</button>
+  <button type="button" role="tab" id="tab-links" aria-controls="pane-links" data-tab="links">Add web links</button>
   <button type="button" role="tab" id="tab-upload" aria-controls="pane-upload" data-tab="upload">Upload documents</button>
 </div>
 
@@ -54,6 +55,26 @@ uploading your own documents &mdash; each becomes chunked, embedded and citable.
 {% endfor %}
 </div>
 
+<div id="pane-links" role="tabpanel" aria-labelledby="tab-links" hidden>
+<div class="panel">
+  <label for="links-text">Web links (one per line; up to {{ link_limit }} at a time)</label>
+  <textarea id="links-text" class="short" spellcheck="false"
+            placeholder="https://wyoleg.gov/statutes/compress/title35.pdf&#10;https://deq.wyoming.gov/...&#10;https://www.courtlistener.com/opinion/..."></textarea>
+  <p class="hint">Any public web page or online PDF: a statute or regulation page, agency guidance,
+    a court order, a news story. Each page's main text is kept as one document. Pages that need a
+    login, or that load their text with JavaScript, cannot be read; download those and upload the file instead.</p>
+
+  <label>Add them to</label>
+  <div class="cast-toolbar">
+    <span class="corpus-picker" id="links-picker" data-default="web"></span>
+    <button type="button" id="links-add">Add links →</button>
+  </div>
+  <div id="links-result" class="source-results"></div>
+  <p class="hint">Web pages change. To keep a link current, open its corpus and use
+    <strong>Check for updates</strong>: pages that changed are re-read, the rest are left as they are.</p>
+</div>
+</div>
+
 <div id="pane-upload" role="tabpanel" aria-labelledby="tab-upload" hidden>
 <div class="panel">
   <form method="post" action="{{ prefix }}/corpus/upload" enctype="multipart/form-data" id="upload-form">
@@ -73,6 +94,7 @@ uploading your own documents &mdash; each becomes chunked, embedded and citable.
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ prefix }}/static/web_links.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
 // Existing corpora for the drop-downs; refreshed after every ingest.
@@ -100,7 +122,7 @@ function showTab(name) {
 }
 document.querySelectorAll('.subtabs [role=tab]').forEach(t =>
   t.addEventListener('click', () => showTab(t.dataset.tab)));
-showTab(new URLSearchParams(location.search).get('tab') === 'upload' ? 'upload' : 'search');
+showTab({upload: 'upload', links: 'links'}[new URLSearchParams(location.search).get('tab')] || 'search');
 
 // ---------------------------------------------------------------- corpus picker
 //
@@ -130,6 +152,16 @@ function pickedCorpus(el) {
 }
 
 document.querySelectorAll('.corpus-picker').forEach(el => fillPicker(el));
+
+document.getElementById('links-add').addEventListener('click', async ev => {
+  const corpus = pickedCorpus(document.getElementById('links-picker'));
+  const d = await LinkUI.add(corpus, document.getElementById('links-text').value,
+                             document.getElementById('links-result'), ev.target);
+  if (d && d.added) {
+    document.getElementById('links-text').value = '';
+    await refreshCorpora(d.corpus);
+  }
+});
 
 document.getElementById('upload-form').addEventListener('submit', ev => {
   const name = pickedCorpus(ev.target.querySelector('.corpus-picker'));

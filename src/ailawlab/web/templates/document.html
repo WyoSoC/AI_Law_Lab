@@ -23,6 +23,49 @@
     {% if doc.source_uri.startswith('http') %}<a href="{{ doc.source_uri }}" target="_blank" rel="noopener">original source ↗</a>
     {% else %}from {{ doc.source_uri }}{% endif %}{% endif %}</p>
 
+{% if request.query_params.get('msg') %}
+<p class="notice">{{ request.query_params.get('msg') }}</p>
+{% endif %}
+
+{% set m = doc.metadata or {} %}
+{% if m.link %}
+<div class="panel link-panel">
+  <div class="fact-grid">
+    <div><div class="fact-label">Web link</div>
+      <div class="link-url"><a href="{{ m.link }}" target="_blank" rel="noopener">{{ m.link }}</a></div></div>
+    <div><div class="fact-label">Text read</div><div>{{ (m.retrieved_at or '')[:10] or '—' }}</div>
+      {% if m.words %}<div class="fact-note">{{ '{:,}'.format(m.words) }} words{% if m.truncated %}, cut to fit{% endif %}</div>{% endif %}</div>
+    <div><div class="fact-label">Last checked</div><div>{{ (m.checked_at or '')[:10] or '—' }}</div>
+      {% if m.changed_at %}<div class="fact-note">last changed {{ m.changed_at[:10] }}</div>{% endif %}</div>
+  </div>
+  {% if m.check_error %}<p class="provider-note warn">Last check: {{ m.check_error }}</p>{% endif %}
+  <div class="launch-row">
+    <button type="button" class="small-btn" id="check-btn">↻ Check for updates</button>
+    <span id="check-result" class="hint">Re-reads the page. If its text changed, the passages below are rebuilt; if not, nothing changes.</span>
+  </div>
+</div>
+{% endif %}
+
+<details class="config-details">
+  <summary>Rename or move to another corpus</summary>
+  <div class="two-col">
+    <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/rename">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" value="{{ doc.title }}" required>
+      <button type="submit" class="small-btn">Rename</button>
+    </form>
+    <form method="post" action="{{ prefix }}/sources/documents/{{ doc.id }}/move" id="move-form">
+      <label for="move-corpus">Corpus</label>
+      <select id="move-corpus" name="corpus">
+        {% for c in corpora %}<option value="{{ c }}" {% if c == doc.corpus %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        <option value="__new__">+ New corpus…</option>
+      </select>
+      <input type="text" id="move-new" placeholder="Name the new corpus" hidden>
+      <button type="submit" class="small-btn">Move</button>
+    </form>
+  </div>
+</details>
+
 {% if metadata_pretty %}
 <details class="config-details"><summary>Source details</summary><pre>{{ metadata_pretty }}</pre></details>
 {% endif %}
@@ -40,4 +83,23 @@
 <p class="empty">This document has no passages (no text was extracted).</p>
 {% endfor %}
 
+{% endblock %}
+{% block scripts %}
+<script src="{{ prefix }}/static/web_links.js?v={{ asset_version }}"></script>
+<script>
+const PREFIX = "{{ prefix }}";
+const checkBtn = document.getElementById('check-btn');
+if (checkBtn) checkBtn.addEventListener('click', async () => {
+  const r = await LinkUI.check({{ doc.id }}, document.getElementById('check-result'), checkBtn);
+  if (r && r.status === 'updated') location.reload();
+});
+const moveSel = document.getElementById('move-corpus'), moveNew = document.getElementById('move-new');
+moveSel.addEventListener('change', () => { moveNew.hidden = moveSel.value !== '__new__'; if (!moveNew.hidden) moveNew.focus(); });
+document.getElementById('move-form').addEventListener('submit', ev => {
+  if (moveSel.value !== '__new__') return;
+  const name = moveNew.value.trim();
+  if (!name) { ev.preventDefault(); moveNew.focus(); return; }
+  moveSel.add(new Option(name, name, true, true));
+});
+</script>
 {% endblock %}
