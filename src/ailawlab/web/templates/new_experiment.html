@@ -11,7 +11,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <div class="panel">
     <label for="name">Name</label>
     <input type="text" id="name" name="name" required
-           placeholder="Contract risk review — gemma4 baseline">
+           placeholder="A short name that says what this experiment studies">
 
     <div class="two-col">
       <div>
@@ -76,7 +76,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
 
     <label for="rp_scenario">Scenario</label>
     <textarea id="rp_scenario" class="short" oninput="syncJSON()"
-              placeholder="Provider and Client negotiate the indemnification cap in a master services agreement governed by Wyoming law."></textarea>
+              placeholder="Who the parties are, what is in dispute, the setting and governing law, and what this session is meant to settle."></textarea>
     <p class="hint">What the exchange is about. This is the default for every run (a run can
        still use a different one), and the AI tools below generate and validate the cast against it.</p>
 
@@ -87,7 +87,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
                max="{{ max_turns_limit }}" oninput="syncJSON()">
         <p class="hint">Upper limit on speaking turns across all parties. The moderator ends
            the scene sooner if the parties agree or someone walks away. A full 100-turn scene
-           at 1000 words a turn takes about an hour.</p>
+           at 2000 words a turn takes about 1 hour 40 minutes.</p>
       </div>
       <div>
         <label for="rp_words">Words per turn</label>

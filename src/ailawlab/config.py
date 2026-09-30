@@ -81,8 +81,9 @@ class Settings(BaseSettings):
     max_turns_limit: int = 100
     # Measured 2026-09-14 on a live run: a 1000-word turn (reply, private notes, moderator)
     # takes roughly 26-30 s, rising as prompts grow, so a full 100-turn scene takes about an
-    # hour. graphs/roleplay_policy.ESTIMATE holds the figures the pages show.
-    default_word_limit: int = 1000
+    # hour; at the default of 2000 words the pages estimate about 1 h 40 min.
+    # graphs/roleplay_policy.ESTIMATE holds the figures the pages show.
+    default_word_limit: int = 2000
     word_limit_max: int = 2000
 
     # --- web ------------------------------------------------------------
