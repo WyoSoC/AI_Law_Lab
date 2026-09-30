@@ -51,7 +51,16 @@ def _prefix(request: Request) -> dict[str, str]:
     the proxy path and configured url_prefix shows up as broken links immediately,
     instead of links that work only until the proxy is moved.
     """
-    return {"prefix": request.scope.get("root_path", "")}
+    return {"prefix": request.scope.get("root_path", ""), "asset_version": _asset_version()}
+
+
+def _asset_version() -> str:
+    """The stylesheet's modification time, appended to its URL so a browser fetches the new
+    one after a deploy instead of reusing a cached copy that lacks newer rules."""
+    try:
+        return str(int((BASE / "static" / "style.css").stat().st_mtime))
+    except OSError:
+        return "0"
 
 
 templates = Jinja2Templates(directory=BASE / "templates", context_processors=[_prefix])

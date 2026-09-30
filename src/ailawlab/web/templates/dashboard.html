@@ -38,7 +38,7 @@
   <h2>Experiments</h2>
   <div class="head-actions">
     <a class="small-btn" href="{{ prefix }}/experiments/new">+ New experiment</a>
-    <a class="small-btn quiet" href="{{ prefix }}/trash"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg> Trash{% if trash_count %} ({{ trash_count }}){% endif %}</a>
+    <a class="small-btn quiet" href="{{ prefix }}/trash"><svg class="icon" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg> Trash{% if trash_count %} ({{ trash_count }}){% endif %}</a>
   </div>
 </div>
 <div class="panel">
@@ -56,7 +56,7 @@
           <td class="actions-cell"><div class="row-actions">
             <form method="post" action="{{ prefix }}/experiments/{{ e.id }}/trash">
               <button type="submit" class="icon-btn" title="Move “{{ e.name }}” to the trash"
-                      aria-label="Move {{ e.name }} to the trash"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg></button>
+                      aria-label="Move {{ e.name }} to the trash"><svg class="icon" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5a2 2 0 0 0 2 1.5h7a2 2 0 0 0 2-1.5l1-12.5M9 7V4.5h6V7"/></svg></button>
             </form>
           </div></td>
         </tr>

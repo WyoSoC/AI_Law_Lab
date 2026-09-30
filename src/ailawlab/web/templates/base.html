@@ -13,12 +13,12 @@
       if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="{{ prefix }}/static/style.css">
+  <link rel="stylesheet" href="{{ prefix }}/static/style.css?v={{ asset_version }}">
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="{{ prefix }}/" title="About AI Law Lab">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <svg class="logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
         <rect width="32" height="32" rx="8" class="logo-bg"/>
         <g class="logo-mark" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <path d="M16 8.5V24M11 24.5h10M7.5 11h17"/>
@@ -38,8 +38,8 @@
     </nav>
     <span class="cluster-pill" id="cluster-pill" title="Inference cluster">&hellip;</span>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Switch to dark theme">
-      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
-      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+      <svg class="icon-moon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+      <svg class="icon-sun" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
     </button>
   </header>
 
