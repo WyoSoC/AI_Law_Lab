@@ -112,6 +112,12 @@ def _experiment_id(experiment_id: str) -> str:
     return experiment_id
 
 
+def _run_id(run_id: str) -> str:
+    if not _is_uuid(run_id):
+        raise HTTPException(404, "no such run")
+    return run_id
+
+
 @app.get("/trash", response_class=HTMLResponse)
 async def trash_page(request: Request):
     return templates.TemplateResponse(request, "trash.html", {
@@ -227,6 +233,7 @@ async def experiment_detail(request: Request, experiment_id: str):
         "config_pretty": json.dumps(exp["config"], indent=2),
         "estimate": ESTIMATE,
         "limits": {"max_turns": settings.max_turns_limit, "word_limit": settings.word_limit_max},
+        "corpora": [c["corpus"] for c in await rag.list_corpora()],
     })
 
 
@@ -255,7 +262,7 @@ async def launch_run(experiment_id: str, inputs_json: str = Form("{}")):
 
 @app.get("/runs/{run_id}", response_class=HTMLResponse)
 async def run_detail(request: Request, run_id: str):
-    run = await experiments.get_run(run_id)
+    run = await experiments.get_run(_run_id(run_id))
     if run is None:
         raise HTTPException(404, "no such run")
     events = await fetch_all(
@@ -263,6 +270,7 @@ async def run_detail(request: Request, run_id: str):
     )
     return templates.TemplateResponse(request, "run.html", {
         "run": run,
+        "view": views.run_view(run, request.scope.get("root_path", "")),
         "events": events,
         "metrics": await run_metrics(run_id),
         "result_pretty": json.dumps(run["result"], indent=2) if run.get("result") else None,
@@ -711,6 +719,23 @@ async def api_cluster():
     router = await get_router()
     await router.health_check()
     return router.stats()
+
+
+@app.get("/runs/{run_id}/report.pdf")
+async def run_report_pdf(run_id: str, private: str = ""):
+    """The run as a PDF: summary, scenario and cast, transcript. `private=1` adds each
+    speaker's private notes and reasoning, which the default report leaves out."""
+    from .report_pdf import run_report
+
+    run = await experiments.get_run(_run_id(run_id))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    if not run.get("result"):
+        raise HTTPException(409, "This run has no result to export yet.")
+    pdf = await asyncio.to_thread(run_report, run, views.run_view(run), bool(private))
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{run['experiment_name']} run {str(run['id'])[:8]}").strip("-.")
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.pdf"'})
 
 
 @app.get("/api/runs/{run_id}")

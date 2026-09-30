@@ -74,6 +74,7 @@ class RoleplayState(TypedDict, total=False):
     directive: str              # moderator's instruction to the next speaker, if any
     last_intervention: int      # turn of the moderator's last impasse intervention
     ledgers: dict[str, dict]    # agent_id -> that agent's private negotiation notes
+    corpus: str                 # legal sources the cast may cite; empty for none
     outcome: str
     done: bool
     error: str

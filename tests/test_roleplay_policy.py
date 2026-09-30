@@ -114,3 +114,21 @@ def test_long_transcripts_split_into_bounded_segments():
     segments = transcript_segments(t, max_tokens=3000)
     assert sum(len(s) for s in segments) == 10
     assert len(segments) > 1 and all(len(s) >= 1 for s in segments)
+
+
+def test_legal_sources_are_numbered_capped_and_tracked():
+    from ailawlab.graphs.roleplay_policy import (
+        SOURCE_WORDS,
+        cited_sources,
+        format_sources,
+        source_query,
+    )
+
+    assert format_sources([]) == ""
+    block = format_sources([{"label": "Wyo. Stat. § 36-1-101", "content": "word " * 500},
+                            {"label": "Case B", "content": "Short holding."}])
+    assert "[S1] Wyo. Stat. § 36-1-101" in block and "[S2] Case B\nShort holding." in block
+    assert len(block.split("[S2]")[0].split()) < SOURCE_WORDS + 40
+    assert cited_sources("As [S2] holds, and [S1], and again [S2]; not [S9].", 2) == [2, 1]
+    query = source_query({"goal": "Cap the bond"}, [{"content": "a " * 50}, {"content": "b " * 300}])
+    assert query.startswith("Cap the bond") and len(query.split()) <= 161

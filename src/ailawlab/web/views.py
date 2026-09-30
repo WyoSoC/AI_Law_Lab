@@ -201,19 +201,24 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         words = _int(config.get("word_limit"), settings.default_word_limit)
         people = len(agents)
         source = config.get("source")
+        corpus = str(config.get("corpus") or "")
+        facts = [
+            _fact("Cast", f"{people} {'person' if people == 1 else 'people'}"),
+            _fact("Max turns", str(turns), "the moderator may end sooner"),
+            _fact("Words per turn", f"{words:,}"),
+            _fact("Longest run", duration_text(estimate_run_seconds(turns, words)),
+                  "if every turn is used"),
+        ]
+        if corpus:
+            facts.append(_fact("Legal sources", corpus, "passages the cast can cite"))
         view.update(
-            facts=[
-                _fact("Cast", f"{people} {'person' if people == 1 else 'people'}"),
-                _fact("Max turns", str(turns), "the moderator may end sooner"),
-                _fact("Words per turn", f"{words:,}"),
-                _fact("Longest run", duration_text(estimate_run_seconds(turns, words)),
-                      "if every turn is used"),
-            ],
+            facts=facts,
+            corpus=corpus,
             scenario=str(config.get("scenario") or ""),
             agents=[agent_view(a) for a in agents],
             cast_errors=[i["message"] for i in check_cast(agents) if i["level"] == "error"],
             source=source_view(source) if isinstance(source, dict) else None,
-            launch_defaults={"max_turns": turns, "word_limit": words},
+            launch_defaults={"max_turns": turns, "word_limit": words, "corpus": corpus},
         )
         return view
 
@@ -229,4 +234,108 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
                   "none are installed yet, so the agent uses corpus search either way"),
         ]
     view.update(facts=facts, launch_defaults={})
+    return view
+
+
+# ---------------------------------------------------------------- run page and report
+#
+# A finished run is read like a document: the result summary first, then (for a role-play)
+# the transcript with each person in their own colour, then the numbers and the trace. The
+# same view feeds the PDF export, so the page and the file say the same thing.
+
+# How many distinct speaker colours the stylesheet and the PDF define.
+PALETTE_SIZE = 8
+
+_TURN_REF = re.compile(r"\b(Turns?)\s+(\d{1,3})\b")
+
+
+def link_turns(html: str) -> str:
+    """Make an assessor's "Turn 17" / "Turns 3-7" references jump to that turn."""
+    return _TURN_REF.sub(lambda m: f'<a class="turn-ref" href="#turn-{m.group(2)}">{m.group(1)} {m.group(2)}</a>', html)
+
+
+def _speakers(transcript: list[dict], agents: list[dict]) -> dict[str, dict[str, Any]]:
+    """Each speaker's name, role, colour slot and turn count, in cast order."""
+    order = [a.get("id") for a in agents if isinstance(a, dict) and a.get("id")]
+    for t in transcript:
+        if t.get("agent_id") and t["agent_id"] != "moderator" and t["agent_id"] not in order:
+            order.append(t["agent_id"])
+    info: dict[str, dict[str, Any]] = {}
+    by_id = {a.get("id"): a for a in agents if isinstance(a, dict)}
+    for i, aid in enumerate(order):
+        a = by_id.get(aid, {})
+        info[aid] = {"id": aid, "name": a.get("name") or aid, "role": a.get("role", ""),
+                     "color": i % PALETTE_SIZE + 1, "turns": 0, "words": 0, "cited": 0}
+    for t in transcript:
+        s = info.get(t.get("agent_id"))
+        if s:
+            s["name"] = t.get("name") or s["name"]
+            s["role"] = t.get("role") or s["role"]
+            s["turns"] += 1
+            s["words"] += len((t.get("content") or "").split())
+            s["cited"] += sum(1 for src in t.get("sources") or [] if src.get("cited"))
+    return info
+
+
+def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
+    """Turn a reply's [S2] markers into links to the document the passage came from."""
+    by_marker = {s.get("marker"): s for s in sources}
+
+    def link(m: re.Match) -> str:
+        src = by_marker.get(m.group(1))
+        if not src or not src.get("document_id"):
+            return m.group(0)
+        title = str(src.get("label", "")).replace('"', "&quot;")
+        return (f'<a class="cite" href="{prefix}/sources/documents/{int(src["document_id"])}" '
+                f'title="{title}">[{m.group(1)}]</a>')
+
+    return re.sub(r'<span class="cite">\[(S\d+)\]</span>', link, html)
+
+
+def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
+    """The run page's readable parts: summary, transcript, cast and sources. `prefix` is the
+    site's mount path, for links to source documents."""
+    from .markdown import to_html
+
+    result = run.get("result") or {}
+    config = {**(run.get("config_snapshot") or {}), **(run.get("inputs") or {})}
+    mode = run.get("mode", "")
+    started, finished = run.get("started_at"), run.get("finished_at")
+    view: dict[str, Any] = {
+        "mode_label": MODE_LABELS.get(mode, mode),
+        "started": f"{started:%B} {started.day}, {started:%Y at %H:%M} UTC" if started else "",
+        "took": elapsed_text((finished - started).total_seconds()) if started and finished else "",
+        "summary_title": "Assessment" if mode == "roleplay" else "Answer",
+        "summary_md": result.get("outcome") or result.get("answer") or "",
+    }
+    view["summary_html"] = link_turns(to_html(view["summary_md"])) if view["summary_md"] else ""
+
+    if mode == "roleplay":
+        transcript = [t for t in result.get("transcript") or [] if isinstance(t, dict)]
+        agents = [a for a in config.get("agents") or [] if isinstance(a, dict)]
+        speakers = _speakers(transcript, agents)
+        entries = []
+        for t in transcript:
+            moderator = t.get("agent_id") == "moderator"
+            s = speakers.get(t.get("agent_id"), {})
+            entries.append({
+                "turn": t.get("turn"), "moderator": moderator,
+                "name": "Moderator" if moderator else s.get("name", t.get("name", "")),
+                "role": t.get("role", ""), "color": s.get("color", 0),
+                "agent_id": t.get("agent_id"),
+                "content": t.get("content", ""),
+                "html": _link_sources(to_html(t.get("content", "")), t.get("sources") or [], prefix),
+                "words": len((t.get("content") or "").split()),
+                "private_notes": t.get("private_notes") or {}, "thinking": t.get("thinking") or "",
+                "sources": t.get("sources") or [], "host": t.get("host", ""),
+            })
+        view.update(
+            scenario=str(config.get("scenario") or ""),
+            corpus=str(config.get("corpus") or ""),
+            speakers=list(speakers.values()),
+            transcript=entries,
+            turns=sum(1 for e in entries if not e["moderator"]),
+            interventions=sum(1 for e in entries if e["moderator"]),
+            cast=[{**agent_view(a), "id": a.get("id")} for a in agents],
+        )
     return view

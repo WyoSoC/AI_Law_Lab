@@ -213,6 +213,8 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "directive": "",
             "last_intervention": 0,
             "ledgers": {},
+            # Legal sources are optional for a role-play; with none, turns are as before.
+            "corpus": str(merged.get("corpus") or "").strip(),
             "done": False,
         }
     raise ValueError(f"unknown mode {mode!r}")
@@ -234,7 +236,8 @@ async def execute_run(run_id: str) -> dict:
     inputs = run["inputs"] or {}
 
     router = await get_router()
-    corpus = Corpus(router, name=config.get("corpus", "default"))
+    # A run may name its own corpus (a role-play's legal sources are chosen at launch).
+    corpus = Corpus(router, name=inputs.get("corpus") or config.get("corpus") or "default")
     tracer = Tracer(run_id)
     ctx = RunContext(run_id=run_id, router=router, tracer=tracer, corpus=corpus, config=config)
 

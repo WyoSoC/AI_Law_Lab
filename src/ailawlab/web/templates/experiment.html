@@ -165,6 +165,14 @@
         </div>
       </div>
     </details>
+    <label for="in_corpus">Legal sources for this run</label>
+    <select id="in_corpus" onchange="syncInputs()">
+      <option value="">None</option>
+      {% for c in corpora %}<option value="{{ c }}" {% if c == v.corpus %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      {% if v.corpus and v.corpus not in corpora %}<option value="{{ v.corpus }}" selected>{{ v.corpus }} (now empty)</option>{% endif %}
+    </select>
+    <p class="hint">Passages from this corpus are put before each speaker, who can cite them as
+       [S1], [S2]. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
     <p class="estimate" id="estimate"></p>
   {% elif exp.mode == 'document_analysis' %}
     <label for="in_question">Question</label>
@@ -243,6 +251,8 @@ function buildInputs() {
     const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
     if (turns !== BASE.max_turns) inputs.max_turns = turns;
     if (words !== BASE.word_limit) inputs.word_limit = words;
+    const corpus = $("in_corpus").value;
+    if (corpus !== (BASE.corpus || "")) inputs.corpus = corpus;
     return inputs;
   }
   if (MODE === "document_analysis") {

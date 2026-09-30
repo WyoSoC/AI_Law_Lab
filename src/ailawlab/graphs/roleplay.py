@@ -26,10 +26,12 @@ from ..memory import Memory, MemoryScope, estimate_tokens
 from .roleplay_policy import (
     MODERATOR_ID,
     character_reminder,
+    cited_sources,
     compose_agent_prompt,
     context_window,
     format_entries,
     format_ledger,
+    format_sources,
     intervention_due,
     intervention_text,
     last_speaker,
@@ -40,6 +42,7 @@ from .roleplay_policy import (
     pick_speaker,
     private_briefs,
     since_last_turn,
+    source_query,
     speaking_counts,
     speech_budget,
     transcript_segments,
@@ -224,8 +227,11 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
         label = "Since your last turn" if has_spoken else "What has been said so far"
         incoming = f"{label}:\n{format_entries(new)}"
 
+    passages = await _consult_sources(ctx, state, agent, new or transcript)
+    sources = format_sources(passages)
+
     num_ctx = context_window(estimate_tokens(system) + estimate_tokens(incoming) + 20_000
-                             + speech_budget(word_limit, think) + 1500)
+                             + estimate_tokens(sources) + speech_budget(word_limit, think) + 1500)
     ledger = await _update_ledger(ctx, agent, system, incoming,
                                   state.get("ledgers", {}).get(agent["id"]), num_ctx)
 
@@ -234,6 +240,7 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
     prompt = "\n\n".join(p for p in (
         incoming,
         format_ledger(ledger),
+        sources,
         f"Note from the moderator: {state['directive']}" if state.get("directive") else "",
         character_reminder(agent, word_limit),
         f"It is your turn. Respond as {name}.",
@@ -265,14 +272,42 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
         await ctx.tracer.event("memory_write", agent_id=agent["id"], node="speak",
                                payload={"action": "compacted short-term into long-term"})
 
+    entry = {"turn": turn, "agent_id": agent["id"], "name": name,
+             "role": agent.get("role", ""), "content": content,
+             "private_notes": ledger, "thinking": res.thinking, "host": res.host}
+    if passages:
+        cited = set(cited_sources(content, len(passages)))
+        entry["sources"] = [{"marker": f"S{i}", "label": p["label"],
+                             "document_id": p["document_id"], "similarity": p["similarity"],
+                             "cited": i in cited}
+                            for i, p in enumerate(passages, start=1)]
     return {
-        "transcript": [{"turn": turn, "agent_id": agent["id"], "name": name,
-                        "role": agent.get("role", ""), "content": content,
-                        "private_notes": ledger, "thinking": res.thinking, "host": res.host}],
+        "transcript": [entry],
         "turn": turn,
         "ledgers": {**state.get("ledgers", {}), agent["id"]: ledger},
         "directive": "",
     }
+
+
+async def _consult_sources(ctx, state: RoleplayState, agent: dict,
+                           recent: list[dict]) -> list[dict]:
+    """The corpus passages put before this speaker, if the run has legal sources.
+
+    A failed search is noted in the trace and the turn goes ahead without sources: losing
+    the citations for one turn is better than losing an hour-long run.
+    """
+    if not state.get("corpus"):
+        return []
+    query = source_query(agent, recent)
+    try:
+        found = await ctx.corpus.search(query, top_k=min(settings.rag_top_k, 4))
+    except Exception as e:  # noqa: BLE001 - see docstring
+        await ctx.tracer.note(f"legal source search failed ({type(e).__name__}); this turn "
+                              "has no sources", node="speak", agent_id=agent["id"])
+        return []
+    await ctx.tracer.retrieval(query, found, node="speak", agent_id=agent["id"])
+    return [{"label": p.cite_label(), "content": p.content, "document_id": p.document_id,
+             "similarity": round(p.similarity, 3)} for p in found]
 
 
 async def _summarize_segment(ctx, segment: list[dict]) -> str:

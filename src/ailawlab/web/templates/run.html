@@ -9,13 +9,34 @@
 </nav>
 {% endblock %}
 {% block content %}
+{% set v = view %}
 
-<h1>Run <code>{{ (run.id|string)[:8] }}</code></h1>
+<div class="title-row">
+  <h1>{{ run.experiment_name }} <span class="run-id">run {{ (run.id|string)[:8] }}</span></h1>
+</div>
 <p class="sub">
-  <a href="{{ prefix }}/experiments/{{ run.experiment_id }}">{{ run.experiment_name }}</a>
-  &middot; <span class="mode">{{ run.mode.replace('_', ' ') }}</span>
+  <span class="mode">{{ v.mode_label }}</span>
   &middot; <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
+  {% if v.started %}&middot; started {{ v.started }}{% endif %}
+  {% if v.took %}&middot; took {{ v.took }}{% endif %}
+  {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}
 </p>
+
+<nav class="jump" aria-label="On this page">
+  {% if v.summary_html %}<a href="#summary">{{ v.summary_title }}</a>{% endif %}
+  {% if v.transcript %}<a href="#transcript">Transcript</a>{% endif %}
+  <a href="#metrics-head">Metrics</a>
+  {% if citations %}<a href="#citations">Citations</a>{% endif %}
+  <a href="#trace-head">Trace</a>
+  {% if run.result %}
+  <form class="export-form" method="get" action="{{ prefix }}/runs/{{ run.id }}/report.pdf">
+    {% if run.mode == 'roleplay' %}
+    <label class="check"><input type="checkbox" name="private" value="1"> include private notes &amp; reasoning</label>
+    {% endif %}
+    <button type="submit" class="small-btn">⤓ Export PDF</button>
+  </form>
+  {% endif %}
+</nav>
 
 {% if run.error %}
 <div class="panel" style="border-color:var(--bad)">
@@ -24,7 +45,90 @@
 </div>
 {% endif %}
 
-<h2>Metrics</h2>
+{% if v.summary_html %}
+<h2 id="summary">{{ v.summary_title }}</h2>
+<div class="panel md summary-panel">
+  {{ v.summary_html|safe }}
+</div>
+{% endif %}
+
+{% if v.transcript %}
+{% if v.scenario or v.cast %}
+<details class="panel setup-panel">
+  <summary>Scenario and cast{% if v.corpus %} &middot; legal sources: {{ v.corpus }}{% endif %}</summary>
+  {% if v.scenario %}<div class="scenario-text">{{ v.scenario }}</div>{% endif %}
+  <div class="cast-grid setup-cast">
+    {% for a in v.cast %}
+    <div class="person-card">
+      <div class="person-name">{{ a.name }}</div>
+      {% if a.role %}<div class="person-role">{{ a.role }}</div>{% endif %}
+      {% if a.goal %}<div class="person-field"><div class="person-label">Objective</div><div class="person-text">{{ a.goal }}</div></div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+<div class="section-head">
+  <h2 id="transcript">Transcript</h2>
+  <label class="check notes-toggle"><input type="checkbox" id="show-private"> open all private notes &amp; reasoning</label>
+</div>
+<div class="speaker-legend" role="group" aria-label="Show or hide speakers">
+  {% for s in v.speakers %}
+  <button type="button" class="speaker-chip c{{ s.color }}" data-agent="{{ s.id }}" aria-pressed="true"
+          title="Show or hide {{ s.name }}'s turns">
+    <span class="dot"></span>{{ s.name }}
+    <span class="chip-meta">{{ s.turns }} turn{{ '' if s.turns == 1 else 's' }}{% if s.cited %} &middot; {{ s.cited }} citation{{ '' if s.cited == 1 else 's' }}{% endif %}</span>
+  </button>
+  {% endfor %}
+  {% if v.interventions %}
+  <button type="button" class="speaker-chip moderator" data-agent="moderator" aria-pressed="true"><span class="dot"></span>Moderator</button>
+  {% endif %}
+</div>
+
+<div class="transcript">
+  {% for t in v.transcript %}
+  {% if t.moderator %}
+  <div class="turn moderator" data-agent="moderator">
+    <div class="turn-head"><span class="turn-name">Moderator</span>
+      <span class="turn-meta">{{ t.role }} &middot; after turn {{ t.turn }}</span></div>
+    <div class="turn-body md">{{ t.html|safe }}</div>
+  </div>
+  {% else %}
+  <article class="turn c{{ t.color }}" id="turn-{{ t.turn }}" data-agent="{{ t.agent_id }}">
+    <div class="turn-head">
+      <span class="turn-name">{{ t.name }}</span>
+      <span class="turn-meta">{% if t.role %}{{ t.role }} &middot; {% endif %}turn {{ t.turn }} &middot; {{ t.words }} words</span>
+      <a class="turn-anchor" href="#turn-{{ t.turn }}" title="Link to this turn">#</a>
+    </div>
+    <div class="turn-body md">{{ t.html|safe }}</div>
+    {% if t.sources %}
+    {% set cited = t.sources|selectattr('cited')|list %}
+    <details class="turn-extra"><summary>legal sources given ({{ t.sources|length }}, {{ cited|length }} cited)</summary>
+      <ul class="source-list">
+        {% for src in t.sources %}
+        <li class="{{ 'cited' if src.cited }}"><span class="cite">[{{ src.marker }}]</span>
+          <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
+          <span class="hint">{{ '%.2f'|format(src.similarity) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if t.private_notes %}
+    <details class="turn-extra private-only"><summary>private notes (only {{ t.name }} saw these)</summary>
+      <dl class="ledger">
+        {% for k, val in t.private_notes.items() %}<dt>{{ k.replace('_', ' ')|capitalize }}</dt><dd>{{ val }}</dd>{% endfor %}
+      </dl>
+    </details>
+    {% endif %}
+    {% if t.thinking %}<details class="turn-extra private-only"><summary>reasoning</summary><div class="thinking">{{ t.thinking }}</div></details>{% endif %}
+  </article>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 id="metrics-head">Metrics</h2>
 <div class="grid" id="metrics">
   {% set p = metrics.performance %}
   <div class="stat">
@@ -65,46 +169,8 @@
   {% endif %}
 </div>
 
-{% if run.result %}
-<h2>Result</h2>
-<div class="panel">
-  {% if run.result.answer %}
-    <div class="answer">{{ run.result.answer }}</div>
-  {% elif run.result.outcome %}
-    <div class="answer">{{ run.result.outcome }}</div>
-  {% endif %}
-
-  {% if run.result.transcript %}
-    <h3 style="font-size:.95rem;margin-top:1.5rem">Transcript</h3>
-    {% for t in run.result.transcript %}
-      {% if t.agent_id == 'moderator' %}
-      <div class="event moderator-note">
-        <div class="meta"><strong>Moderator</strong> <span>{{ t.role }}</span> <span>after turn {{ t.turn }}</span></div>
-        <div class="body">{{ t.content }}</div>
-      </div>
-      {% else %}
-      <div class="event">
-        <div class="meta"><strong>{{ t.name }}</strong> <span>{{ t.role }}</span> <span>turn {{ t.turn }}</span> <span>{{ t.host }}</span></div>
-        <div class="body">{{ t.content }}</div>
-        {% if t.private_notes %}
-        <details><summary>private notes (only {{ t.name }} saw these)</summary>
-          <dl class="ledger">
-            {% for k, v in t.private_notes.items() %}<dt>{{ k.replace('_', ' ')|capitalize }}</dt><dd>{{ v }}</dd>{% endfor %}
-          </dl>
-        </details>
-        {% endif %}
-        {% if t.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ t.thinking }}</div></details>{% endif %}
-      </div>
-      {% endif %}
-    {% endfor %}
-  {% endif %}
-
-  <details style="margin-top:1rem"><summary>raw result JSON</summary><pre>{{ result_pretty }}</pre></details>
-</div>
-{% endif %}
-
 {% if citations %}
-<h2>Citations</h2>
+<h2 id="citations">Citations</h2>
 <div class="panel table-wrap">
   <table>
     <thead><tr><th>Marker</th><th>Source</th><th>Similarity</th><th>Verdict</th></tr></thead>
@@ -124,7 +190,10 @@
 </div>
 {% endif %}
 
-<h2>Trace <span class="hint" style="font-weight:400">(live)</span></h2>
+{% set live = run.status in ('running', 'pending') %}
+<h2 id="trace-head">Trace {% if live %}<span class="hint" style="font-weight:400">(live)</span>{% endif %}</h2>
+<details class="trace-wrap" {% if live %}open{% endif %}>
+<summary>Every model call, retrieval and note, in order ({{ events|length }} events)</summary>
 <div class="panel" id="trace">
   {% for e in events %}
   <div class="event {{ e.event_type }}">
@@ -138,18 +207,34 @@
       {% if e.queue_wait_ms %}<span>{{ e.queue_wait_ms }}ms queued</span>{% endif %}
       {% if e.output_tokens %}<span>{{ e.output_tokens }} tok</span>{% endif %}
     </div>
-    {% if e.payload.get('response') %}<div class="body">{{ e.payload['response'][:1200] }}</div>{% endif %}
-    {% if e.payload.get('tool') %}<div class="body"><strong>{{ e.payload['tool'] }}</strong>({{ e.payload.get('args') }}) → {{ e.payload.get('result','')[:600] }}</div>{% endif %}
-    {% if e.payload.get('query') %}<div class="body">query: {{ e.payload['query'][:300] }}<br>{{ e.payload.get('hits')|length }} hits</div>{% endif %}
+    {% if e.payload.get('response') %}<div class="body">{{ e.payload['response'] }}</div>{% endif %}
+    {% if e.payload.get('tool') %}<div class="body"><strong>{{ e.payload['tool'] }}</strong>({{ e.payload.get('args') }}) → {{ e.payload.get('result','') }}</div>{% endif %}
+    {% if e.payload.get('query') %}<div class="body">query: {{ e.payload['query'] }}<br>{{ e.payload.get('hits')|length }} hits</div>{% endif %}
     {% if e.payload.get('message') %}<div class="body">{{ e.payload['message'] }}</div>{% endif %}
     {% if e.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ e.thinking }}</div></details>{% endif %}
   </div>
   {% endfor %}
 </div>
+</details>
+
+{% if result_pretty %}
+<details class="config-details"><summary>Raw result (JSON)</summary><pre>{{ result_pretty }}</pre></details>
+{% endif %}
 
 {% endblock %}
 {% block scripts %}
 <script>
+  // Transcript: show or hide a speaker by clicking their chip; show private notes on demand.
+  document.querySelectorAll('.speaker-chip').forEach(chip => chip.addEventListener('click', () => {
+    const on = chip.getAttribute('aria-pressed') !== 'true';
+    chip.setAttribute('aria-pressed', on);
+    document.querySelectorAll(`.turn[data-agent="${CSS.escape(chip.dataset.agent)}"]`)
+      .forEach(t => t.hidden = !on);
+  }));
+  const privateToggle = document.getElementById('show-private');
+  if (privateToggle) privateToggle.addEventListener('change', () =>
+    document.querySelectorAll('.transcript .private-only').forEach(d => d.open = privateToggle.checked));
+
   const RUN_ID = "{{ run.id }}";
   const STATUS = "{{ run.status }}";
 
@@ -176,9 +261,9 @@
 
       let body = '';
       const p = e.payload || {};
-      if (p.response) body = p.response.slice(0, 1200);
-      else if (p.tool) body = `${p.tool} → ${(p.result || '').slice(0, 600)}`;
-      else if (p.query) body = `query: ${p.query.slice(0, 300)}`;
+      if (p.response) body = p.response;
+      else if (p.tool) body = `${p.tool} → ${(p.result || '')}`;
+      else if (p.query) body = `query: ${p.query}`;
       else if (p.message) body = p.message;
 
       div.innerHTML = `<div class="meta">${bits.map(b => `<span>${b}</span>`).join('')}</div>` +

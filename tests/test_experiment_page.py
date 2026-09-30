@@ -77,7 +77,7 @@ def test_a_roleplay_experiment_view():
     assert row["active"] and row["took"] == "44 min so far" and row["short"] == "b4fbcbf5"
     assert row["summary"] == "In progress: 31 of up to 100 turns so far"
     assert view["active_runs"] == [row]
-    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000}
+    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000, "corpus": ""}
 
 
 def test_document_and_agentic_experiment_views():
@@ -86,3 +86,44 @@ def test_document_and_agentic_experiment_views():
     assert doc["facts"] == [{"label": "Corpus", "value": "test", "note": "1 document in it"}]
     agent = experiment_view({"mode": "agentic_workflow", "config": {"max_iterations": "4"}}, [], now=NOW)
     assert [f["value"] for f in agent["facts"]] == ["default", "4", "not allowed"]
+
+
+def test_a_run_view_gives_each_speaker_a_colour_and_renders_markdown():
+    from ailawlab.web.views import link_turns, run_view
+
+    run = {"mode": "roleplay", "status": "succeeded",
+           "started_at": NOW - timedelta(minutes=12), "finished_at": NOW,
+           "config_snapshot": {"scenario": "A mediation.", "corpus": "water",
+                               "agents": [{"id": "b", "name": "Bea"}, {"id": "a", "name": "Al"}]},
+           "inputs": {},
+           "result": {"outcome": "## Result\n\n**No deal** (Turn 2).", "transcript": [
+               {"turn": 1, "agent_id": "a", "name": "Al", "content": "I *open*."},
+               {"turn": 1, "agent_id": "moderator", "role": "reframing", "content": "Focus."},
+               {"turn": 2, "agent_id": "b", "name": "Bea", "content": "Per [S1], no.",
+                "sources": [{"marker": "S1", "label": "Case", "document_id": 1,
+                             "similarity": 0.8, "cited": True}]}]}}
+    v = run_view(run)
+    assert [(s["name"], s["color"], s["turns"], s["cited"]) for s in v["speakers"]] == \
+        [("Bea", 1, 1, 1), ("Al", 2, 1, 0)]                  # cast order, not speaking order
+    assert v["turns"] == 2 and v["interventions"] == 1 and v["corpus"] == "water"
+    assert '<a class="turn-ref" href="#turn-2">Turn 2</a>' in v["summary_html"]
+    assert "<strong>No deal</strong>" in v["summary_html"] and v["took"] == "12 min"
+    assert v["transcript"][0]["html"] == "<p>I <em>open</em>.</p>" and v["transcript"][1]["moderator"]
+    linked = run_view(run, "/lab")["transcript"][2]["html"]
+    assert '<a class="cite" href="/lab/sources/documents/1" title="Case">[S1]</a>' in linked
+    assert link_turns("Turns 3-7 and Turn 12") == (
+        '<a class="turn-ref" href="#turn-3">Turns 3</a>-7 and <a class="turn-ref" href="#turn-12">Turn 12</a>')
+
+
+def test_the_pdf_report_builds_with_and_without_private_notes():
+    from ailawlab.web.report_pdf import run_report
+    from ailawlab.web.views import run_view
+
+    run = {"id": "b4fbcbf5-e770-4ac2-849a-556ffc50bcfa", "experiment_name": "Gravel", "mode": "roleplay",
+           "status": "succeeded", "config_snapshot": {"agents": [{"id": "a", "name": "Al"}]},
+           "result": {"outcome": "| a | b |\n|---|---|\n| 1 | 2 |\n\n- x\n  - y",
+                      "transcript": [{"turn": 1, "agent_id": "a", "name": "Al", "content": "Hi — § 1 “q”.",
+                                      "private_notes": {"where_we_stand": "far apart"},
+                                      "thinking": "hmm"}]}}
+    plain, full = run_report(run, run_view(run)), run_report(run, run_view(run), True)
+    assert plain.startswith(b"%PDF") and len(full) > len(plain)

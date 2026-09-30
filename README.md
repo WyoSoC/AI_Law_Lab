@@ -205,6 +205,25 @@ secret. The builder lists every name it changed; courts, agencies and places kee
 real names. The experiment records the source's title, link, retrieval time and a SHA-256
 of the text that was used.
 
+### Legal sources in a role-play
+
+A role-play can be given a corpus, when it is designed or for a single run. Before each turn
+the speaker's objective and what was just said are used as a query, and the closest four
+passages (each cut to about 220 words) are put in front of that speaker as [S1]..[S4], with
+an instruction to cite only what a passage says. The retrieval is traced, and the transcript
+records which passages each turn was given and which it cited. A failed search costs that turn
+its sources, not the run. With no corpus, turns are exactly as before.
+
+### Reading a run
+
+The run page leads with the result summary (the assessment, or the answer), rendered from the
+model's Markdown by `web/markdown.py`, which escapes everything before formatting so model
+output cannot inject markup. A role-play's transcript follows, each person in their own colour,
+with the assessor's "Turn 17" references and each reply's [S2] markers linked. Trace events
+show their full text. **Export PDF** (`web/report_pdf.py`, reportlab) writes the summary, the
+scenario and cast, and the full transcript in the same colours; private notes and reasoning
+are included only when asked for.
+
 ## Memory
 
 Ported from `ollama-chat-agent/memory.py`, preserving its two-tier design — a verbatim

@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "pypdf>=5.1.0",
     "tenacity>=9.0.0",
+    "reportlab>=4.2",          # run reports as PDF
 ]
 
 [project.optional-dependencies]

@@ -211,7 +211,7 @@ async def list_corpora() -> list[dict]:
         "       MAX(d.created_at) AS last_added, "
         "       (SELECT COUNT(*) FROM experiments e WHERE e.deleted_at IS NULL "
         "          AND COALESCE(e.config->>'corpus', 'default') = d.corpus "
-        "          AND e.mode <> 'roleplay') AS experiments "
+        "          AND (e.mode <> 'roleplay' OR e.config ? 'corpus')) AS experiments "
         "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id "
         "GROUP BY d.corpus ORDER BY d.corpus"
     )
@@ -230,7 +230,8 @@ async def corpus_documents(name: str | None = None) -> list[dict]:
 async def corpus_experiments(name: str) -> list[dict]:
     """Experiments (not in the trash) that retrieve from this corpus."""
     return await fetch_all(
-        "SELECT id, name, mode FROM experiments WHERE deleted_at IS NULL AND mode <> 'roleplay' "
+        "SELECT id, name, mode FROM experiments WHERE deleted_at IS NULL "
+        "AND (mode <> 'roleplay' OR config ? 'corpus') "
         "AND COALESCE(config->>'corpus', 'default') = %s ORDER BY created_at DESC", (name,))
 
 
@@ -247,8 +248,10 @@ async def document_chunks(document_id: int) -> list[dict]:
 async def check_idle(name: str) -> None:
     row = await fetch_one(
         "SELECT COUNT(*) AS n FROM runs r JOIN experiments e ON e.id = r.experiment_id "
-        "WHERE r.status IN ('pending', 'running') AND e.mode <> 'roleplay' "
-        "AND COALESCE(r.config_snapshot->>'corpus', 'default') = %s", (name,))
+        "WHERE r.status IN ('pending', 'running') "
+        "AND (e.mode <> 'roleplay' OR r.config_snapshot ? 'corpus' OR r.inputs ? 'corpus') "
+        "AND COALESCE(r.inputs->>'corpus', r.config_snapshot->>'corpus', 'default') = %s",
+        (name,))
     if row and row["n"]:
         raise CorpusBusy(f"A run that retrieves from {name!r} is in progress. "
                          "Wait for it to finish first.")

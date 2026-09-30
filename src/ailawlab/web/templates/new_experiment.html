@@ -97,6 +97,16 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       </div>
     </div>
 
+    <label for="rp_corpus">Legal sources the cast can cite</label>
+    <select id="rp_corpus" onchange="syncJSON()">
+      <option value="">None: the cast argues from the scenario alone</option>
+      {% for c in corpora %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+    <p class="hint">Before each turn the speaker is shown the passages from this corpus closest to
+       their objective and to what was just said, and can cite them as [S1], [S2]. The run page
+       shows which sources each turn was given and which it cited. Manage corpora under
+       <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
+
     <div class="agents-head">
       <h3>Cast</h3>
       <button type="button" class="add-agent" onclick="addAgent()">+ Add agent</button>
@@ -239,6 +249,7 @@ function buildConfig() {
     const config = {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
                     word_limit: int('rp_words', DEFAULT_WORD_LIMIT)};
     if (val('rp_scenario').trim()) config.scenario = val('rp_scenario').trim();
+    if (val('rp_corpus')) config.corpus = val('rp_corpus');
     // Where an AI-generated cast came from, so a run can be traced back to its source.
     if (draftedSource) config.source = draftedSource;
     config.agents = collectAgents();

@@ -25,6 +25,8 @@ to a finding about how multi-agent LLM exchanges actually go wrong:
 """
 from __future__ import annotations
 
+import re
+
 from ..memory import estimate_tokens
 
 MODERATOR_ID = "moderator"
@@ -140,6 +142,45 @@ def format_entries(entries: list[dict], max_words: int | None = None) -> str:
         else:
             rows.append(f"[turn {t['turn']}] {t['name']}: {content}")
     return "\n\n".join(rows) or "(nothing yet)"
+
+
+# ---------------------------------------------------------------- legal sources
+#
+# A role-play can be given a corpus. Before each turn the speaker's side of the exchange is
+# used as a query, and the closest passages are put in front of that speaker, numbered
+# [S1], [S2], ... so a reply can cite them and the page can show which were used. Passages
+# are cut to a few hundred words: they are there to be cited, and the turn's context
+# window is shared with memory and the conversation.
+
+SOURCE_WORDS = 220
+
+
+def source_query(agent: dict, recent: list[dict], max_words: int = 160) -> str:
+    """What to search the corpus for: the speaker's objective plus what was just said."""
+    said = " ".join(e.get("content", "") for e in recent[-2:])
+    return truncate_words(f"{agent.get('goal') or agent.get('role') or ''} {said}".strip(),
+                          max_words)
+
+
+def format_sources(passages: list[dict]) -> str:
+    """Passages ({label, content}) as the numbered block a speaker sees, or "" if none."""
+    if not passages:
+        return ""
+    body = "\n\n".join(f"[S{i}] {p['label']}\n{truncate_words(p['content'], SOURCE_WORDS)}"
+                         for i, p in enumerate(passages, start=1))
+    return ("Legal sources you may rely on. Cite one as [S1], [S2] when you use it; cite "
+            "only what the passage actually says, and do not invent other authority.\n\n"
+            + body)
+
+
+def cited_sources(content: str, count: int) -> list[int]:
+    """Which of [S1]..[S<count>] a reply cites, in order, each once."""
+    seen: list[int] = []
+    for m in re.finditer(r"\[S(\d+)\]", content):
+        n = int(m.group(1))
+        if 1 <= n <= count and n not in seen:
+            seen.append(n)
+    return seen
 
 
 def since_last_turn(transcript: list[dict], agent_id: str) -> list[dict]:
