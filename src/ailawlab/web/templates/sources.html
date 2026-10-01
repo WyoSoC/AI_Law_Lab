@@ -277,7 +277,7 @@ document.getElementById('crawl-preview').addEventListener('click', async ev => {
         <li><strong>Pace:</strong> one at a time, ${p.delay} s apart; about ${p.minutes} minute${p.minutes === 1 ? '' : 's'} in all.</li>
         <li><strong>Licence notice found:</strong> ${p.licence ? esc(p.licence) : '<em>none on this page. Check the site\'s terms before using what is collected.</em>'}</li>
       </ul>
-      ${p.sample.length ? `<details><summary>First links</summary><ul class="crawl-sample">${p.sample.map(u => `<li>${esc(u)}</li>`).join('')}</ul></details>` : ''}
+      ${p.sample.length ? `<details open><summary>First links, and the names they would be saved under</summary><ul class="crawl-sample">${p.sample.map(s => `<li>${s.name ? `<strong>${esc(s.name)}</strong> ` : ''}<span class="hint">${esc(s.url)}</span></li>`).join('')}</ul></details>` : ''}
       ${p.ok ? `<div class="cast-toolbar"><button type="button" class="primary" id="crawl-start">Start crawl into “${esc(req.corpus || 'the new library')}”</button>
         <span class="hint">It runs on the server; you can leave this page.</span></div>` : '<p class="provider-note warn">Nothing here this crawler may read.</p>'}
     </div>`;

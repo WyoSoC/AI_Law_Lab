@@ -119,6 +119,18 @@ def pdf_to_text(data: bytes) -> str:
         return ""
 
 
+def pdf_title(data: bytes) -> str:
+    """The title a PDF records about itself, or "" (many leave it empty or say nothing
+    useful; source_material.usable_title judges that)."""
+    from pypdf import PdfReader
+
+    try:
+        meta = PdfReader(io.BytesIO(data)).metadata
+        return " ".join(str((meta or {}).get("/Title") or "").split())
+    except Exception:
+        return ""
+
+
 def _client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
     # follow_redirects because govinfo and SEC both hand out 302s to their CDN.
     return httpx.AsyncClient(

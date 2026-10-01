@@ -178,3 +178,55 @@ def test_time_left_comes_from_the_pace_kept():
     assert not first["estimated"] and first["eta_s"] == 78 * 5      # delay + 3 s until measured
     done = crawler.timing({**row, "status": "finished", "finished_at": now}, now)
     assert done["eta_s"] == 0
+
+
+INDEX = """<ul>
+<li><a href="a/wheel273.pdf"><img alt="[PDF icon]" src="pdf.gif"></a>
+    <a href="/lib/a/wheel273" title="Summary: ...">Ananda: The Guardian of the Dhamma</a> (Hellmuth Hecker; 2006)</li>
+<li><a href="b/leeauto.pdf"><img src="pdf.gif"></a> Autobiography of Phra Ajaan Lee, The (Ajaan Lee; 2012)</li>
+<li><a href="c/rules.pdf">Model Termination Regulation</a></li>
+<li><a href="d/x.pdf">PDF</a> <a href="d/x.html">HTML</a></li>
+</ul>
+<p>See <a href="e/one.pdf">PDF</a> and <a href="e/two.pdf">PDF</a> for both opinions.</p>"""
+
+
+def test_documents_are_named_as_the_index_lists_them():
+    from ailawlab.crawler import link_names
+
+    names = link_names(INDEX, "https://e.org/lib/list.html")
+    assert names["https://e.org/lib/a/wheel273.pdf"] == "Ananda: The Guardian of the Dhamma (Hellmuth Hecker; 2006)"
+    assert names["https://e.org/lib/b/leeauto.pdf"] == "The Autobiography of Phra Ajaan Lee (Ajaan Lee; 2012)"
+    assert names["https://e.org/lib/c/rules.pdf"] == "Model Termination Regulation"     # its own words
+    # "PDF" names nothing; a paragraph about two documents names neither.
+    assert "https://e.org/lib/e/one.pdf" not in names and "https://e.org/lib/e/two.pdf" not in names
+
+
+def test_junk_titles_are_not_used():
+    from ailawlab.source_material import usable_title
+
+    for junk in ("Microsoft Word - draft3.doc", "untitled", "PDF", "Download", "[PDF icon]", "1.2 MB",
+                 "scan0042", "2006", "  "):
+        assert usable_title(junk) == "", junk
+    assert usable_title("  Bag of Bones:  A Miscellany ") == "Bag of Bones: A Miscellany"
+
+
+def test_a_pdf_is_titled_from_its_own_metadata():
+    import io
+
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.setTitle("Wings to Awakening")
+    c.drawString(72, 720, "An anthology from the Pali Canon.")
+    c.save()
+    doc = source_material.from_bytes(buf.getvalue(), content_type="application/pdf",
+                                     url="https://e.org/lib/wings.pdf")
+    assert doc.title == "Wings to Awakening"
+    plain = io.BytesIO()
+    c = canvas.Canvas(plain)
+    c.setTitle("Microsoft Word - wings.doc")
+    c.drawString(72, 720, "Text.")
+    c.save()
+    assert source_material.from_bytes(plain.getvalue(), content_type="application/pdf",
+                                      url="https://e.org/lib/wings.pdf").title == "Wings"   # file name

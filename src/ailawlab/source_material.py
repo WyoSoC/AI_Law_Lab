@@ -36,7 +36,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 
 from .config import settings
-from .sources import pdf_to_text, strip_markup
+from .sources import pdf_title, pdf_to_text, strip_markup
 
 MAX_REDIRECTS = 5
 
@@ -238,6 +238,20 @@ def _host(url: str) -> str:
         return ""
 
 
+# Titles that say nothing about the document: what word processors and scanners write into
+# a PDF, and what an index page puts on a download link.
+_JUNK_TITLE = re.compile(
+    r"^(untitled|document\d*|microsoft word\b.*|.*\.(docx?|pdf|rtf|odt|indd|qxd|tmp)|"
+    r"pdf|download|click here|here|link|view|open|read( more)?|full text|\[?pdf icon\]?|"
+    r"\d+(\.\d+)? ?[km]b|scan\w*|img\w*|[\W\d_]*)$", re.IGNORECASE)
+
+
+def usable_title(title: str) -> str:
+    """`title` tidied, or "" if it says nothing about the document."""
+    title = " ".join((title or "").split())[:300]
+    return "" if len(title) < 3 or _JUNK_TITLE.match(title) else title
+
+
 def _title_from_url(url: str) -> str:
     try:
         segment = PurePosixPath(unquote(urlsplit(url).path)).stem
@@ -304,7 +318,9 @@ def from_bytes(data: bytes, *, content_type: str = "", filename: str = "",
         if not text.strip():
             raise SourceError("No text could be read from that PDF. It may be a scanned "
                               "image; if so, copy the text and paste it instead.")
-        return _finish(SourceDoc(title=fallback_title, text=text, kind="PDF", url=url,
+        # The title the PDF records about itself beats one made from its file name.
+        title = usable_title(pdf_title(data)) or fallback_title
+        return _finish(SourceDoc(title=title, text=text, kind="PDF", url=url,
                                  site=_host(url)), max_words)
 
     decoded = _decode(data, content_type)

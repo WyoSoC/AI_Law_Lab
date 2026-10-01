@@ -79,9 +79,10 @@ def rules() -> list[dict[str, str]]:
                  "pages, PDFs and plain text are kept; images, archives, audio, video and scripts "
                  "are skipped."},
         {"title": "The licence and the source are kept",
-         "text": "The licence or copyright notice found on each page (or, failing that, on the page "
-                 "you started from) is stored with every document, along with its address, the "
-                 "page it was linked from and when it was read. Check that the licence permits "
+         "text": "Each document is named as the page you started from lists it (or by its own "
+                 "title). The licence or copyright notice found on each page (or, failing that, on "
+                 "the page you started from) is stored with every document, along with its "
+                 "address, the page it was linked from and when it was read. Check that the licence permits "
                  "your use before relying on what was collected."},
         {"title": "Every crawl is recorded",
          "text": "Who started it, the rules it ran under, and every link it read or skipped, with "
@@ -155,6 +156,94 @@ def _bare(url: str) -> str:
     host = (p.hostname or "").removeprefix("www.")
     path = re.sub(r"(/|\.html?)$", "", p.path)
     return f"{host}{path}?{p.query}"
+
+
+# Elements whose text describes the links inside them: a list item, a table cell, a paragraph.
+_BLOCKS = {"li", "td", "th", "dd", "dt", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+           "caption", "figcaption"}
+
+
+class _Named(HTMLParser):
+    """Each link's own text, and the text of the block it sits in."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[dict[str, Any]] = []        # {href, text, block}
+        self.blocks: dict[int, list[str]] = {}
+        self._open: list[int] = []
+        self._a: dict[str, Any] | None = None
+        self.base = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = {k: v or "" for k, v in attrs}
+        if tag == "base" and a.get("href"):
+            self.base = a["href"]
+        if tag in _BLOCKS:
+            self._open.append(len(self.blocks))
+            self.blocks[len(self.blocks)] = []
+        if tag == "a" and a.get("href"):
+            self._a = {"href": a["href"], "text": [], "block": self._open[-1] if self._open else None}
+            self.links.append(self._a)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self._a = None
+        if tag in _BLOCKS and self._open:
+            self._open.pop()
+
+    def handle_data(self, data: str) -> None:
+        if self._a is not None:
+            self._a["text"].append(data)
+        for b in self._open:
+            self.blocks[b].append(data)
+
+
+def _stem(url: str) -> str:
+    """An address without its file extension: warder-key.pdf and warder-key are one document."""
+    p = urlsplit(url)
+    return f"{(p.hostname or '').removeprefix('www.')}{re.sub(r'\.[A-Za-z0-9]{1,5}$', '', p.path).rstrip('/')}"
+
+
+def link_names(html: str, page_url: str) -> dict[str, str]:
+    """What the page calls each document it links to, by address. Pure.
+
+    In order: the link's own words; the text of the list item or table cell it sits in, when
+    that item is about this document alone (an index often puts the title, author and year
+    there, with only an icon on the PDF link); the words of another link in the same item
+    that leads to the same document.
+    Generic link words ("PDF", "download", an icon) do not count as a name.
+    """
+    parser = _Named()
+    parser.feed(html)
+    base = urljoin(page_url, parser.base) if parser.base else page_url
+    links = []
+    for link in parser.links:
+        href = link["href"].strip()
+        if href.startswith("#"):
+            continue
+        url = urldefrag(urljoin(base, href)).url
+        links.append({"url": url, "stem": _stem(url), "block": link["block"],
+                      "text": source_material.usable_title("".join(link["text"]))})
+    names: dict[str, str] = {}
+    for link in links:
+        if link["url"] in names:
+            continue
+        name = link["text"]
+        if not name and link["block"] is not None:
+            mates = [m for m in links if m["block"] == link["block"]]
+            if len({m["stem"] for m in mates}) == 1:          # the item is about this document
+                name = source_material.usable_title("".join(parser.blocks[link["block"]]))
+            name = name or next((m["text"] for m in mates if m["stem"] == link["stem"] and m["text"]), "")
+        if name:
+            names[link["url"]] = _unsort(name)[:300]
+    return names
+
+
+def _unsort(title: str) -> str:
+    """An index's sorting order undone: "Autobiography of Ajaan Lee, The (…)" reads
+    "The Autobiography of Ajaan Lee (…)"."""
+    m = re.match(r"^(.+?), (The|A|An)(\s*\(.*)?$", title)
+    return f"{m.group(2)} {m.group(1)}{m.group(3) or ''}" if m else title
 
 
 def extract_links(html: str, page_url: str) -> list[str]:
@@ -267,7 +356,10 @@ async def preview(url: str, max_pages: int | None = None, kinds: list[str] | Non
                   same_folder: bool = False) -> dict[str, Any]:
     """What a crawl of `url` would do, without reading any of the linked pages."""
     plan = await _plan(url, max_pages, kinds, same_folder)
+    names = plan.pop("names", {})
     plan.pop("links", None)
+    # Each sample link with the name it would be saved under.
+    plan["sample"] = [{"url": u, "name": names.get(u, "")} for u in plan["sample"]]
     return plan
 
 
@@ -307,7 +399,7 @@ async def _plan(url: str, max_pages: int | None = None, kinds: list[str] | None 
         "take": len(take), "limit": limit, "kinds": count(take), "delay": delay,
         "minutes": max(1, round(len(take) * (delay + 3) / 60)),
         "robots": robots.note, "licence": licence_notice(text, html),
-        "sample": take[:8], "rules": rules(), "links": take,
+        "sample": take[:8], "rules": rules(), "links": take, "names": link_names(html, final),
     }
 
 
@@ -345,7 +437,7 @@ async def start(router: LLMRouter, url: str, corpus: str, max_pages: int | None 
          len(links), by))
     cid = str(row["id"])
     task = asyncio.create_task(_crawl(router, cid, plan["url"], links, corpus, plan["delay"],
-                                      plan["licence"], by))
+                                      plan["licence"], by, plan["names"]))
     _tasks[cid] = task
     task.add_done_callback(lambda _t: _tasks.pop(cid, None))
     return row
@@ -360,7 +452,8 @@ async def _note(cid: str, result: dict[str, Any], *, added: bool = False) -> str
 
 
 async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], corpus: str,
-                 delay: float, licence: str, by: Any) -> None:
+                 delay: float, licence: str, by: Any, names: dict[str, str] | None = None) -> None:
+    names = names or {}
     store = Corpus(router, name=corpus, added_by=by)
     known = {r["link"] for r in await fetch_all(
         "SELECT metadata->>'link' AS link FROM documents WHERE corpus=%s AND metadata ? 'link' "
@@ -378,7 +471,7 @@ async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], 
             began = asyncio.get_running_loop().time()
             if i:
                 await asyncio.sleep(delay)
-            result, ok = await _read_one(store, link, start_url, licence, corpus, cid)
+            result, ok = await _read_one(store, link, start_url, licence, corpus, cid, names.get(link, ""))
             # Seconds this link took, pause included: what the time-left estimate is made from.
             result["secs"] = round(asyncio.get_running_loop().time() - began, 1)
             failures = 0 if ok or result["status"] == "exists" else failures + 1
@@ -404,7 +497,7 @@ async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], 
 
 
 async def _read_one(store: Corpus, link: str, start_url: str, licence: str, corpus: str,
-                    cid: str) -> tuple[dict[str, Any], bool]:
+                    cid: str, listed_as: str = "") -> tuple[dict[str, Any], bool]:
     """Read one link into the library. Returns its result and whether the request worked.
 
     A request that gets no answer or an HTTP error is a failed request, which the stop rule
@@ -438,11 +531,14 @@ async def _read_one(store: Corpus, link: str, start_url: str, licence: str, corp
     now = datetime.now(UTC).isoformat(timespec="seconds")
     meta = {"link": link, "site": doc.site, "published": doc.published, "words": doc.words,
             "truncated": doc.truncated, "retrieved_at": doc.retrieved_at, "checked_at": now,
-            "crawled_from": start_url, "crawl_id": cid, "licence": notice,
+            "crawled_from": start_url, "crawl_id": cid, "licence": notice, "listed_as": listed_as,
             "licence_from": "this page" if notice and notice != licence else ("the starting page" if notice else "")}
-    doc_id = await store.add_document(doc.title, doc.text, source_uri=doc.url or link,
+    # The name the index page gives it, else the document's own title (a web page's heading,
+    # a PDF's recorded title), else one made from its file name.
+    title = listed_as or doc.title
+    doc_id = await store.add_document(title, doc.text, source_uri=doc.url or link,
                                       doc_type=doc.kind, metadata=meta)
-    return {"link": link, "status": "added", "document_id": doc_id, "title": doc.title,
+    return {"link": link, "status": "added", "document_id": doc_id, "title": title,
             "detail": ""}, True
 
 
