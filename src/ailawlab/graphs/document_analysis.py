@@ -16,7 +16,8 @@ import re
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
-from ..rag import format_passages
+from ..grounding import cited_numbers, in_list, link_citations
+from ..rag import Passage, format_passages
 from .state import DocState, ctx_from
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ Original question: {question}
 Findings from document analysis:
 {findings}
 
-Supporting authority retrieved from the corpus:
+Supporting authority retrieved from the libraries, each passage labelled with its source
+and the library it came from:
 {passages}
 
 Write a clear, well-organized answer. Cite supporting authority as [1], [2] matching the
@@ -125,16 +127,16 @@ async def ground_node(state: DocState, config: RunnableConfig) -> dict:
     if not addressed:
         return {"passages": []}
 
+    if not ctx.libraries:
+        return {"passages": []}
     query = state.get("question", "") + " " + " ".join(f["sub_question"] for f in addressed)
-    passages = await ctx.corpus.search(query)
+    passages = await ctx.libraries.search(query)
     await ctx.tracer.retrieval(query, passages, node="ground")
     return {"passages": [p.__dict__ for p in passages]}
 
 
 async def synthesize_node(state: DocState, config: RunnableConfig) -> dict:
     ctx = ctx_from(config)
-    from ..rag import Passage
-
     passages = [Passage(**p) for p in state.get("passages", [])]
     findings_text = "\n\n".join(
         f"### {f['sub_question']}\n{f['answer']}" for f in state.get("findings", [])
@@ -151,38 +153,13 @@ async def synthesize_node(state: DocState, config: RunnableConfig) -> dict:
     )
     event_id = await ctx.tracer.llm_call(res, node="synthesize")
 
-    citations = _link_citations(res.text, passages)
+    # A marker past the end of the passage list is a fabricated citation; it is recorded
+    # as unsupported rather than dropped, since that signal is the point of the evaluation.
+    citations = link_citations(res.text, in_list(passages), context="Answer")
     await ctx.tracer.record_citations(event_id, citations)
-    return {"answer": res.text.strip(), "citations": citations}
-
-
-def _link_citations(answer: str, passages: list) -> list[dict]:
-    """Map [n] markers in the answer back to the passages they refer to.
-
-    A marker pointing past the end of the passage list is a fabricated citation and is
-    recorded as unsupported rather than dropped -- that signal is the point of the
-    evaluation tier.
-    """
-    citations = []
-    for marker in sorted({int(m) for m in re.findall(r"\[(\d+)\]", answer)}):
-        if 1 <= marker <= len(passages):
-            p = passages[marker - 1]
-            citations.append({
-                "quoted_text": f"[{marker}]",
-                "source_label": p.cite_label(),
-                "chunk_id": p.chunk_id,
-                "similarity": p.similarity,
-                "verdict": "grounded",
-            })
-        else:
-            citations.append({
-                "quoted_text": f"[{marker}]",
-                "source_label": None,
-                "chunk_id": None,
-                "similarity": None,
-                "verdict": "unsupported",
-            })
-    return citations
+    cited = set(cited_numbers(res.text))
+    return {"answer": res.text.strip(), "citations": citations,
+            "sources": [p.source(str(n), n in cited) for n, p in enumerate(passages, start=1)]}
 
 
 def build_document_graph():

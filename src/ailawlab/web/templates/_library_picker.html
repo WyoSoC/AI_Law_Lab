@@ -1,0 +1,13 @@
+{# Choose several libraries. `libraries` is [{name, documents}]; `selected` the names ticked. #}
+{% macro library_picker(id, libraries, selected=[], onchange='') %}
+<div class="library-picker" id="{{ id }}">
+  {% for lib in libraries %}
+  <label class="check lib-option"><input type="checkbox" value="{{ lib.name }}"
+         {% if lib.name in selected %}checked{% endif %} onchange="{{ onchange }}">
+    <span class="lib-name">{{ lib.name }}</span>
+    <span class="hint-inline">{{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</span></label>
+  {% else %}
+  <p class="empty">No library holds any documents yet. Add some under <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
+  {% endfor %}
+</div>
+{% endmacro %}

@@ -2,6 +2,8 @@
 {% set active = 'new' %}
 {% block title %}New experiment · AI Law Lab{% endblock %}
 {% block content %}
+{% from "_library_picker.html" import library_picker %}
+{% set preset = ['default'] if libraries|selectattr('name', 'equalto', 'default')|list else [] %}
 
 <h1>New experiment</h1>
 <p class="sub">Configuration is snapshotted into every run, so later edits never rewrite
@@ -35,31 +37,26 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <div class="panel mode-panel" data-mode="document_analysis">
     <h2>Document analysis setup</h2>
     <p class="hint">The document itself is supplied per run. Configure retrieval here.</p>
-    <label for="da_corpus">Library to retrieve from</label>
-    <select id="da_corpus" class="corpus-pick">
-      <option value="default">default</option>
-      {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
-    </select>
+    <label>Libraries to retrieve from</label>
+    {{ library_picker('da_libs', libraries, preset, 'syncJSON()') }}
+    <p class="hint">The findings are grounded in passages from every library ticked, searched
+       together and ranked by how closely they match, whichever library they come from. Each
+       citation records the library and version it came from. Tick none for a baseline run
+       without retrieved authority.</p>
   </div>
 
   <!-- ───────────── agentic_workflow ───────────── -->
   <div class="panel mode-panel" data-mode="agentic_workflow">
     <h2>Agentic workflow setup</h2>
     <p class="hint">The task is supplied per run. Configure the tool loop here.</p>
-    <div class="two-col">
-      <div>
-        <label for="aw_corpus">Library to retrieve from</label>
-        <select id="aw_corpus" class="corpus-pick">
-          <option value="default">default</option>
-          {% for c in corpora %}{% if c != 'default' %}<option value="{{ c }}">{{ c }}</option>{% endif %}{% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="aw_max_iter">Max tool iterations</label>
-        <input type="number" id="aw_max_iter" value="8" min="1" max="40">
-        <p class="hint">How many think→act cycles before the agent must answer.</p>
-      </div>
-    </div>
+    <label>Libraries the agent can search</label>
+    {{ library_picker('aw_libs', libraries, preset, 'syncJSON()') }}
+    <p class="hint">The agent's search covers every library ticked, and it can confine a search
+       to one of them. Passages keep one number across all its searches, so each [n] in its
+       answer traces to one passage, document and library version.</p>
+    <label for="aw_max_iter">Max tool iterations</label>
+    <input type="number" id="aw_max_iter" value="8" min="1" max="40" oninput="syncJSON()">
+    <p class="hint">How many think→act cycles before the agent must answer.</p>
     <label class="check"><input type="checkbox" id="aw_network">
       Allow network tools during the run</label>
     <p class="hint">Off by default: an experiment about model reasoning shouldn't silently
@@ -97,15 +94,13 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       </div>
     </div>
 
-    <label for="rp_corpus">Legal sources the cast can cite</label>
-    <select id="rp_corpus" onchange="syncJSON()">
-      <option value="">None: the cast argues from the scenario alone</option>
-      {% for c in corpora %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-    </select>
-    <p class="hint">Before each turn the speaker is shown the passages from this library closest to
-       their objective and to what was just said, and can cite them as [S1], [S2]. The run page
-       shows which sources each turn was given and which it cited. Manage corpora under
-       <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
+    <label>Legal sources the cast can cite</label>
+    {{ library_picker('rp_libs', libraries, [], 'syncJSON()') }}
+    <p class="hint">Tick none and the cast argues from the scenario alone. Otherwise, before each
+       turn the speaker is shown the passages closest to their objective and to what was just
+       said, from all the libraries ticked, and can cite them as [S1], [S2]. The run page shows
+       which sources each turn was given, from which library, and which it cited. Manage
+       libraries under <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
 
     <div class="agents-head">
       <h3>Cast</h3>
@@ -228,6 +223,9 @@ const ROLE_PRESETS = [
 ];
 
 function val(id){ return document.getElementById(id).value; }
+function checkedLibraries(id) {
+  return [...document.querySelectorAll(`#${id} input[type=checkbox]:checked`)].map(i => i.value);
+}
 function int(id, d){ const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? d : n; }
 
 function toggleDraftPanel() {
@@ -238,10 +236,10 @@ function toggleDraftPanel() {
 function buildConfig() {
   const mode = document.getElementById('mode').value;
   if (mode === 'document_analysis') {
-    return {corpus: val('da_corpus')};
+    return {libraries: checkedLibraries('da_libs')};
   }
   if (mode === 'agentic_workflow') {
-    return {corpus: val('aw_corpus'),
+    return {libraries: checkedLibraries('aw_libs'),
             max_iterations: int('aw_max_iter', 8),
             allow_network: document.getElementById('aw_network').checked};
   }
@@ -249,7 +247,7 @@ function buildConfig() {
     const config = {max_turns: int('rp_turns', DEFAULT_MAX_TURNS),
                     word_limit: int('rp_words', DEFAULT_WORD_LIMIT)};
     if (val('rp_scenario').trim()) config.scenario = val('rp_scenario').trim();
-    if (val('rp_corpus')) config.corpus = val('rp_corpus');
+    config.libraries = checkedLibraries('rp_libs');
     // Where an AI-generated cast came from, so a run can be traced back to its source.
     if (draftedSource) config.source = draftedSource;
     config.agents = collectAgents();

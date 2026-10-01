@@ -186,9 +186,10 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
         meta.append(f"started {view['started']}")
     if view.get("took"):
         meta.append(f"took {view['took']}")
-    if view.get("library"):
-        meta.append(f"library {view['library']}"
-                    + (f" v{view['library_version']}" if view.get("library_version") else ""))
+    libraries = view.get("libraries") or []
+    if libraries:
+        meta.append(("library " if len(libraries) == 1 else "libraries ") + ", ".join(
+            lib["name"] + (f" v{lib['version']}" if lib.get("version") else "") for lib in libraries))
     if view.get("turns") is not None and "turns" in view:
         meta.append(f"{view['turns']} turns")
     story += [Paragraph(_plain(title), st["title"]),
@@ -208,8 +209,10 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
         story.append(Paragraph("Scenario and cast", st["h1"]))
         if view.get("scenario"):
             story.append(Paragraph(_plain(view["scenario"]), st["body"]))
-        if view.get("corpus"):
-            story.append(Paragraph(f"<b>Legal sources:</b> {_plain(view['corpus'])}", st["body"]))
+        if libraries:
+            story.append(Paragraph("<b>Legal sources:</b> " + _plain(", ".join(
+                lib["name"] + (f" v{lib['version']}" if lib.get("version") else "") for lib in libraries)),
+                st["body"]))
         colour_of = {s["id"]: PALETTE[(s["color"] - 1) % len(PALETTE)] for s in view.get("speakers", [])}
         rows = [[Paragraph("<b>Name</b>", st["cell"]), Paragraph("<b>Role</b>", st["cell"]),
                  Paragraph("<b>Objective</b>", st["cell"]), Paragraph("<b>Turns</b>", st["cell"])]]
@@ -251,7 +254,10 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
             if e["sources"]:
                 cited = [s for s in e["sources"] if s.get("cited")]
                 lines = "<br/>".join(
-                    f'[{_plain(s["marker"])}] {_plain(s["label"])}{" — cited" if s.get("cited") else ""}'
+                    f'[{_plain(s["marker"])}] {_plain(s["label"])}'
+                    + (f' (in {_plain(s["corpus"])}{" v" + str(s["version"]) if s.get("version") else ""})'
+                       if s.get("corpus") else "")
+                    + (" — cited" if s.get("cited") else "")
                     for s in e["sources"])
                 inner.append(Paragraph(f"<b>Legal sources given ({len(e['sources'])}, {len(cited)} cited)</b><br/>{lines}",
                                        st["small"]))
@@ -265,6 +271,27 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
             # A turn may run past a page; the box then splits rather than jumping pages.
             story.append(_boxed(inner, rule, fill, width))
             story.append(Spacer(1, 6))
+
+    refs = view.get("refs") or {}
+    if refs.get("references") or refs.get("unsupported"):
+        # Where each citation leads: the document's full reference, the library and version
+        # it was found in, and every place the output cites it.
+        story.append(CondPageBreak(1.5 * inch))
+        story.append(Paragraph("References", st["h1"]))
+        for ref in refs.get("references", []):
+            uses = "; ".join(f"{u['marker']} {u['context']}".strip() for u in ref["uses"][:20])
+            if len(ref["uses"]) > 20:
+                uses += f"; and {len(ref['uses']) - 20} more"
+            where = f"Searched in library {ref['library_text']}. " if ref.get("library_text") else ""
+            story.append(Paragraph(
+                f"{ref['n']}. {_plain(ref['text'])}" + (f" {_plain(ref['url'])}" if ref.get("url") else "")
+                + f'<br/><font color="{MUTED}" size="8">{_plain(where)}Cited: {_plain(uses)}.</font>',
+                st["body"]))
+        if refs.get("unsupported"):
+            story.append(Paragraph(
+                "<b>Markers naming no passage the model was given (unsupported):</b> " + _plain(
+                    "; ".join(f"{u['marker']} {u['context']}".strip() for u in refs["unsupported"])),
+                st["small"]))
 
     def footer(canvas, doc_) -> None:
         canvas.saveState()

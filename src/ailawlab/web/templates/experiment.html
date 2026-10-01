@@ -165,14 +165,6 @@
         </div>
       </div>
     </details>
-    <label for="in_corpus">Legal sources for this run</label>
-    <select id="in_corpus" onchange="fillVersions(); syncInputs()">
-      <option value="">None</option>
-      {% for c in corpora %}<option value="{{ c }}" {% if c == v.corpus %}selected{% endif %}>{{ c }}</option>{% endfor %}
-      {% if v.corpus and v.corpus not in corpora %}<option value="{{ v.corpus }}" selected>{{ v.corpus }} (now empty)</option>{% endif %}
-    </select>
-    <p class="hint">Passages from this library are put before each speaker, who can cite them as
-       [S1], [S2]. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
     <p class="estimate" id="estimate"></p>
   {% elif exp.mode == 'document_analysis' %}
     <label for="in_question">Question</label>
@@ -195,12 +187,43 @@
               placeholder="e.g. Search the library and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
   {% endif %}
 
-  <div id="version-field">
-    <label for="in_version">Library version</label>
-    <select id="in_version" onchange="syncInputs()"></select>
-    <p class="hint">Runs normally search the library as it is now, and record which version that
-      was. To repeat an earlier result exactly, choose the version that run used.
-      <a id="version-link" href="#">See this library's versions</a>.</p>
+  {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
+  <div class="library-launch">
+    <label>{{ 'Legal sources for this run' if exp.mode == 'roleplay' else 'Libraries for this run' }}</label>
+    <div class="lib-rows" id="lib-rows">
+      {% for name in v.libraries %}
+      <div class="lib-row" data-name="{{ name }}">
+        <label class="check"><input type="checkbox" value="{{ name }}" checked onchange="syncInputs()">
+          <span class="lib-name">{{ name }}</span>
+          <span class="hint-inline">{% if name in doc_counts %}{{ doc_counts[name] }} document{{ '' if doc_counts[name] == 1 else 's' }}{% else %}now empty{% endif %}</span></label>
+        <select class="lib-version" aria-label="Version of {{ name }}" onchange="syncInputs()"></select>
+        <a class="small-link" href="{{ prefix }}/sources/corpora/{{ name|urlencode }}#versions">versions</a>
+      </div>
+      {% endfor %}
+    </div>
+    {% set others = libraries|rejectattr('name', 'in', v.libraries)|list %}
+    {% if others %}
+    <details class="lib-more" {% if not v.libraries %}open{% endif %}>
+      <summary>{{ 'Add a library to this run' if v.libraries else 'Choose libraries for this run' }} ({{ others|length }} more)</summary>
+      <div class="lib-rows">
+        {% for lib in others %}
+        <div class="lib-row" data-name="{{ lib.name }}">
+          <label class="check"><input type="checkbox" value="{{ lib.name }}" onchange="syncInputs()">
+            <span class="lib-name">{{ lib.name }}</span>
+            <span class="hint-inline">{{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</span></label>
+          <select class="lib-version" aria-label="Version of {{ lib.name }}" onchange="syncInputs()"></select>
+          <a class="small-link" href="{{ prefix }}/sources/corpora/{{ lib.name|urlencode }}#versions">versions</a>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    <p class="hint">Starts as the experiment's {{ 'legal sources' if exp.mode == 'roleplay' else 'libraries' }}; changes
+      apply to this run only, and the run records what it used. Ticked libraries are searched together.
+      {% if exp.mode == 'roleplay' %}Passages are put before each speaker, who can cite them as [S1], [S2].
+      {% elif exp.mode == 'document_analysis' %}Untick all for a run without retrieved authority.{% endif %}
+      Each library is searched as it is now unless you choose an earlier version, which repeats an
+      earlier result exactly. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
   </div>
 
   <p class="launch-error" id="launch-error" hidden></p>
@@ -259,40 +282,71 @@ function buildInputs() {
     const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
     if (turns !== BASE.max_turns) inputs.max_turns = turns;
     if (words !== BASE.word_limit) inputs.word_limit = words;
-    const corpus = $("in_corpus").value;
-    if (corpus !== (BASE.corpus || "")) inputs.corpus = corpus;
-    return withVersion(inputs);
+    return withLibraries(inputs);
   }
   if (MODE === "document_analysis") {
     const inputs = {question: $("in_question").value.trim(), document_text: $("in_text").value};
     if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
-    return withVersion(inputs);
+    return withLibraries(inputs);
   }
-  return withVersion({task: $("in_task").value.trim()});
+  return withLibraries({task: $("in_task").value.trim()});
 }
 
-// ---------------------------------------------------------------- library version
-// Each library's recorded versions, newest first; the run page's "Run again with this
-// version" link arrives with ?corpus_version=N.
+// ---------------------------------------------------------------- libraries and versions
+// Each library's recorded versions, newest first. The run page's "run again with these
+// versions" link arrives with ?versions={"name": n, ...}; links from before a run could
+// search several libraries carry ?corpus_version=N (and, for a role-play, &corpus=name).
 const VERSIONS = {{ library_versions|tojson }};
-const LIBRARY = {{ (exp.config.corpus or 'default')|tojson }};
-const WANTED_VERSION = new URLSearchParams(location.search).get("corpus_version");
+const PARAMS = new URLSearchParams(location.search);
+let WANTED = null;
+try { WANTED = JSON.parse(PARAMS.get("versions") || "null"); } catch (e) { WANTED = null; }
+if (!WANTED && PARAMS.get("corpus_version")) {
+  const name = PARAMS.get("corpus") || (BASE.libraries || [])[0];
+  if (name) WANTED = {[name]: parseInt(PARAMS.get("corpus_version"), 10)};
+}
 
-function libraryName() { return MODE === "roleplay" ? $("in_corpus").value : LIBRARY; }
+function libRows() { return [...document.querySelectorAll(".lib-row")]; }
+
+function chosenLibraries() {
+  return libRows().filter(r => r.querySelector("input").checked).map(r => r.dataset.name);
+}
 
 function fillVersions() {
-  const name = libraryName(), list = VERSIONS[name] || [];
-  $("version-field").hidden = !name;
-  $("version-link").href = `${PREFIX}/sources/corpora/${encodeURIComponent(name)}#versions`;
-  const keep = $("in_version").value || WANTED_VERSION || "";
-  $("in_version").innerHTML = `<option value="">Current contents${list.length ? ` (v${list[0].version} unless it has changed since)` : ""}</option>`
-    + list.map(v => `<option value="${v.version}">Version ${v.version}: ${v.documents} document${v.documents === 1 ? "" : "s"}, recorded ${v.date}</option>`).join("");
-  if ([...$("in_version").options].some(o => o.value === keep)) $("in_version").value = keep;
+  libRows().forEach(row => {
+    const name = row.dataset.name, list = VERSIONS[name] || [], sel = row.querySelector("select");
+    sel.innerHTML = `<option value="">Current contents${list.length ? ` (v${list[0].version} unless it has changed since)` : ""}</option>`
+      + list.map(v => `<option value="${v.version}">Version ${v.version}: ${v.documents} document${v.documents === 1 ? "" : "s"}, recorded ${v.date}</option>`).join("");
+  });
 }
 
-function withVersion(inputs) {
-  const v = $("in_version").value;
-  if (v && !$("version-field").hidden) inputs.corpus_version = parseInt(v, 10);
+// "Run again with these versions": tick exactly the libraries the earlier run searched,
+// each at the version it searched.
+function applyWanted() {
+  if (!WANTED || typeof WANTED !== "object") return;
+  libRows().forEach(row => {
+    const name = row.dataset.name, want = WANTED[name];
+    row.querySelector("input").checked = want !== undefined;
+    const sel = row.querySelector("select");
+    if (want !== undefined && [...sel.options].some(o => o.value === String(want))) sel.value = String(want);
+    if (want !== undefined) row.closest("details")?.setAttribute("open", "");
+  });
+}
+
+function showVersionPickers() {
+  libRows().forEach(row => row.querySelector("select").hidden = !row.querySelector("input").checked);
+}
+
+function sameList(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
+
+function withLibraries(inputs) {
+  const chosen = chosenLibraries();
+  if (!sameList(chosen, BASE.libraries || [])) inputs.libraries = chosen;
+  const versions = {};
+  libRows().forEach(row => {
+    const v = row.querySelector("select").value;
+    if (v && row.querySelector("input").checked) versions[row.dataset.name] = parseInt(v, 10);
+  });
+  if (Object.keys(versions).length) inputs.library_versions = versions;
   return inputs;
 }
 
@@ -310,6 +364,7 @@ function durationText(seconds) {
 }
 
 function syncInputs() {
+  showVersionPickers();
   if (MODE === "roleplay") {
     const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
     $("pace-turns").textContent = turns;
@@ -386,11 +441,8 @@ async function loadDocument(from) {
   if (from === "file") $("load-file").value = "";
 }
 
-// "Run again with this version" on a role-play run also names the library it used.
-const WANTED_LIBRARY = new URLSearchParams(location.search).get("corpus");
-if (MODE === "roleplay" && WANTED_LIBRARY && [...$("in_corpus").options].some(o => o.value === WANTED_LIBRARY))
-  $("in_corpus").value = WANTED_LIBRARY;
 fillVersions();
+applyWanted();
 syncInputs();
 </script>
 {% endblock %}

@@ -14,17 +14,31 @@ import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from ..grounding import cited_numbers, link_citations
 from .state import AgenticState, ctx_from
 
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a legal research agent. You have tools available and should use them to ground your work in real sources rather than recalling from memory.
 
+{sources}
+
 Guidelines:
-- Search the corpus before asserting what a document or authority says.
+- Search the libraries before asserting what a document or authority says.
 - Quote operative language rather than paraphrasing when precision matters.
+- Cite a passage as [n] with the number the search gave it; cite only passages a search returned.
 - If the tools cannot establish something, say so explicitly. Do not fill the gap with plausible-sounding invention.
 - When you have enough to answer, give the final answer directly with citations."""
+
+
+def _sources_line(names: list[str]) -> str:
+    if not names:
+        return ("No library of legal sources is available for this task, so you cannot search "
+                "for authority: say where the answer would need one.")
+    if len(names) == 1:
+        return f"You can search one library of legal sources: “{names[0]}”."
+    return ("You can search these libraries of legal sources, all at once or one at a time: "
+            + "; ".join(f"“{n}”" for n in names) + ".")
 
 
 async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
@@ -32,7 +46,8 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     ctx = ctx_from(config)
     registry = ctx.opt("registry")
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(
+                    sources=_sources_line(ctx.libraries.searchable()))},
                 {"role": "user", "content": state["task"]}]
     messages.extend(state.get("scratchpad", []))
 
@@ -44,7 +59,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
         temperature=0.2,
         options={"num_predict": 1500},
     )
-    await ctx.tracer.llm_call(res, node="reason", prompt_preview=state["task"])
+    event_id = await ctx.tracer.llm_call(res, node="reason", prompt_preview=state["task"])
 
     iterations = state.get("iterations", 0) + 1
     max_iter = state.get("max_iterations", 8)
@@ -65,12 +80,19 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
         await ctx.tracer.error("reason node truncated before producing an answer", node="reason")
         answer = "(no answer produced: token budget exhausted during reasoning)"
 
-    return {
+    out = {
         "scratchpad": [{"role": "assistant", "content": answer}],
         "answer": answer,
         "iterations": iterations,
         "done": True if answer else iterations >= max_iter,
     }
+    if answer:
+        # [n] markers resolve through the run-wide numbering the search tool handed out.
+        ledger = ctx.opt("ledger")
+        citations = link_citations(answer, ledger.get, context="Answer")
+        await ctx.tracer.record_citations(event_id, citations)
+        out.update(citations=citations, sources=ledger.sources(cited_numbers(answer)))
+    return out
 
 
 async def act_node(state: AgenticState, config: RunnableConfig) -> dict:

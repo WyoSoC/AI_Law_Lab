@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..agent_spec import SECTIONS, check_cast, normalize_agent
+from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
+from ..rag import library_names
 
 MODE_LABELS = {
     "document_analysis": "Document analysis",
@@ -24,11 +26,11 @@ MODE_LABELS = {
 MODE_BLURBS = {
     "document_analysis": (
         "Each run analyzes one document. The question is split into sub-questions, each is "
-        "answered from the document, and the answer is grounded in the library with numbered "
-        "citations that are checked afterwards."),
+        "answered from the document, and the answer is grounded in the chosen libraries with "
+        "numbered citations that are checked afterwards."),
     "agentic_workflow": (
         "Each run gives an agent one task. It works in a think-then-act loop, calling tools "
-        "such as library search, until it can answer."),
+        "such as library search, until it can answer, citing the passages it found."),
     "roleplay": (
         "Each run plays out the scenario between the cast. A moderator decides who speaks, "
         "steps in when talks stall, and ends the scene; an evaluator then assesses the "
@@ -181,12 +183,32 @@ def run_rows(runs: list[dict], mode: str, progress: dict[str, int] | None = None
     return rows
 
 
+def _quoted(names: list[str]) -> str:
+    return ", ".join(f"“{n}”" for n in names)
+
+
+def libraries_fact(names: list[str], documents: dict[str, int] | None = None,
+                   none: str = "None") -> dict[str, str]:
+    """The libraries an experiment retrieves from, as one fact: their names, and how many
+    documents they hold now when `documents` is given."""
+    if not names:
+        return _fact("Library", none)
+    note = ""
+    if documents is not None:
+        total = sum(documents.get(n, 0) for n in names)
+        note = (f"{total} document{'' if total == 1 else 's'}"
+                + (" in it" if len(names) == 1 else f" across {len(names)} libraries"))
+    return _fact("Library" if len(names) == 1 else "Libraries", _quoted(names), note)
+
+
 def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None = None,
-                    corpus_documents: int | None = None,
+                    library_documents: dict[str, int] | None = None,
                     now: datetime | None = None) -> dict[str, Any]:
-    """Everything the experiment page renders, derived from the stored experiment."""
+    """Everything the experiment page renders, derived from the stored experiment.
+    `library_documents` is how many documents each library holds now."""
     config = exp.get("config") or {}
     mode = exp.get("mode", "")
+    libraries = library_names(config, mode)
     view: dict[str, Any] = {
         "mode_label": MODE_LABELS.get(mode, mode.replace("_", " ").capitalize()),
         "blurb": MODE_BLURBS.get(mode, ""),
@@ -201,7 +223,6 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         words = _int(config.get("word_limit"), settings.default_word_limit)
         people = len(agents)
         source = config.get("source")
-        corpus = str(config.get("corpus") or "")
         facts = [
             _fact("Cast", f"{people} {'person' if people == 1 else 'people'}"),
             _fact("Max turns", str(turns), "the moderator may end sooner"),
@@ -209,23 +230,21 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Longest run", duration_text(estimate_run_seconds(turns, words)),
                   "if every turn is used"),
         ]
-        if corpus:
-            facts.append(_fact("Legal sources", corpus, "passages the cast can cite"))
+        if libraries:
+            facts.append(_fact("Legal sources", _quoted(libraries), "libraries of passages the cast can cite"))
         view.update(
             facts=facts,
-            corpus=corpus,
+            libraries=libraries,
             scenario=str(config.get("scenario") or ""),
             agents=[agent_view(a) for a in agents],
             cast_errors=[i["message"] for i in check_cast(agents) if i["level"] == "error"],
             source=source_view(source) if isinstance(source, dict) else None,
-            launch_defaults={"max_turns": turns, "word_limit": words, "corpus": corpus},
+            launch_defaults={"max_turns": turns, "word_limit": words, "libraries": libraries},
         )
         return view
 
-    corpus = str(config.get("corpus") or "default")
-    documents = ("" if corpus_documents is None else
-                 f"{corpus_documents} document{'' if corpus_documents == 1 else 's'} in it")
-    facts = [_fact("Library", corpus, documents)]
+    facts = [libraries_fact(libraries, library_documents,
+                            none="None: answers without retrieved authority")]
     if mode == "agentic_workflow":
         facts += [
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
@@ -233,7 +252,7 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
                   "none are installed yet, so the agent uses library search either way"),
         ]
-    view.update(facts=facts, launch_defaults={})
+    view.update(facts=facts, libraries=libraries, launch_defaults={"libraries": libraries})
     return view
 
 
@@ -277,19 +296,84 @@ def _speakers(transcript: list[dict], agents: list[dict]) -> dict[str, dict[str,
     return info
 
 
+def library_text(src: dict) -> str:
+    """“Case law” v3: the library a source came from and the version searched, or ""."""
+    name = src.get("corpus") or src.get("library") or ""
+    if not name:
+        return ""
+    version = src.get("version") if "version" in src else src.get("corpus_version")
+    return f"“{name}”" + (f" v{version}" if version else "")
+
+
 def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
-    """Turn a reply's [S2] markers into links to the document the passage came from."""
-    by_marker = {s.get("marker"): s for s in sources}
+    """Turn [S2] (role-play) or [3] markers into links to the document the passage came
+    from, with its source and library in the link's tooltip."""
+    by_marker = {str(s.get("marker")): s for s in sources}
 
     def link(m: re.Match) -> str:
         src = by_marker.get(m.group(1))
         if not src or not src.get("document_id"):
             return m.group(0)
-        title = str(src.get("label", "")).replace('"', "&quot;")
+        where = library_text(src)
+        title = (str(src.get("label", "")) + (f" — {where}" if where else "")).replace('"', "&quot;")
         return (f'<a class="cite" href="{prefix}/sources/documents/{int(src["document_id"])}" '
                 f'title="{title}">[{m.group(1)}]</a>')
 
-    return re.sub(r'<span class="cite">\[(S\d+)\]</span>', link, html)
+    return re.sub(r'<span class="cite">\[(S?\d+)\]</span>', link, html)
+
+
+def cited_references(rows: list[dict], documents: dict[int, dict]) -> dict[str, Any]:
+    """A run's citations gathered by the document they point to, for its References.
+
+    `rows` are its citation records (with `doc_id` and `library`, resolved through the chunk
+    for records from before citations kept them, and `library_version`); `documents` the
+    cited documents by id. Each reference carries the document's full citation (citations.py),
+    the library and version it was searched in, and every place it was cited, in order of
+    first citation. Unsupported markers are listed apart. Pure.
+    """
+    refs: dict[int, dict[str, Any]] = {}
+    unsupported: list[dict[str, str]] = []
+    for r in rows:
+        where = {"marker": r.get("quoted_text") or "", "context": r.get("context") or ""}
+        if r.get("verdict") != "grounded" or not r.get("doc_id"):
+            if r.get("verdict") == "unsupported":
+                unsupported.append(where)
+            continue
+        ref = refs.get(r["doc_id"])
+        if ref is None:
+            doc = documents.get(r["doc_id"])
+            entry = citation(doc) if doc else {"text": r.get("source_label") or "", "url": ""}
+            ref = refs[r["doc_id"]] = {
+                "document_id": r["doc_id"], "text": entry["text"], "url": safe_url(entry["url"]),
+                "available": doc is not None,
+                "library": r.get("library") or "", "version": r.get("library_version"),
+                "uses": []}
+        ref["uses"].append({**where, "label": r.get("source_label") or ""})
+    out = list(refs.values())
+    for i, ref in enumerate(out, start=1):
+        ref["n"] = i
+        ref["library_text"] = library_text({"library": ref["library"], "version": ref["version"]})
+    by_library: dict[str, int] = {}
+    for ref in out:
+        key = ref["library_text"] or "no library"
+        by_library[key] = by_library.get(key, 0) + 1
+    return {"references": out, "unsupported": unsupported,
+            "by_library": [{"library": k, "documents": n} for k, n in by_library.items()]}
+
+
+def references_text(run: dict, refs: dict[str, Any]) -> str:
+    """The run's References as plain text, to paste into a paper or memo."""
+    head = (f"References: {run.get('experiment_name', 'Experiment')}, run {str(run.get('id', ''))[:8]}, "
+            "AI Law Lab")
+    lines = [head, ""]
+    for ref in refs["references"]:
+        uses = "; ".join(f"{u['marker']} {u['context']}".strip() for u in ref["uses"])
+        lines.append(f"{ref['n']}. {ref['text']}" + (f" {ref['url']}" if ref["url"] else ""))
+        lines.append(f"   Searched in library {ref['library_text'] or '(unknown)'}. Cited: {uses}.")
+    if refs["unsupported"]:
+        lines += ["", "Markers that name no passage the model was given (unsupported):",
+                  "; ".join(f"{u['marker']} {u['context']}".strip() for u in refs["unsupported"])]
+    return "\n".join(lines) + "\n"
 
 
 def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
@@ -306,14 +390,19 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         "started": f"{started:%B} {started.day}, {started:%Y at %H:%M} UTC" if started else "",
         "took": elapsed_text((finished - started).total_seconds()) if started and finished else "",
         "summary_title": "Assessment" if mode == "roleplay" else "Answer",
-        # The library the run searched and its version (absent for runs from before
-        # libraries were versioned, and for role-plays without legal sources).
         "launched_by": run.get("launched_by_name") or "",
-        "library": run.get("corpus") or "",
-        "library_version": run.get("corpus_version"),
+        # The libraries the run searched, each with the version it searched (none for a
+        # role-play without legal sources; no version for runs from before libraries were
+        # versioned, or for a library that was empty).
+        "libraries": [lib for lib in run.get("libraries") or [] if isinstance(lib, dict)],
         "summary_md": result.get("outcome") or result.get("answer") or "",
+        # Every passage the answer could cite, by marker (document analysis and agents).
+        "sources": [src for src in result.get("sources") or [] if isinstance(src, dict)],
     }
-    view["summary_html"] = link_turns(to_html(view["summary_md"])) if view["summary_md"] else ""
+    view["rerun_versions"] = {lib["name"]: lib["version"] for lib in view["libraries"]
+                              if lib.get("version")}
+    view["summary_html"] = (link_turns(_link_sources(to_html(view["summary_md"]), view["sources"], prefix))
+                            if view["summary_md"] else "")
 
     if mode == "roleplay":
         transcript = [t for t in result.get("transcript") or [] if isinstance(t, dict)]
@@ -336,7 +425,6 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
             })
         view.update(
             scenario=str(config.get("scenario") or ""),
-            corpus=str(config.get("corpus") or ""),
             speakers=list(speakers.values()),
             transcript=entries,
             turns=sum(1 for e in entries if not e["moderator"]),

@@ -18,7 +18,8 @@ from .graphs.agentic_workflow import build_agentic_graph
 from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
-from .rag import Corpus, get_version, record_version
+from .grounding import SourceLedger
+from .rag import Libraries, pin_libraries, run_library_names, wanted_versions
 from .router import get_router
 from .tools import default_registry
 from .tracing import Tracer, run_metrics
@@ -139,17 +140,35 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
         raise ValueError(f"no such experiment: {experiment_id}")
     if exp.get("deleted_at"):
         raise ValueError("this experiment is in the trash; restore it before running it")
-    return await fetch_one(
-        "INSERT INTO runs (experiment_id, config_snapshot, inputs, status, launched_by) "
-        "VALUES (%s,%s,%s,'pending',%s) RETURNING *",
-        (experiment_id, jsonb(exp["config"]), jsonb(inputs or {}), launched_by),
-    )
+    names = run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        await cur.execute(
+            "INSERT INTO runs (experiment_id, config_snapshot, inputs, status, launched_by) "
+            "VALUES (%s,%s,%s,'pending',%s) RETURNING *",
+            (experiment_id, jsonb(exp["config"]), jsonb(inputs or {}), launched_by))
+        run = await cur.fetchone()
+        # Recorded now, before the run starts, so its libraries count as in use (see
+        # rag.check_idle); the versions are filled in when it starts.
+        for position, name in enumerate(names):
+            await cur.execute("INSERT INTO run_libraries (run_id, position, corpus) "
+                              "VALUES (%s, %s, %s)", (run["id"], position, name))
+    return run
+
+
+_RUN_LIBRARIES = (
+    "COALESCE((SELECT jsonb_agg(jsonb_build_object('name', rl.corpus, 'version', rl.version, "
+    "  'documents', rl.documents) ORDER BY rl.position) FROM run_libraries rl "
+    "  WHERE rl.run_id = r.id), '[]'::jsonb) AS libraries")
 
 
 async def get_run(run_id: str) -> dict | None:
+    """A run, with `libraries`: the libraries it searches, in order, as {name, version,
+    documents} (version None until the run starts, or for a library that was empty)."""
     return await fetch_one(
         "SELECT r.*, e.name AS experiment_name, e.mode, "
-        "       COALESCE(NULLIF(u.name, ''), u.email) AS launched_by_name "
+        "       COALESCE(NULLIF(u.name, ''), u.email) AS launched_by_name, "
+        f"      {_RUN_LIBRARIES} "
         "FROM runs r JOIN experiments e ON e.id = r.experiment_id "
         "LEFT JOIN users u ON u.id = r.launched_by WHERE r.id=%s",
         (run_id,),
@@ -225,7 +244,7 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "last_intervention": 0,
             "ledgers": {},
             # Legal sources are optional for a role-play; with none, turns are as before.
-            "corpus": str(merged.get("corpus") or "").strip(),
+            "libraries": run_library_names(mode, config, inputs),
             "done": False,
         }
     raise ValueError(f"unknown mode {mode!r}")
@@ -252,11 +271,13 @@ async def execute_run(run_id: str) -> dict:
     await tracer.note(f"run started (mode={mode})")
 
     try:
-        corpus = await _library_for_run(run_id, mode, {**config, **inputs}, router, tracer)
-        ctx = RunContext(run_id=run_id, router=router, tracer=tracer, corpus=corpus, config=config)
+        libraries = await _libraries_for_run(run_id, mode, config, inputs, router, tracer)
+        ctx = RunContext(run_id=run_id, router=router, tracer=tracer, libraries=libraries,
+                         config=config)
         if mode == "agentic_workflow":
-            ctx.config = {**config, "registry": default_registry(
-                corpus, allow_network=config.get("allow_network", False))}
+            ledger = SourceLedger()
+            ctx.config = {**config, "ledger": ledger, "registry": default_registry(
+                libraries, ledger, allow_network=config.get("allow_network", False))}
 
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
@@ -286,37 +307,37 @@ async def execute_run(run_id: str) -> dict:
         raise
 
 
-async def _library_for_run(run_id: str, mode: str, merged: dict, router, tracer: Tracer) -> Corpus:
-    """The library this run searches, pinned to one version and recorded on the run.
+async def _libraries_for_run(run_id: str, mode: str, config: dict, inputs: dict,
+                             router, tracer: Tracer) -> Libraries:
+    """The libraries this run searches, each pinned to one version and recorded on the run.
 
-    A run names its library (a role-play's legal sources can be chosen at launch) and may
-    name a version, to repeat an earlier result against the library as it was then. With
-    no version given, the library's current contents are recorded as a version if they
+    A run may choose its own libraries at launch, and may name a version of any of them, to
+    repeat an earlier result against a library as it was then. A library with no version
+    named is searched as it is now: its current contents are recorded as a version if they
     changed since the last one, and that version is used.
     """
-    name = str(merged.get("corpus") or "").strip()
-    if mode == "roleplay" and not name:
-        return Corpus(router, name="")              # no legal sources: never searched
-    name = name or "default"
-    wanted = merged.get("corpus_version")
-    if wanted not in (None, ""):
-        try:
-            number = int(wanted)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"library version {wanted!r} is not a number") from e
-        version = await get_version(name, number)
-        if version is None:
-            raise ValueError(f"the library “{name}” has no version {number}")
-    else:
-        version = await record_version(name)
-    await _set_fields(run_id, corpus=name, corpus_version=version["version"] if version else None)
-    if version is None:
-        await tracer.note(f"library “{name}” is empty; nothing can be retrieved")
-        return Corpus(router, name=name)
-    n = len(version["document_ids"])
-    await tracer.note(f"searching library “{name}”, version {version['version']} "
-                      f"({n} document{'' if n == 1 else 's'})")
-    return Corpus(router, name=name, document_ids=list(version["document_ids"]))
+    names = run_library_names(mode, config, inputs)
+    libraries = await pin_libraries(router, names, wanted_versions(names, inputs))
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        # Replaced rather than updated, so a run created some other way still ends up with
+        # exactly the libraries it searched.
+        await cur.execute("DELETE FROM run_libraries WHERE run_id=%s", (run_id,))
+        for position, pin in enumerate(libraries.pins):
+            await cur.execute(
+                "INSERT INTO run_libraries (run_id, position, corpus, version, documents) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (run_id, position, pin.name, pin.version, len(pin.document_ids)))
+    for pin in libraries.pins:
+        if pin.version is None:
+            await tracer.note(f"library “{pin.name}” is empty; nothing can be retrieved from it")
+    if libraries:
+        n = sum(len(p.document_ids) for p in libraries.pins)
+        await tracer.note(f"searching {libraries.describe()} "
+                          f"({n} document{'' if n == 1 else 's'} in all)")
+    elif not names:
+        await tracer.note("no library: nothing is retrieved in this run")
+    return libraries
 
 
 async def _check_roleplay(state: dict, tracer: Tracer) -> None:
@@ -336,12 +357,15 @@ async def _check_roleplay(state: dict, tracer: Tracer) -> None:
 
 
 def _summarize(mode: str, final: dict) -> dict:
+    """The run's stored result. `sources` lists every passage the model was given, by the
+    marker it could cite it with, with its document, library and version."""
     if mode == "document_analysis":
         return {
             "answer": final.get("answer", ""),
             "plan": final.get("plan", []),
             "findings": final.get("findings", []),
             "citations": final.get("citations", []),
+            "sources": final.get("sources", []),
             "passages_used": len(final.get("passages", [])),
         }
     if mode == "agentic_workflow":
@@ -349,6 +373,8 @@ def _summarize(mode: str, final: dict) -> dict:
             "answer": final.get("answer", ""),
             "iterations": final.get("iterations", 0),
             "tool_results": final.get("tool_results", []),
+            "citations": final.get("citations", []),
+            "sources": final.get("sources", []),
         }
     if mode == "roleplay":
         return {

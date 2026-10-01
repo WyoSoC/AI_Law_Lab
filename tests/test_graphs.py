@@ -51,11 +51,23 @@ generally enforceable in Wyoming commercial agreements.
 """
 
 
+REGULATION = """
+Model Commercial Services Regulation — Notice of Termination
+
+A party that terminates a commercial services agreement for convenience must give the
+other party written notice stating the effective date of termination. Notice periods
+shorter than thirty (30) days are disfavoured where the agreement runs longer than one year.
+"""
+
+
 @pytest.fixture(scope="module", autouse=True)
 async def seed_corpus():
     router = await get_router()
-    corpus = Corpus(router, name="test")
-    await corpus.add_document("Wyoming Contract Law Notes", AUTHORITY, doc_type="authority")
+    await Corpus(router, name="test").add_document("Wyoming Contract Law Notes", AUTHORITY,
+                                                   doc_type="authority")
+    # A second library, so runs exercise searching several at once.
+    await Corpus(router, name="test-regs").add_document("Model Termination Regulation", REGULATION,
+                                                        doc_type="authority")
     yield
     await close_pool()
 
@@ -72,7 +84,7 @@ async def test_corpus_search_returns_scored_passages():
 async def test_document_analysis_run_produces_answer_and_trace():
     exp = await experiments.create_experiment(
         "Contract risk review (test)", "document_analysis",
-        config={"corpus": "test"},
+        config={"libraries": ["test", "test-regs"]},
     )
     run = await experiments.create_run(str(exp["id"]), inputs={
         "document_title": "Master Services Agreement",
@@ -97,6 +109,15 @@ async def test_document_analysis_run_produces_answer_and_trace():
     assert kinds.get("llm_call", 0) >= 3, f"expected plan+analyze+synthesize calls, got {kinds}"
     assert kinds.get("retrieval", 0) >= 1
 
+    # Both libraries were pinned, and every source and grounded citation names its library.
+    pinned = await fetch_all("SELECT corpus, version FROM run_libraries WHERE run_id=%s "
+                             "ORDER BY position", (run_id,))
+    assert [p["corpus"] for p in pinned] == ["test", "test-regs"]
+    assert all(p["version"] for p in pinned)
+    assert all(src["corpus"] in ("test", "test-regs") and src["version"] for src in result["sources"])
+    cites = await fetch_all("SELECT * FROM citations WHERE run_id=%s AND verdict='grounded'", (run_id,))
+    assert all(c["corpus"] and c["document_id"] and c["corpus_version"] for c in cites)
+
     metrics = await run_metrics(run_id)
     assert metrics["performance"]["output_tokens"] > 0
     assert metrics["host_distribution"], "no host attribution recorded"
@@ -105,7 +126,7 @@ async def test_document_analysis_run_produces_answer_and_trace():
 async def test_agentic_workflow_uses_tools():
     exp = await experiments.create_experiment(
         "Research agent (test)", "agentic_workflow",
-        config={"corpus": "test", "max_iterations": 4},
+        config={"libraries": ["test", "test-regs"], "max_iterations": 4},
     )
     run = await experiments.create_run(str(exp["id"]), inputs={
         "task": "Search the corpus and tell me whether Wyoming enforces "
@@ -119,7 +140,11 @@ async def test_agentic_workflow_uses_tools():
         "SELECT payload FROM run_events WHERE run_id=%s AND event_type='tool_call'", (run_id,)
     )
     assert tool_events, "agent never called a tool"
-    assert any(e["payload"]["tool"] == "search_corpus" for e in tool_events)
+    assert any(e["payload"]["tool"] == "search_libraries" for e in tool_events)
+    # Sources are numbered across the run's searches; each names its library and version.
+    assert result["sources"], "searches returned nothing to cite"
+    assert [s["marker"] for s in result["sources"]] == [str(n) for n in range(1, len(result["sources"]) + 1)]
+    assert all(s["corpus"] in ("test", "test-regs") and s["version"] for s in result["sources"])
 
 
 async def test_roleplay_agents_keep_separate_memory():

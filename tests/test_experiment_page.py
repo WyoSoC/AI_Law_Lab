@@ -77,15 +77,22 @@ def test_a_roleplay_experiment_view():
     assert row["active"] and row["took"] == "44 min so far" and row["short"] == "b4fbcbf5"
     assert row["summary"] == "In progress: 31 of up to 100 turns so far"
     assert view["active_runs"] == [row]
-    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000, "corpus": ""}
+    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000, "libraries": []}
 
 
 def test_document_and_agentic_experiment_views():
     doc = experiment_view({"mode": "document_analysis", "config": {"corpus": "test"}}, [],
-                          corpus_documents=1, now=NOW)
-    assert doc["facts"] == [{"label": "Library", "value": "test", "note": "1 document in it"}]
+                          library_documents={"test": 1}, now=NOW)
+    assert doc["facts"] == [{"label": "Library", "value": "“test”", "note": "1 document in it"}]
     agent = experiment_view({"mode": "agentic_workflow", "config": {"max_iterations": "4"}}, [], now=NOW)
-    assert [f["value"] for f in agent["facts"]] == ["default", "4", "not allowed"]
+    assert [f["value"] for f in agent["facts"]] == ["“default”", "4", "not allowed"]
+    both = experiment_view({"mode": "agentic_workflow", "config": {"libraries": ["cases", "regs"]}}, [],
+                           library_documents={"cases": 3, "regs": 2}, now=NOW)
+    assert both["facts"][0] == {"label": "Libraries", "value": "“cases”, “regs”",
+                                "note": "5 documents across 2 libraries"}
+    assert both["launch_defaults"] == {"libraries": ["cases", "regs"]}
+    none = experiment_view({"mode": "document_analysis", "config": {"libraries": []}}, [], now=NOW)
+    assert none["facts"][0]["value"] == "None: answers without retrieved authority"
 
 
 def test_a_run_view_gives_each_speaker_a_colour_and_renders_markdown():
@@ -93,6 +100,7 @@ def test_a_run_view_gives_each_speaker_a_colour_and_renders_markdown():
 
     run = {"mode": "roleplay", "status": "succeeded",
            "started_at": NOW - timedelta(minutes=12), "finished_at": NOW,
+           "libraries": [{"name": "water", "version": 2, "documents": 5}],
            "config_snapshot": {"scenario": "A mediation.", "corpus": "water",
                                "agents": [{"id": "b", "name": "Bea"}, {"id": "a", "name": "Al"}]},
            "inputs": {},
@@ -105,7 +113,7 @@ def test_a_run_view_gives_each_speaker_a_colour_and_renders_markdown():
     v = run_view(run)
     assert [(s["name"], s["color"], s["turns"], s["cited"]) for s in v["speakers"]] == \
         [("Bea", 1, 1, 1), ("Al", 2, 1, 0)]                  # cast order, not speaking order
-    assert v["turns"] == 2 and v["interventions"] == 1 and v["corpus"] == "water"
+    assert v["turns"] == 2 and v["interventions"] == 1 and v["rerun_versions"] == {"water": 2}
     assert '<a class="turn-ref" href="#turn-2">Turn 2</a>' in v["summary_html"]
     assert "<strong>No deal</strong>" in v["summary_html"] and v["took"] == "12 min"
     assert v["transcript"][0]["html"] == "<p>I <em>open</em>.</p>" and v["transcript"][1]["moderator"]

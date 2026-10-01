@@ -87,7 +87,8 @@ class Tracer:
             payload={
                 "query": query,
                 "hits": [
-                    {"chunk_id": p.chunk_id, "label": p.cite_label(),
+                    {"chunk_id": p.chunk_id, "document_id": p.document_id,
+                     "label": p.cite_label(), "library": p.corpus, "version": p.version,
                      "similarity": round(p.similarity, 4)}
                     for p in passages
                 ],
@@ -115,7 +116,8 @@ class Tracer:
 
     # ------------------------------------------------------------------ citations
 
-    async def record_citations(self, event_id: int, citations: list[dict]) -> None:
+    async def record_citations(self, event_id: int | None, citations: list[dict]) -> None:
+        """Store citations as grounding.link_citations() makes them."""
         if not citations:
             return
         pool = await get_pool()
@@ -123,9 +125,12 @@ class Tracer:
             for c in citations:
                 await cur.execute(
                     "INSERT INTO citations (run_id, event_id, quoted_text, source_label, "
-                    "chunk_id, similarity, verdict) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    "chunk_id, document_id, corpus, corpus_version, context, similarity, verdict) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (self.run_id, event_id, c.get("quoted_text", ""), c.get("source_label"),
-                     c.get("chunk_id"), c.get("similarity"), c.get("verdict", "unchecked")),
+                     c.get("chunk_id"), c.get("document_id"), c.get("corpus"),
+                     c.get("corpus_version"), c.get("context") or "", c.get("similarity"),
+                     c.get("verdict", "unchecked")),
                 )
 
 

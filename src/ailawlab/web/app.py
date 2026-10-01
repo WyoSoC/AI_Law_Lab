@@ -252,13 +252,17 @@ async def empty_trash(request: Request):
         status_code=303)
 
 
+async def _library_choices() -> list[dict]:
+    """Libraries an experiment can retrieve from: those holding documents, with how many."""
+    return [{"name": c["corpus"], "documents": c["documents"]}
+            for c in await rag.list_corpora() if c["documents"]]
+
+
 @app.get("/experiments/new", response_class=HTMLResponse)
 async def new_experiment_form(request: Request):
-    corpora = await fetch_all("SELECT DISTINCT corpus FROM documents WHERE removed_at IS NULL "
-                              "ORDER BY corpus")
     return templates.TemplateResponse(request, "new_experiment.html", {
         "modes": experiments.MODES,
-        "corpora": [c["corpus"] for c in corpora],
+        "libraries": await _library_choices(),
         "default_max_turns": settings.default_max_turns,
         "max_turns_limit": settings.max_turns_limit,
         "default_word_limit": settings.default_word_limit,
@@ -320,20 +324,15 @@ async def experiment_detail(request: Request, experiment_id: str):
             "GROUP BY run_id", (active,))
         progress = {r["run_id"]: r["turns"] for r in rows}
 
-    corpus_documents = None
-    if exp["mode"] != "roleplay":
-        row = await fetch_one("SELECT COUNT(*) AS n FROM documents WHERE corpus = %s "
-                              "AND removed_at IS NULL",
-                              ((exp["config"] or {}).get("corpus") or "default",))
-        corpus_documents = row["n"] if row else 0
-
+    libraries = await _library_choices()
     return templates.TemplateResponse(request, "experiment.html", {
         "exp": exp,
-        "view": views.experiment_view(exp, runs, progress, corpus_documents),
+        "view": views.experiment_view(exp, runs, progress,
+                                      {lib["name"]: lib["documents"] for lib in libraries}),
         "config_pretty": json.dumps(exp["config"], indent=2),
         "estimate": ESTIMATE,
         "limits": {"max_turns": settings.max_turns_limit, "word_limit": settings.word_limit_max},
-        "corpora": [c["corpus"] for c in await rag.list_corpora()],
+        "libraries": libraries,
         "library_versions": await _library_versions(),
     })
 
@@ -369,16 +368,48 @@ async def run_detail(request: Request, run_id: str):
     events = await fetch_all(
         "SELECT * FROM run_events WHERE run_id=%s ORDER BY seq", (run_id,)
     )
+    cites = await _run_citations(run_id)
     return templates.TemplateResponse(request, "run.html", {
         "run": run,
         "view": views.run_view(run, request.scope.get("root_path", "")),
         "events": events,
         "metrics": await run_metrics(run_id),
         "result_pretty": json.dumps(run["result"], indent=2) if run.get("result") else None,
-        "citations": await fetch_all(
-            "SELECT * FROM citations WHERE run_id=%s ORDER BY id", (run_id,)
-        ),
+        "citations": cites,
+        "refs": await _references(cites),
     })
+
+
+async def _run_citations(run_id: str) -> list[dict]:
+    """A run's citation records, each with the document, library and version it points to.
+    Records from before citations kept these are resolved through their chunk."""
+    return await fetch_all(
+        "SELECT c.*, COALESCE(c.document_id, ch.document_id) AS doc_id, "
+        "       COALESCE(c.corpus, d.corpus) AS library, "
+        "       COALESCE(c.corpus_version, rl.version) AS library_version "
+        "FROM citations c "
+        "LEFT JOIN chunks ch ON c.document_id IS NULL AND ch.id = c.chunk_id "
+        "LEFT JOIN documents d ON d.id = ch.document_id "
+        "LEFT JOIN run_libraries rl ON rl.run_id = c.run_id AND rl.corpus = COALESCE(c.corpus, d.corpus) "
+        "WHERE c.run_id=%s ORDER BY c.id", (run_id,))
+
+
+async def _references(cites: list[dict]) -> dict:
+    ids = sorted({c["doc_id"] for c in cites if c.get("doc_id")})
+    docs = await fetch_all("SELECT * FROM documents WHERE id = ANY(%s)", (ids,)) if ids else []
+    return views.cited_references(cites, {d["id"]: d for d in docs})
+
+
+@app.get("/runs/{run_id}/references.txt")
+async def run_references(run_id: str):
+    """The documents a run cited, as a numbered plain-text list with where each was cited."""
+    run = await experiments.get_run(_run_id(run_id))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    text = views.references_text(run, await _references(await _run_citations(run_id)))
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{run['experiment_name']} run {str(run['id'])[:8]} references").strip("-.")
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'})
 
 
 @app.get("/sources", response_class=HTMLResponse)
@@ -436,8 +467,9 @@ async def corpus_version_page(request: Request, name: str, version: int):
     latest = await rag.latest_version(name)
     runs = await fetch_all(
         "SELECT r.id, r.status, r.created_at, e.name AS experiment_name, e.id AS experiment_id "
-        "FROM runs r JOIN experiments e ON e.id = r.experiment_id "
-        "WHERE r.corpus=%s AND r.corpus_version=%s ORDER BY r.created_at DESC", (name, version))
+        "FROM run_libraries rl JOIN runs r ON r.id = rl.run_id "
+        "JOIN experiments e ON e.id = r.experiment_id "
+        "WHERE rl.corpus=%s AND rl.version=%s ORDER BY r.created_at DESC", (name, version))
     return templates.TemplateResponse(request, "corpus_version.html", {
         "name": name, "v": v, "latest": latest["version"] if latest else None,
         "documents": documents, "runs": runs,
@@ -891,7 +923,8 @@ async def run_report_pdf(run_id: str, private: str = ""):
         raise HTTPException(404, "no such run")
     if not run.get("result"):
         raise HTTPException(409, "This run has no result to export yet.")
-    pdf = await asyncio.to_thread(run_report, run, views.run_view(run), bool(private))
+    view = {**views.run_view(run), "refs": await _references(await _run_citations(run_id))}
+    pdf = await asyncio.to_thread(run_report, run, view, bool(private))
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{run['experiment_name']} run {str(run['id'])[:8]}").strip("-.")
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.pdf"'})

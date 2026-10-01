@@ -146,8 +146,9 @@ def format_entries(entries: list[dict], max_words: int | None = None) -> str:
 
 # ---------------------------------------------------------------- legal sources
 #
-# A role-play can be given a corpus. Before each turn the speaker's side of the exchange is
-# used as a query, and the closest passages are put in front of that speaker, numbered
+# A role-play can be given libraries of legal sources. Before each turn the speaker's side of
+# the exchange is used as a query, and the closest passages across all of them are put in
+# front of that speaker, each labelled with its library, numbered
 # [S1], [S2], ... so a reply can cite them and the page can show which were used. Passages
 # are cut to a few hundred words: they are there to be cited, and the turn's context
 # window is shared with memory and the conversation.
@@ -156,7 +157,7 @@ SOURCE_WORDS = 220
 
 
 def source_query(agent: dict, recent: list[dict], max_words: int = 160) -> str:
-    """What to search the corpus for: the speaker's objective plus what was just said."""
+    """What to search the libraries for: the speaker's objective plus what was just said."""
     said = " ".join(e.get("content", "") for e in recent[-2:])
     return truncate_words(f"{agent.get('goal') or agent.get('role') or ''} {said}".strip(),
                           max_words)

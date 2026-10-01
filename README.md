@@ -298,11 +298,36 @@ removed, moved, or a web page re-read with new text) `rag.record_version()` stor
 document ids the library then held in `corpus_versions`, with a note of what changed. Documents
 are never edited or deleted while their library exists: removing one sets `removed_at`, and
 re-reading or moving one adds a new row that the old one points to through `replaced_by`, so
-every version can still be searched exactly as it was. Each run records `runs.corpus` and
-`runs.corpus_version`; a run can name `corpus_version` to search an older version, which the
-run page's "run again with this version" link does. Deleting a whole library is the one
+every version can still be searched exactly as it was. Deleting a whole library is the one
 operation that removes its history. The same text may sit in several libraries, but only once
 in each library's current contents.
+
+### Several libraries per experiment
+
+All three modes can retrieve from several libraries at once. The experiment config names them
+as a list, `"libraries": ["case_law", "regulations"]` (an empty list means no retrieval, a
+baseline); configs from before hold one name in `corpus`, which `rag.library_names()` still
+reads. A run may change the set at launch. When it starts, each library is pinned to a
+version (`rag.pin_libraries()`): the one the run names in `library_versions` (`{name: n}`),
+or its current contents. What it searched is stored in `run_libraries`, one row per library
+with its version; the run page's "run again with these versions" link repeats exactly that.
+`runs.corpus` / `runs.corpus_version` are the older single-library columns, copied into
+`run_libraries` by `db/schema.sql` and no longer written.
+
+The pinned libraries are searched as one: passages are ranked against each other by
+similarity, not taken in turns from each library, and text present in two libraries is
+returned once. Every passage put in a prompt is labelled with its library, and an agent can
+confine a search to one library (`search_libraries(..., library=...)`).
+
+Citations are traced to the source in every mode (`grounding.py`). Document analysis numbers
+its one retrieval [1], [2]; an agent's passages keep one number across all of its searches
+(`SourceLedger`), so a [3] in its answer names one passage whichever search found it; a
+role-play speaker cites the passages shown that turn as [S1], [S2]. Each marker becomes a
+`citations` row holding the chunk, document, library and version, and where it appeared
+("Answer", "Turn 7 · Dana Reyes"); a marker naming no passage the model was given is recorded
+as unsupported. The run page lists the sources given to the model and a **References**
+section, the cited documents in the library citation form with the library version each was
+found in and every place it was cited, also as a `.txt` download and in the PDF report.
 
 Each library also has a citation list (`citations.py`): one reference per document, built
 from what its source recorded, for the current contents or any version, to copy or download.
@@ -315,7 +340,8 @@ src/ailawlab/
   router.py            bounded-queue LLM router across the Sparks
   db.py                async Postgres pool + pgvector binding
   memory.py            two-tier agent memory
-  rag.py               corpus ingestion and grounded retrieval
+  rag.py               corpus ingestion and grounded retrieval, across several libraries
+  grounding.py         citation markers in model output, traced to document, library and version
   sources.py           online legal databases (CourtListener, Federal Register, eCFR, govinfo, EDGAR)
   source_material.py   reading a web page, PDF or text to draft a cast from
   agent_spec.py        Markdown agent files: reading, writing, cast checks

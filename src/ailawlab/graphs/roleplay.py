@@ -22,7 +22,9 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from ..config import settings
+from ..grounding import in_list, link_citations
 from ..memory import Memory, MemoryScope, estimate_tokens
+from ..rag import Passage
 from .roleplay_policy import (
     MODERATOR_ID,
     character_reminder,
@@ -228,7 +230,9 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
         incoming = f"{label}:\n{format_entries(new)}"
 
     passages = await _consult_sources(ctx, state, agent, new or transcript)
-    sources = format_sources(passages)
+    sources = format_sources([{"label": p.cite_label() + (f" (library {p.library_label()})"
+                                                          if p.corpus else ""),
+                               "content": p.content} for p in passages])
 
     num_ctx = context_window(estimate_tokens(system) + estimate_tokens(incoming) + 20_000
                              + estimate_tokens(sources) + speech_budget(word_limit, think) + 1500)
@@ -249,14 +253,15 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
 
     res = await ctx.router.chat(messages, think=think, num_ctx=num_ctx, temperature=0.7,
                                 options={"num_predict": speech_budget(word_limit, think)})
-    await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"], prompt_preview=prompt)
+    event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"],
+                                         prompt_preview=prompt)
     if res.truncated and not res.text.strip():
         await ctx.tracer.note("reasoning used the whole token budget before any reply; "
                               "retrying this turn without reasoning", node="speak",
                               agent_id=agent["id"])
         res = await ctx.router.chat(messages, think=False, num_ctx=num_ctx, temperature=0.7,
                                     options={"num_predict": speech_budget(word_limit, False)})
-        await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"])
+        event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"])
 
     content = res.text.strip() or "(no response produced)"
     words = len(content.split())
@@ -277,10 +282,12 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
              "private_notes": ledger, "thinking": res.thinking, "host": res.host}
     if passages:
         cited = set(cited_sources(content, len(passages)))
-        entry["sources"] = [{"marker": f"S{i}", "label": p["label"],
-                             "document_id": p["document_id"], "similarity": p["similarity"],
-                             "cited": i in cited}
-                            for i, p in enumerate(passages, start=1)]
+        entry["sources"] = [p.source(f"S{i}", i in cited) for i, p in enumerate(passages, start=1)]
+    if state.get("libraries"):
+        # [S2] names this turn's second passage only; a marker past the passages this turn
+        # was given is recorded as unsupported.
+        await ctx.tracer.record_citations(event_id, link_citations(
+            content, in_list(passages), prefix="S", context=f"Turn {turn} · {name}"))
     return {
         "transcript": [entry],
         "turn": turn,
@@ -290,24 +297,24 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
 
 
 async def _consult_sources(ctx, state: RoleplayState, agent: dict,
-                           recent: list[dict]) -> list[dict]:
-    """The corpus passages put before this speaker, if the run has legal sources.
+                           recent: list[dict]) -> list[Passage]:
+    """The passages put before this speaker, from all the run's libraries together, if it
+    has legal sources.
 
     A failed search is noted in the trace and the turn goes ahead without sources: losing
     the citations for one turn is better than losing an hour-long run.
     """
-    if not state.get("corpus"):
+    if not state.get("libraries") or not ctx.libraries:
         return []
     query = source_query(agent, recent)
     try:
-        found = await ctx.corpus.search(query, top_k=min(settings.rag_top_k, 4))
+        found = await ctx.libraries.search(query, top_k=min(settings.rag_top_k, 4))
     except Exception as e:  # noqa: BLE001 - see docstring
         await ctx.tracer.note(f"legal source search failed ({type(e).__name__}); this turn "
                               "has no sources", node="speak", agent_id=agent["id"])
         return []
     await ctx.tracer.retrieval(query, found, node="speak", agent_id=agent["id"])
-    return [{"label": p.cite_label(), "content": p.content, "document_id": p.document_id,
-             "similarity": round(p.similarity, 3)} for p in found]
+    return found
 
 
 async def _summarize_segment(ctx, segment: list[dict]) -> str:

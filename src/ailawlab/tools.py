@@ -16,7 +16,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .rag import Corpus, format_passages
+from .grounding import SourceLedger
+from .rag import Libraries, format_passages
 
 log = logging.getLogger(__name__)
 
@@ -86,29 +87,41 @@ class ToolRegistry:
 # ---------------------------------------------------------------- built-in tools
 
 
-def corpus_search_tool(corpus: Corpus) -> Tool:
-    async def search_corpus(query: str, top_k: int = 5) -> str:
-        passages = await corpus.search(query, top_k=int(top_k))
-        if not passages:
-            return "No matching passages in the corpus."
-        return format_passages(passages)
+def library_search_tool(libraries: Libraries, ledger: SourceLedger) -> Tool:
+    """Search the run's libraries. Passages are numbered across the whole run through
+    `ledger`, so the [n] the agent cites in its answer names one passage, whichever search
+    returned it. With several libraries the agent may confine a search to one of them."""
+    names = libraries.searchable()
 
+    async def search_libraries(query: str, top_k: int = 5, library: str = "") -> str:
+        library = (library or "").strip()
+        if library and library not in names:
+            return (f"ERROR: there is no library named “{library}”. "
+                    f"Libraries: {', '.join(names)}")
+        passages = await libraries.search(query, top_k=max(1, min(int(top_k), 10)),
+                                          library=library or None)
+        if not passages:
+            return "No matching passages" + (f" in “{library}”." if library else ".")
+        return format_passages(passages, ledger.number(passages))
+
+    params: dict[str, Any] = {
+        "query": {"type": "string", "description": "What to search for."},
+        "top_k": {"type": "integer", "description": "How many passages (default 5, at most 10)."},
+    }
+    description = (
+        "Search the legal sources available for this task (case law, statutes, regulations, "
+        "contracts, filings) for passages relevant to a query. Returns numbered passages, "
+        "each with its source and the library it came from. A passage keeps its number in "
+        "every search, so cite it as [n] with that number.")
+    if len(names) > 1:
+        params["library"] = {"type": "string", "enum": names,
+                             "description": "Search only this library. Leave it out to search all of them."}
+        description += " Libraries: " + "; ".join(f"“{n}”" for n in names) + "."
     return Tool(
-        name="search_corpus",
-        description=(
-            "Search the ingested legal corpus (case law, statutes, contracts, filings) "
-            "for passages relevant to a query. Returns numbered passages with source "
-            "labels you can cite as [1], [2], and so on."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to search for."},
-                "top_k": {"type": "integer", "description": "How many passages (default 5)."},
-            },
-            "required": ["query"],
-        },
-        fn=search_corpus,
+        name="search_libraries",
+        description=description,
+        parameters={"type": "object", "properties": params, "required": ["query"]},
+        fn=search_libraries,
     )
 
 
@@ -147,6 +160,8 @@ def calculator_tool() -> Tool:
     )
 
 
-def default_registry(corpus: Corpus, allow_network: bool = False) -> ToolRegistry:
-    return ToolRegistry([corpus_search_tool(corpus), calculator_tool()],
-                        allow_network=allow_network)
+def default_registry(libraries: Libraries, ledger: SourceLedger,
+                     allow_network: bool = False) -> ToolRegistry:
+    """Library search (when the run has a library with anything in it) and arithmetic."""
+    tools = [library_search_tool(libraries, ledger)] if libraries else []
+    return ToolRegistry([*tools, calculator_tool()], allow_network=allow_network)

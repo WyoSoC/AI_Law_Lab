@@ -29,6 +29,8 @@ class Passage:
     page_start: int | None
     page_end: int | None
     similarity: float
+    corpus: str = ""                # the library the document sits in
+    version: int | None = None      # the version of it the run searched, when pinned
 
     def cite_label(self) -> str:
         if self.page_start and self.page_end and self.page_start != self.page_end:
@@ -36,6 +38,20 @@ class Passage:
         if self.page_start:
             return f"{self.title}, p. {self.page_start}"
         return self.title
+
+    def library_label(self) -> str:
+        """“Case law” v3, or "" for a passage not tied to a library."""
+        if not self.corpus:
+            return ""
+        return f"“{self.corpus}”" + (f" v{self.version}" if self.version else "")
+
+    def source(self, marker: str, cited: bool = False) -> dict[str, Any]:
+        """What a run keeps about a passage it was given, enough to find it again: the
+        document, its library and version, and the passage itself."""
+        return {"marker": marker, "label": self.cite_label(), "corpus": self.corpus,
+                "version": self.version, "document_id": self.document_id,
+                "chunk_id": self.chunk_id, "similarity": round(self.similarity, 3),
+                "cited": cited}
 
 
 def chunk_text(text: str, size: int | None = None, overlap: int | None = None) -> list[str]:
@@ -167,22 +183,11 @@ class Corpus:
         return await self.add_document(text=text, page_map=page_map, **kw)
 
     async def search(self, query: str, top_k: int | None = None) -> list[Passage]:
-        top_k = top_k or settings.rag_top_k
-        qvec = vec(await self.router.embed_one(query))
         if self.document_ids is not None:
             scope, arg = "d.id = ANY(%s)", self.document_ids
         else:
             scope, arg = "d.corpus = %s AND d.removed_at IS NULL", self.name
-        rows = await fetch_all(
-            "SELECT c.id AS chunk_id, c.document_id, d.title, c.content, "
-            "       c.page_start, c.page_end, 1 - (c.embedding <=> %s) AS similarity "
-            "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            f"WHERE {scope} AND c.embedding IS NOT NULL "
-            "  AND 1 - (c.embedding <=> %s) >= %s "
-            "ORDER BY c.embedding <=> %s LIMIT %s",
-            (qvec, arg, qvec, settings.rag_min_similarity, qvec, top_k),
-        )
-        return [Passage(**r) for r in rows]
+        return await _search(self.router, query, scope, arg, top_k or settings.rag_top_k)
 
     async def stats(self) -> dict:
         row = await fetch_one(
@@ -191,6 +196,151 @@ class Corpus:
             "WHERE d.corpus=%s AND d.removed_at IS NULL", (self.name,),
         )
         return {"corpus": self.name, **(row or {})}
+
+
+async def _search(router: LLMRouter, query: str, scope: str, arg: Any, top_k: int) -> list[Passage]:
+    qvec = vec(await router.embed_one(query))
+    rows = await fetch_all(
+        "SELECT c.id AS chunk_id, c.document_id, d.title, c.content, d.corpus, "
+        "       c.page_start, c.page_end, 1 - (c.embedding <=> %s) AS similarity "
+        "FROM chunks c JOIN documents d ON d.id = c.document_id "
+        f"WHERE {scope} AND c.embedding IS NOT NULL "
+        "  AND 1 - (c.embedding <=> %s) >= %s "
+        "ORDER BY c.embedding <=> %s LIMIT %s",
+        (qvec, arg, qvec, settings.rag_min_similarity, qvec, top_k),
+    )
+    return [Passage(**r) for r in rows]
+
+
+# ---------------------------------------------------------------- a run's libraries
+#
+# An experiment names the libraries it retrieves from as a list, `libraries`. Experiments
+# from before a run could search several hold one name in `corpus` instead (none, for a
+# role-play without legal sources; "default" for the other modes when it is missing), and
+# library_names() reads both. A run pins each library to one version and searches the
+# documents of all of them together, so passages are ranked against each other by how
+# well they match, not taken in turns from each library.
+
+
+def library_names(config: dict[str, Any], mode: str = "") -> list[str]:
+    """The libraries a config names, in order, each once. Pure."""
+    raw = config.get("libraries")
+    if raw is None:
+        legacy = config.get("corpus")
+        legacy = legacy.strip() if isinstance(legacy, str) else ""
+        raw = [legacy] if legacy else ([] if mode == "roleplay" else ["default"])
+    elif isinstance(raw, str):
+        raw = [raw]
+    names: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        name = " ".join(item.split())[:120] if isinstance(item, str) else ""
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def run_library_names(mode: str, config: dict[str, Any], inputs: dict[str, Any]) -> list[str]:
+    """The libraries a run searches: the run's own choice if it made one, else the
+    experiment's. Decided per source rather than on the merged dict, so a run naming one
+    library the old way (`corpus`) is not overridden by the experiment's `libraries`."""
+    if "libraries" in inputs or "corpus" in inputs:
+        return library_names(inputs, mode)
+    return library_names(config, mode)
+
+
+def wanted_versions(names: list[str], inputs: dict[str, Any]) -> dict[str, int]:
+    """Versions a run asks for, by library: `library_versions` ({name: n}), or the older
+    single `corpus_version`, which applies when the run searches one library. Pure."""
+    raw = inputs.get("library_versions")
+    wanted: dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
+    if not wanted and inputs.get("corpus_version") not in (None, "") and len(names) == 1:
+        wanted = {names[0]: inputs["corpus_version"]}
+    out: dict[str, int] = {}
+    for name, value in wanted.items():
+        if name not in names or value in (None, ""):
+            continue
+        try:
+            out[name] = int(value)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"version {value!r} of the library “{name}” is not a number") from e
+    return out
+
+
+@dataclass
+class LibraryPin:
+    """One library as a run searches it: a recorded version and the documents it held.
+    `version` is None for a library that is empty, which contributes nothing."""
+    name: str
+    version: int | None
+    document_ids: list[int]
+
+
+class Libraries:
+    """The libraries one run searches, each pinned to a version, searched as one."""
+
+    def __init__(self, router: LLMRouter, pins: list[LibraryPin] | None = None):
+        self.router = router
+        self.pins = list(pins or [])
+
+    @property
+    def names(self) -> list[str]:
+        return [p.name for p in self.pins]
+
+    def searchable(self) -> list[str]:
+        """Libraries holding at least one document."""
+        return [p.name for p in self.pins if p.document_ids]
+
+    def __bool__(self) -> bool:
+        return bool(self.searchable())
+
+    def describe(self) -> str:
+        return ", ".join(f"“{p.name}”" + (f" v{p.version}" if p.version else " (empty)")
+                         for p in self.pins)
+
+    async def search(self, query: str, top_k: int | None = None,
+                     library: str | None = None) -> list[Passage]:
+        """The passages closest to `query` across every library, or only in `library`.
+
+        The same text can sit in two libraries (a document copied from one to another);
+        it is returned once, from the library where it matched best, which is why more
+        than `top_k` rows are fetched when several libraries are searched.
+        """
+        top_k = top_k or settings.rag_top_k
+        pins = [p for p in self.pins if p.document_ids and (library is None or p.name == library)]
+        if not pins:
+            return []
+        ids = [i for p in pins for i in p.document_ids]
+        found = await _search(self.router, query, "d.id = ANY(%s)", ids,
+                              top_k * 2 if len(pins) > 1 else top_k)
+        versions = {p.name: p.version for p in pins}
+        out: list[Passage] = []
+        seen: set[str] = set()
+        for p in found:
+            key = hashlib.sha256(p.content.encode()).hexdigest()
+            if key in seen:
+                continue
+            seen.add(key)
+            p.version = versions.get(p.corpus)
+            out.append(p)
+        return out[:top_k]
+
+
+async def pin_libraries(router: LLMRouter, names: list[str],
+                        versions: dict[str, int] | None = None) -> Libraries:
+    """Each named library pinned to a version: the one asked for, or its current contents
+    (recorded as a new version first if they changed since the last)."""
+    versions = versions or {}
+    pins: list[LibraryPin] = []
+    for name in names:
+        if name in versions:
+            v = await get_version(name, versions[name])
+            if v is None:
+                raise ValueError(f"the library “{name}” has no version {versions[name]}")
+        else:
+            v = await record_version(name)
+        pins.append(LibraryPin(name, v["version"] if v else None,
+                               list(v["document_ids"]) if v else []))
+    return Libraries(router, pins)
 
 
 def _page_for_offset(page_map: list[tuple[int, int]], offset: int) -> int | None:
@@ -203,10 +353,17 @@ def _page_for_offset(page_map: list[tuple[int, int]], offset: int) -> int | None
     return page
 
 
-def format_passages(passages: list[Passage]) -> str:
-    """Render passages for a prompt, numbered so the model can cite [1], [2], ..."""
+def format_passages(passages: list[Passage], numbers: list[int] | None = None) -> str:
+    """Render passages for a prompt, numbered so the model can cite [1], [2], ...
+
+    `numbers` replaces 1, 2, 3 when the numbering runs across several searches. Each
+    passage names its library, so a model working from several can tell, say, a statute
+    from commentary on it.
+    """
+    numbers = numbers or list(range(1, len(passages) + 1))
     return "\n\n".join(
-        f"[{i}] {p.cite_label()}\n{p.content}" for i, p in enumerate(passages, start=1)
+        f"[{n}] {p.cite_label()}" + (f" (library {p.library_label()})" if p.corpus else "")
+        + f"\n{p.content}" for n, p in zip(numbers, passages)
     )
 
 
@@ -225,6 +382,13 @@ class CorpusBusy(Exception):
 
 _LIVE = "d.removed_at IS NULL"
 
+# Whether experiment `e` retrieves from the library {name}: listed in `libraries`, or, for an
+# experiment from before that, named in `corpus` (with "default" standing in for a missing
+# one, except in a role-play, which then has no legal sources). See library_names().
+_USES = ("(CASE WHEN e.config ? 'libraries' THEN COALESCE(e.config->'libraries' ? {name}, FALSE) "
+         "ELSE COALESCE(e.config->>'corpus', CASE WHEN e.mode <> 'roleplay' THEN 'default' END) "
+         "= {name} END)")
+
 
 async def list_corpora() -> list[dict]:
     """Every library with its size, when it last changed, its current version, and how many
@@ -236,8 +400,7 @@ async def list_corpora() -> list[dict]:
         "       (SELECT MAX(v.version) FROM corpus_versions v WHERE v.corpus = d.corpus) AS version, "
         "       (SELECT MAX(v.created_at) FROM corpus_versions v WHERE v.corpus = d.corpus) AS changed, "
         "       (SELECT COUNT(*) FROM experiments e WHERE e.deleted_at IS NULL "
-        "          AND COALESCE(e.config->>'corpus', 'default') = d.corpus "
-        "          AND (e.mode <> 'roleplay' OR e.config ? 'corpus')) AS experiments "
+        f"          AND {_USES.format(name='d.corpus')}) AS experiments "
         "FROM documents d LEFT JOIN chunks c ON c.document_id = d.id "
         f"WHERE {_LIVE} GROUP BY d.corpus ORDER BY lower(d.corpus)"
     )
@@ -271,9 +434,8 @@ async def corpus_documents(name: str | None = None,
 async def corpus_experiments(name: str) -> list[dict]:
     """Experiments (not in the trash) that retrieve from this library."""
     return await fetch_all(
-        "SELECT id, name, mode FROM experiments WHERE deleted_at IS NULL "
-        "AND (mode <> 'roleplay' OR config ? 'corpus') "
-        "AND COALESCE(config->>'corpus', 'default') = %s ORDER BY created_at DESC", (name,))
+        "SELECT e.id, e.name, e.mode FROM experiments e WHERE e.deleted_at IS NULL "
+        f"AND {_USES.format(name='%s')} ORDER BY e.created_at DESC", (name, name))
 
 
 async def get_document(document_id: int) -> dict | None:
@@ -288,11 +450,8 @@ async def document_chunks(document_id: int) -> list[dict]:
 
 async def check_idle(name: str) -> None:
     row = await fetch_one(
-        "SELECT COUNT(*) AS n FROM runs r JOIN experiments e ON e.id = r.experiment_id "
-        "WHERE r.status IN ('pending', 'running') "
-        "AND (e.mode <> 'roleplay' OR r.config_snapshot ? 'corpus' OR r.inputs ? 'corpus') "
-        "AND COALESCE(r.inputs->>'corpus', r.config_snapshot->>'corpus', 'default') = %s",
-        (name,))
+        "SELECT COUNT(*) AS n FROM run_libraries rl JOIN runs r ON r.id = rl.run_id "
+        "WHERE r.status IN ('pending', 'running') AND rl.corpus = %s", (name,))
     if row and row["n"]:
         raise CorpusBusy(f"A run that retrieves from “{name}” is in progress. "
                          "Wait for it to finish first.")
@@ -350,8 +509,8 @@ async def list_versions(name: str) -> list[dict]:
     return await fetch_all(
         "SELECT v.*, cardinality(v.document_ids) AS documents, "
         "       COALESCE(NULLIF(u.name, ''), u.email) AS changed_by_name, "
-        "       (SELECT COUNT(*) FROM runs r WHERE r.corpus = v.corpus "
-        "          AND r.corpus_version = v.version) AS runs "
+        "       (SELECT COUNT(*) FROM run_libraries rl WHERE rl.corpus = v.corpus "
+        "          AND rl.version = v.version) AS runs "
         "FROM corpus_versions v LEFT JOIN users u ON u.id = v.changed_by "
         "WHERE v.corpus=%s ORDER BY v.version DESC", (name,))
 

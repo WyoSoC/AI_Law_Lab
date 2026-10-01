@@ -7,7 +7,7 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
-from ..rag import Corpus
+from ..rag import Libraries
 from ..router import LLMRouter
 from ..tracing import Tracer
 
@@ -22,7 +22,7 @@ class RunContext:
     run_id: str
     router: LLMRouter
     tracer: Tracer
-    corpus: Corpus
+    libraries: Libraries        # what the run retrieves from, each library pinned to a version
     config: dict[str, Any]
 
     def opt(self, key: str, default: Any = None) -> Any:
@@ -44,6 +44,7 @@ class DocState(TypedDict, total=False):
     passages: list[dict]
     answer: str
     citations: list[dict]
+    sources: list[dict]         # each passage given to the synthesis, by marker; see Passage.source
     error: str
 
 
@@ -55,6 +56,8 @@ class AgenticState(TypedDict, total=False):
     iterations: int
     max_iterations: int
     answer: str
+    citations: list[dict]
+    sources: list[dict]         # every passage any search returned, by its run-wide number
     done: bool
     error: str
 
@@ -74,7 +77,7 @@ class RoleplayState(TypedDict, total=False):
     directive: str              # moderator's instruction to the next speaker, if any
     last_intervention: int      # turn of the moderator's last impasse intervention
     ledgers: dict[str, dict]    # agent_id -> that agent's private negotiation notes
-    corpus: str                 # legal sources the cast may cite; empty for none
+    libraries: list[str]        # libraries of legal sources the cast may cite; empty for none
     outcome: str
     done: bool
     error: str

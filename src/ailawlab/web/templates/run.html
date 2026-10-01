@@ -20,9 +20,11 @@
   {% if v.started %}&middot; started {{ v.started }}{% endif %}
   {% if v.took %}&middot; took {{ v.took }}{% endif %}
   {% if v.launched_by %}&middot; launched by {{ v.launched_by }}{% endif %}
-  {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}  {% if v.library %}&middot; library
-    <a href="{{ prefix }}/sources/corpora/{{ v.library|urlencode }}{% if v.library_version %}/versions/{{ v.library_version }}{% endif %}">{{ v.library }}{% if v.library_version %} v{{ v.library_version }}{% endif %}</a>
-    {% if v.library_version %}(<a href="{{ prefix }}/experiments/{{ run.experiment_id }}?corpus_version={{ v.library_version }}{% if run.mode == 'roleplay' %}&amp;corpus={{ v.library|urlencode }}{% endif %}#launch">run again with this version</a>){% endif %}
+  {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}
+  {% if v.libraries %}&middot; {{ 'library' if v.libraries|length == 1 else 'libraries' }}
+    {% for lib in v.libraries %}<a href="{{ prefix }}/sources/corpora/{{ lib.name|urlencode }}{% if lib.version %}/versions/{{ lib.version }}{% endif %}">{{ lib.name }}{% if lib.version %} v{{ lib.version }}{% elif run.status not in ('pending',) %} (empty){% endif %}</a>{{ ', ' if not loop.last }}{% endfor %}
+    {% if v.rerun_versions %}(<a href="{{ prefix }}/experiments/{{ run.experiment_id }}?versions={{ v.rerun_versions|tojson|urlencode }}#launch">run again with {{ 'this version' if v.rerun_versions|length == 1 else 'these versions' }}</a>){% endif %}
+  {% elif run.status != 'pending' and run.mode != 'roleplay' %}&middot; no library
   {% endif %}
 </p>
 
@@ -30,7 +32,8 @@
   {% if v.summary_html %}<a href="#summary">{{ v.summary_title }}</a>{% endif %}
   {% if v.transcript %}<a href="#transcript">Transcript</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
-  {% if citations %}<a href="#citations">Citations</a>{% endif %}
+  {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
+  {% if citations %}<a href="#citations">References</a>{% endif %}
   <a href="#trace-head">Trace</a>
   {% if run.result %}
   <form class="export-form" method="get" action="{{ prefix }}/runs/{{ run.id }}/report.pdf">
@@ -59,7 +62,7 @@
 {% if v.transcript %}
 {% if v.scenario or v.cast %}
 <details class="panel setup-panel">
-  <summary>Scenario and cast{% if v.corpus %} &middot; legal sources: {{ v.corpus }}{% endif %}</summary>
+  <summary>Scenario and cast{% if v.libraries %} &middot; legal sources: {% for lib in v.libraries %}{{ lib.name }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}</summary>
   {% if v.scenario %}<div class="scenario-text">{{ v.scenario }}</div>{% endif %}
   <div class="cast-grid setup-cast">
     {% for a in v.cast %}
@@ -113,6 +116,7 @@
         {% for src in t.sources %}
         <li class="{{ 'cited' if src.cited }}"><span class="cite">[{{ src.marker }}]</span>
           <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
+          {% if src.corpus %}<span class="lib-tag">in {{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</span>{% endif %}
           <span class="hint">{{ '%.2f'|format(src.similarity) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
         {% endfor %}
       </ul>
@@ -173,24 +177,74 @@
   {% endif %}
 </div>
 
+{% if v.sources %}
+<h2 id="sources">Sources given to the model</h2>
+<div class="panel">
+  {% set cited_n = v.sources|selectattr('cited')|list|length %}
+  <p class="lib-summary">{{ v.sources|length }} passage{{ '' if v.sources|length == 1 else 's' }} retrieved{% if run.mode == 'agentic_workflow' %} across the agent's searches{% endif %},
+    {{ cited_n }} cited in the answer. Each marker below is the one the answer cites it by.</p>
+  <ul class="source-list">
+    {% for src in v.sources %}
+    <li class="{{ 'cited' if src.cited }}"><span class="cite">[{{ src.marker }}]</span>
+      <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
+      {% if src.corpus %}<span class="lib-tag">in <a href="{{ prefix }}/sources/corpora/{{ src.corpus|urlencode }}{% if src.version %}/versions/{{ src.version }}{% endif %}">{{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</a></span>{% endif %}
+      <span class="hint">{{ '%.2f'|format(src.similarity or 0) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if citations %}
-<h2 id="citations">Citations</h2>
-<div class="panel table-wrap">
-  <table>
-    <thead><tr><th>Marker</th><th>Source</th><th>Similarity</th><th>Verdict</th></tr></thead>
-    <tbody>
-      {% for c in citations %}
-      <tr>
-        <td><code>{{ c.quoted_text }}</code></td>
-        <td>{{ c.source_label or '—' }}</td>
-        <td>{{ '%.3f' % c.similarity if c.similarity else '—' }}</td>
-        <td>
-          <span class="badge {{ 'succeeded' if c.verdict == 'grounded' else 'failed' }}">{{ c.verdict }}</span>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="section-head">
+  <h2 id="citations">References</h2>
+  {% if refs.references %}
+  <div class="head-actions"><a class="small-btn" href="{{ prefix }}/runs/{{ run.id }}/references.txt">⤓ Download (.txt)</a></div>
+  {% endif %}
+</div>
+<div class="panel">
+  {% if refs.references %}
+  <p class="lib-summary">{{ refs.references|length }} document{{ '' if refs.references|length == 1 else 's' }} cited:
+    {% for b in refs.by_library %}{{ b.documents }} from {{ b.library }}{{ ', ' if not loop.last }}{% endfor %}.</p>
+  <ol class="citation-list ref-list">
+    {% for ref in refs.references %}
+    <li>
+      {% if ref.available %}<a href="{{ prefix }}/sources/documents/{{ ref.document_id }}" class="cite-title">{{ ref.text }}</a>{% else %}{{ ref.text }} <span class="hint-inline">(no longer stored)</span>{% endif %}
+      {% if ref.url %}<a class="cite-url" href="{{ ref.url }}" target="_blank" rel="noopener">{{ ref.url }}</a>{% endif %}
+      <div class="ref-uses">
+        {% if ref.library %}Searched in <a href="{{ prefix }}/sources/corpora/{{ ref.library|urlencode }}{% if ref.version %}/versions/{{ ref.version }}{% endif %}">{{ ref.library }}{% if ref.version %} v{{ ref.version }}{% endif %}</a>.{% endif %}
+        Cited {{ ref.uses|length }} time{{ '' if ref.uses|length == 1 else 's' }}:
+        {% for u in ref.uses[:12] %}<span class="cite">{{ u.marker }}</span> {{ u.context }}{% if u.label and not ref.text.startswith(u.label) %} ({{ u.label }}){% endif %}{{ '; ' if not loop.last }}{% endfor %}{% if ref.uses|length > 12 %}; and {{ ref.uses|length - 12 }} more{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="empty">No marker in the output names a passage the model was given.</p>
+  {% endif %}
+  {% if refs.unsupported %}
+  <p class="notice bad-soft">{{ refs.unsupported|length }} marker{{ '' if refs.unsupported|length == 1 else 's' }} name{{ 's' if refs.unsupported|length == 1 }} no passage the model was given (possible fabrication):
+    {% for u in refs.unsupported %}<code>{{ u.marker }}</code> {{ u.context }}{{ '; ' if not loop.last }}{% endfor %}</p>
+  {% endif %}
+  <details class="config-details">
+    <summary>Every citation marker ({{ citations|length }})</summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Marker</th><th>Where</th><th>Source</th><th>Library</th><th>Similarity</th><th>Verdict</th></tr></thead>
+        <tbody>
+          {% for c in citations %}
+          <tr>
+            <td><code>{{ c.quoted_text }}</code></td>
+            <td>{{ c.context or '—' }}</td>
+            <td>{% if c.doc_id %}<a href="{{ prefix }}/sources/documents/{{ c.doc_id }}">{{ c.source_label or 'document ' ~ c.doc_id }}</a>{% else %}{{ c.source_label or '—' }}{% endif %}</td>
+            <td>{% if c.library %}{{ c.library }}{% if c.library_version %} v{{ c.library_version }}{% endif %}{% else %}—{% endif %}</td>
+            <td>{{ '%.3f' % c.similarity if c.similarity else '—' }}</td>
+            <td><span class="badge {{ 'succeeded' if c.verdict == 'grounded' else 'failed' }}">{{ c.verdict }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
 </div>
 {% endif %}
 

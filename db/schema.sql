@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS citations (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_citations_run ON citations(run_id);
+-- Where a citation points, kept on the row itself: the document, the library it sits in and
+-- the version the run searched, and where in the output the marker appeared ("Answer",
+-- "Turn 7 · Dana Reyes"). A chunk id alone stops resolving once its library is deleted.
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS document_id    BIGINT;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS corpus         TEXT;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS corpus_version INTEGER;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS context        TEXT NOT NULL DEFAULT '';
 
 -- ---------------------------------------------------------------- RAG corpus
 
@@ -133,6 +140,24 @@ CREATE TABLE IF NOT EXISTS corpus_versions (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (corpus, version)
 );
+
+-- The libraries a run searched, each pinned to the version it searched. A run may search
+-- several; `position` keeps the order they were chosen in. Rows are written when the run is
+-- created (version NULL) so a library in use can be told apart, and the version is filled
+-- in when the run starts. runs.corpus / runs.corpus_version are the single-library columns
+-- this replaced: older runs are copied over here, and nothing writes them any more.
+CREATE TABLE IF NOT EXISTS run_libraries (
+    run_id     UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    position   SMALLINT NOT NULL DEFAULT 0,
+    corpus     TEXT NOT NULL,
+    version    INTEGER,
+    documents  INTEGER,
+    PRIMARY KEY (run_id, corpus)
+);
+CREATE INDEX IF NOT EXISTS idx_run_libraries_version ON run_libraries(corpus, version);
+INSERT INTO run_libraries (run_id, corpus, version)
+    SELECT id, corpus, corpus_version FROM runs WHERE corpus IS NOT NULL
+    ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS chunks (
     id           BIGSERIAL PRIMARY KEY,
