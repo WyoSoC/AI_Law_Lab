@@ -249,3 +249,32 @@ async def test_library_queries_run_against_the_database():
     assert any(c["corpus"] == "test" for c in await rag.list_corpora())
     await rag.list_versions("test")
     await rag.check_idle("no such library")
+
+
+async def test_removing_several_documents_and_reverting():
+    from ailawlab import rag
+
+    name = "test-revert"
+    await rag.delete_corpus(name)
+    store = Corpus(await get_router(), name=name)
+    ids = [await store.add_document(f"Doc {c}", f"Text of document {c}, for the revert test.")
+           for c in "ABC"]
+    v1 = await rag.record_version(name)
+    assert sorted(v1["document_ids"]) == sorted(ids)
+
+    gone = await rag.remove_documents(name, ids[:2])                 # two at once ...
+    assert {g["id"] for g in gone} == set(ids[:2])
+    v2 = await rag.latest_version(name)
+    assert v2["version"] == v1["version"] + 1 and list(v2["document_ids"]) == [ids[2]]  # ... one version
+
+    plan = await rag.revert_plan(name, v1["version"])
+    assert {d["id"] for d in plan["put_back"]} == set(ids[:2]) and plan["take_out"] == []
+    v3 = await rag.revert_to(name, v1["version"])
+    assert sorted(v3["document_ids"]) == sorted(ids) and v3["change"].startswith(f"Reverted to version {v1['version']}.")
+    assert {d["id"] for d in await rag.corpus_documents(name)} == set(ids)
+
+    # A revert can be reverted, and the earlier versions are untouched.
+    v4 = await rag.revert_to(name, v2["version"])
+    assert list(v4["document_ids"]) == [ids[2]]
+    assert sorted((await rag.get_version(name, v1["version"]))["document_ids"]) == sorted(ids)
+    await rag.delete_corpus(name)

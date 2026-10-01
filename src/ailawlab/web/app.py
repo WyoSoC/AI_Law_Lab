@@ -561,6 +561,8 @@ async def corpus_version_page(request: Request, name: str, version: int):
         "WHERE rl.corpus=%s AND rl.version=%s ORDER BY r.created_at DESC", (name, version))
     return templates.TemplateResponse(request, "corpus_version.html", {
         "name": name, "v": v, "latest": latest["version"] if latest else None,
+        "plan": await rag.revert_plan(name, version)
+                if latest and latest["version"] != version else None,
         "documents": documents, "runs": runs,
         "citations": citations.citation_list(documents),
     })
@@ -702,6 +704,41 @@ async def document_move(request: Request, document_id: int, corpus: str = Form("
         raise HTTPException(404, "no such document")
     return RedirectResponse(f"{P}/sources/documents/{doc['id']}?msg=" + quote(
         f"Moved to “{doc['corpus']}”."), status_code=303)
+
+
+@app.post("/sources/corpora/{name}/remove")
+async def corpus_remove_documents(request: Request, name: str):
+    """Remove the selected documents from a library, as one version."""
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("document_ids") if str(x).isdigit()]
+    if not ids:
+        return RedirectResponse(_corpus_url(name) + "?msg=" + quote("No documents were selected."),
+                                status_code=303)
+    try:
+        gone = await rag.remove_documents(name, ids, user_id(request))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    await accounts.audit(user_id(request), "library.documents_removed", name, ids=[g["id"] for g in gone])
+    n = len(gone)
+    return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
+        f"Removed {n} document{'' if n == 1 else 's'}, recorded as one new version. Earlier versions "
+        "still include them, and you can revert to one from Versions below."), status_code=303)
+
+
+@app.post("/sources/corpora/{name}/versions/{version}/revert")
+async def corpus_revert(request: Request, name: str, version: int):
+    """Make the library hold exactly what an earlier version held, as a new version."""
+    try:
+        new = await rag.revert_to(name, version, user_id(request))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    await accounts.audit(user_id(request), "library.reverted", name, to_version=version,
+                         new_version=new.get("version"))
+    return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
+        f"Reverted to version {version}: the library now holds what it held then, recorded as "
+        f"version {new.get('version')}." if new else "Nothing to change."), status_code=303)
 
 
 @app.post("/sources/documents/{document_id}/delete")

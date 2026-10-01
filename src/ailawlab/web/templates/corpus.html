@@ -62,7 +62,7 @@
   </ul>
   {% else %}
   <p class="empty">No experiment retrieves from this library yet. Choose it under
-    &ldquo;Library to retrieve from&rdquo; when you <a href="{{ prefix }}/experiments/new">create an experiment</a>.</p>
+    &ldquo;Libraries to retrieve from&rdquo; (or as an agent&rsquo;s case files) when you <a href="{{ prefix }}/experiments/new">create an experiment</a>.</p>
   {% endif %}
 </div>
 
@@ -89,13 +89,24 @@
 </div>
 <div id="check-all-result" class="source-results"></div>
 <div class="panel">
+  {% if can_write and documents %}
+  <form method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/remove" id="bulk-remove"
+        class="bulk-bar" onsubmit="return confirmBulk()">
+    <label class="check"><input type="checkbox" id="select-all"> Select all</label>
+    <span class="hint" id="bulk-count">none selected</span>
+    <button type="submit" class="small-btn" id="bulk-btn" disabled>Remove selected</button>
+    <span class="hint">Removed together as one new version; earlier versions keep them.</span>
+  </form>
+  {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th>Web link checked</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr>{% if can_write %}<th><span class="sr-only">Select</span></th>{% endif %}<th>Title</th><th>Type</th><th>Passages</th><th>Added</th><th>Web link checked</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for d in documents %}
         {% set m = d.metadata or {} %}
         <tr>
+          {% if can_write %}<td class="select-cell"><input type="checkbox" class="doc-pick" name="document_ids"
+              value="{{ d.id }}" form="bulk-remove" data-title="{{ d.title }}" aria-label="Select {{ d.title }}"></td>{% endif %}
           <td><a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a>
             {% if d.source_uri and d.source_uri.startswith('http') %}
             <a class="provider-home" href="{{ d.source_uri }}" target="_blank" rel="noopener" title="Original source">↗</a>{% endif %}</td>
@@ -205,5 +216,28 @@ document.getElementById('probe-form').addEventListener('submit', async ev => {
     box.innerHTML = `<p class="provider-note warn">${esc(String(e))}</p>`;
   }
 });
+
+// Removing several documents at once: one confirmation, one new version.
+(function () {
+  const picks = [...document.querySelectorAll('.doc-pick')], all = document.getElementById('select-all');
+  if (!all) return;
+  const count = document.getElementById('bulk-count'), btn = document.getElementById('bulk-btn');
+  function sync() {
+    const n = picks.filter(p => p.checked).length;
+    count.textContent = n ? `${n} of ${picks.length} selected` : 'none selected';
+    btn.disabled = !n;
+    btn.textContent = n ? `Remove ${n} selected` : 'Remove selected';
+    all.checked = n === picks.length && n > 0;
+    all.indeterminate = n > 0 && n < picks.length;
+  }
+  all.addEventListener('change', () => { picks.forEach(p => p.checked = all.checked); sync(); });
+  picks.forEach(p => p.addEventListener('change', sync));
+  window.confirmBulk = () => {
+    const chosen = picks.filter(p => p.checked).map(p => p.dataset.title);
+    const shown = chosen.slice(0, 8).map(t => `• ${t}`).join('\n') + (chosen.length > 8 ? `\n… and ${chosen.length - 8} more` : '');
+    return confirm(`Remove ${chosen.length} document${chosen.length === 1 ? '' : 's'} from ${NAME}?\n\n${shown}\n\nNew runs will no longer retrieve from them. Earlier versions keep them, and you can revert to one later.`);
+  };
+  sync();
+})();
 </script>
 {% endblock %}

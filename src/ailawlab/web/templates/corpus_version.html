@@ -18,6 +18,33 @@
 
 <p class="notice">{{ v.change }}</p>
 
+{% if plan is not none %}
+<h2 id="revert">Revert to this version</h2>
+<div class="panel">
+  {% if not plan.put_back and not plan.take_out %}
+  <p class="empty">The library holds the same documents now as in this version, so there is nothing to revert.</p>
+  {% else %}
+  <p>Reverting makes the library hold exactly what it held in version {{ v.version }}, recorded as a
+    new version. Nothing is deleted: the versions in between stay as they are, so you can revert
+    again later.</p>
+  {% if plan.put_back %}
+  <p><strong>Puts back {{ plan.put_back|length }}:</strong>
+    {% for d in plan.put_back[:12] %}<a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a>{{ '; ' if not loop.last }}{% endfor %}{% if plan.put_back|length > 12 %}; and {{ plan.put_back|length - 12 }} more{% endif %}</p>
+  {% endif %}
+  {% if plan.take_out %}
+  <p><strong>Takes out {{ plan.take_out|length }}:</strong>
+    {% for d in plan.take_out[:12] %}<a href="{{ prefix }}/sources/documents/{{ d.id }}">{{ d.title }}</a>{{ '; ' if not loop.last }}{% endfor %}{% if plan.take_out|length > 12 %}; and {{ plan.take_out|length - 12 }} more{% endif %}</p>
+  {% endif %}
+  {% if can_write %}
+  <form method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/versions/{{ v.version }}/revert"
+        onsubmit="return confirm({{ ('Revert “' ~ name ~ '” to version ' ~ v.version ~ '? It will put back ' ~ plan.put_back|length ~ ' and take out ' ~ plan.take_out|length ~ ' document(s), as a new version.')|tojson|forceescape }})">
+    <button type="submit" class="primary">Revert to version {{ v.version }}</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
+{% endif %}
+
 <h2>Documents in this version</h2>
 <div class="panel">
   <div class="table-wrap">

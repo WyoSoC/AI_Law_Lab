@@ -4,7 +4,8 @@
   <p class="hint" style="margin-top:0">Every change to this library is kept as a numbered version, and
     every run records the version it searched. A document taken out of the library, or replaced by
     a newer reading of its web page, stays stored for the versions that held it, so any past run
-    can be repeated against exactly the library it saw.</p>
+    can be repeated against exactly the library it saw. Reverting to an earlier version puts the
+    library back to what it held then, as a new version, so nothing is lost.</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Version</th><th>Recorded</th><th>Documents</th><th>What changed</th><th>By</th><th>Runs</th></tr></thead>
@@ -12,7 +13,8 @@
         {% for v in versions %}
         <tr>
           <td class="nowrap"><a href="{{ prefix }}/sources/corpora/{{ name|urlencode }}/versions/{{ v.version }}">v{{ v.version }}</a>
-            {% if loop.first %}<span class="badge succeeded">current</span>{% endif %}</td>
+            {% if loop.first %}<span class="badge succeeded">current</span>
+            {% elif can_write %}<a class="small-link" href="{{ prefix }}/sources/corpora/{{ name|urlencode }}/versions/{{ v.version }}#revert">revert to this</a>{% endif %}</td>
           <td class="nowrap">{{ v.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td>{{ v.documents }}</td>
           <td class="change-note">{{ v.change }}</td>

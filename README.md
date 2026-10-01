@@ -357,6 +357,12 @@ document keeps the licence notice found, the page it was linked from and when it
 each crawl is a row in `crawls` (and the audit log) with its rules and every link's outcome.
 It runs in the background, one crawl per website at a time, and can be stopped.
 
+Several documents can be removed at once from a library's page (one new version for the
+lot), and a library can be reverted to any earlier version from that version's page
+(`rag.revert_to`): documents added since are marked removed and documents removed since are
+put back, recorded as a new version, so a revert never loses anything and can itself be
+reverted. The page shows what a revert would put back and take out before it is done.
+
 A library can be hidden from the lists and pickers (its page has "Hide from lists"); hidden
 ones sit under a "Hidden libraries" drop-down and stay usable. With no choice recorded in
 `library_settings`, a library whose name contains "test" starts hidden.

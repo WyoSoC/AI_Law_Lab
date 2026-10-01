@@ -572,7 +572,7 @@ async def list_versions(name: str) -> list[dict]:
         "WHERE v.corpus=%s ORDER BY v.version DESC", (name,))
 
 
-async def record_version(name: str, changed_by: Any = None) -> dict | None:
+async def record_version(name: str, changed_by: Any = None, note: str = "") -> dict | None:
     """Record the library's current contents as a new version, if they differ from the last
     recorded version. Returns the current version (new or not), or None for an empty or
     unknown library.
@@ -610,6 +610,8 @@ async def record_version(name: str, changed_by: Any = None) -> dict | None:
                     replaced[r["id"]] = r["replaced_by"]
         change = describe_change(before, after, replaced, moved if before_ids else None) if last else (
             f"First recorded version: {len(after)} document{'' if len(after) == 1 else 's'}.")
+        if note:
+            change = f"{note} {change}"
         await cur.execute(
             "INSERT INTO corpus_versions (corpus, version, document_ids, change, changed_by) "
             "VALUES (%s, %s, %s, %s, %s) RETURNING *",
@@ -630,6 +632,58 @@ async def delete_document(document_id: int, by: Any = None) -> dict | None:
                            "WHERE id=%s RETURNING id, title, corpus", (document_id,))
     await record_version(doc["corpus"], by)
     return gone
+
+
+async def remove_documents(name: str, ids: list[int], by: Any = None) -> list[dict]:
+    """Take several documents out of a library at once, recorded as one version. Each stays
+    stored for the versions that hold it. Returns the documents removed."""
+    if not ids:
+        return []
+    await check_idle(name)
+    gone = await fetch_all(
+        "UPDATE documents SET removed_at = now() WHERE corpus=%s AND id = ANY(%s) "
+        "AND removed_at IS NULL RETURNING id, title", (name, ids))
+    if gone:
+        await record_version(name, by)
+    return gone
+
+
+async def revert_plan(name: str, version: int) -> dict[str, list[dict]] | None:
+    """What reverting to `version` would change: the documents it would put back (in that
+    version, not in the library now) and take out (in the library now, not in that version)."""
+    v = await get_version(name, version)
+    if v is None:
+        return None
+    ids = list(v["document_ids"])
+    back = await fetch_all("SELECT id, title FROM documents WHERE id = ANY(%s) AND removed_at IS NOT NULL "
+                           "ORDER BY lower(title)", (ids,))
+    out = await fetch_all(f"SELECT id, title FROM documents d WHERE d.corpus=%s AND {_LIVE} "
+                          "AND NOT (d.id = ANY(%s)) ORDER BY lower(d.title)", (name, ids))
+    return {"put_back": back, "take_out": out}
+
+
+async def revert_to(name: str, version: int, by: Any = None) -> dict:
+    """Make a library hold exactly what `version` held, recorded as a new version.
+
+    Nothing is edited or deleted: documents added since are marked removed, and documents
+    the version held that were removed since are unmarked. Every version, including the
+    ones being reverted past, stays as it was, so a revert can itself be reverted.
+    """
+    await check_idle(name)
+    target = await get_version(name, version)
+    if target is None:
+        raise ValueError(f"The library “{name}” has no version {version}.")
+    ids = list(target["document_ids"])
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        await cur.execute("SELECT pg_advisory_xact_lock(hashtext('corpus_version:' || %s))", (name,))
+        # Out first, so a document put back never meets a live copy of the same text.
+        await cur.execute(f"UPDATE documents d SET removed_at = now() WHERE d.corpus=%s AND {_LIVE} "
+                          "AND NOT (d.id = ANY(%s))", (name, ids))
+        await cur.execute("UPDATE documents SET removed_at = NULL WHERE id = ANY(%s) "
+                          "AND removed_at IS NOT NULL", (ids,))
+    new = await record_version(name, by, note=f"Reverted to version {version}.")
+    return new or {}
 
 
 async def rename_document(document_id: int, title: str) -> dict | None:
