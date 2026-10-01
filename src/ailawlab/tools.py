@@ -6,7 +6,9 @@ Design constraints for a legal research setting:
     registry, so an experiment can be configured with a subset of tools without code
     changes.
   * Network-touching tools are opt-in per experiment, not on by default -- an
-    experiment about model reasoning shouldn't silently reach the open internet.
+    experiment about model reasoning shouldn't silently reach the open internet. The two
+    installed (network_tools.py) save whatever they read into a library, so a citation to
+    something read online is as traceable as one to a curated library.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .grounding import SourceLedger
+from .network_tools import OnlineReader
 from .rag import Libraries, format_passages
 
 log = logging.getLogger(__name__)
@@ -87,11 +90,14 @@ class ToolRegistry:
 # ---------------------------------------------------------------- built-in tools
 
 
-def library_search_tool(libraries: Libraries, ledger: SourceLedger) -> Tool:
+def library_search_tool(libraries: Libraries, ledger: SourceLedger,
+                        extra: list[str] | None = None) -> Tool:
     """Search the run's libraries. Passages are numbered across the whole run through
     `ledger`, so the [n] the agent cites in its answer names one passage, whichever search
-    returned it. With several libraries the agent may confine a search to one of them."""
-    names = libraries.searchable()
+    returned it. With several libraries the agent may confine a search to one of them.
+    `extra` names a library that may only fill during the run (where documents read online
+    are saved); it is searchable once it holds something."""
+    names = [*libraries.searchable(), *[n for n in extra or [] if n not in libraries.searchable()]]
 
     async def search_libraries(query: str, top_k: int = 5, library: str = "") -> str:
         library = (library or "").strip()
@@ -160,8 +166,51 @@ def calculator_tool() -> Tool:
     )
 
 
+def online_tools(reader: OnlineReader) -> list[Tool]:
+    """Search public legal databases and read what is found, saving it to a library. Both
+    need the network, so a registry offers them only when the experiment allows it."""
+    dbs = reader.databases()
+
+    async def search_online(query: str, database: str = "") -> str:
+        return await reader.search(query, database)
+
+    async def read_online(source: str, look_for: str = "") -> str:
+        return await reader.read(source, look_for)
+
+    return [
+        Tool(name="search_online",
+             description=("Search public legal databases online for documents not in the "
+                          "libraries: " + "; ".join(f"{k} ({v})" for k, v in dbs.items())
+                          + ". Returns numbered results [W1], [W2] with snippets. Results are "
+                          "leads, not sources: read one with read_online before relying on it."),
+             parameters={"type": "object", "properties": {
+                 "query": {"type": "string", "description": "What to search for."},
+                 "database": {"type": "string", "enum": list(dbs),
+                              "description": "Search only this database. Leave it out to search all."}},
+                 "required": ["query"]},
+             fn=search_online, requires_network=True),
+        Tool(name="read_online",
+             description=(f"Read a search result (by its number, e.g. W2) or a public web "
+                          f"address. The document is saved to the library “{reader.library}” "
+                          "and the passages most relevant to `look_for` come back numbered, to "
+                          "cite as [n] like any library passage. At most "
+                          f"{reader.max_reads} reads per task."),
+             parameters={"type": "object", "properties": {
+                 "source": {"type": "string",
+                            "description": "A result number such as W2, or an https:// address."},
+                 "look_for": {"type": "string",
+                              "description": "What to find in it; picks which passages come back."}},
+                 "required": ["source"]},
+             fn=read_online, requires_network=True),
+    ]
+
+
 def default_registry(libraries: Libraries, ledger: SourceLedger,
-                     allow_network: bool = False) -> ToolRegistry:
-    """Library search (when the run has a library with anything in it) and arithmetic."""
-    tools = [library_search_tool(libraries, ledger)] if libraries else []
+                     allow_network: bool = False, reader: OnlineReader | None = None) -> ToolRegistry:
+    """Library search (when the run has a library with anything in it, or may fill one by
+    reading online), arithmetic, and with `reader` the network tools."""
+    extra = [reader.library] if reader else []
+    tools = [library_search_tool(libraries, ledger, extra)] if libraries or reader else []
+    if reader:
+        tools += online_tools(reader)
     return ToolRegistry([*tools, calculator_tool()], allow_network=allow_network)

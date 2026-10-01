@@ -34,6 +34,7 @@
   {% if v.exhibits %}<a href="#exhibits">Exhibits</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
   {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
+  {% if v.fetched %}<a href="#fetched">Read online</a>{% endif %}
   {% if citations %}<a href="#citations">References</a>{% endif %}
   <a href="#trace-head">Trace</a>
   {% if run.result %}
@@ -210,6 +211,22 @@
       <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
       {% if src.corpus %}<span class="lib-tag">in <a href="{{ prefix }}/sources/corpora/{{ src.corpus|urlencode }}{% if src.version %}/versions/{{ src.version }}{% endif %}">{{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</a></span>{% endif %}
       <span class="hint">{{ '%.2f'|format(src.similarity or 0) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if v.fetched %}
+<h2 id="fetched">Read online</h2>
+<div class="panel">
+  <p class="lib-summary">The agent read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} online.
+    Each was saved to a library first, so the passages it cites from them point to a fixed copy.</p>
+  <ul class="source-list">
+    {% for f in v.fetched %}
+    <li class="cited"><a href="{{ prefix }}/sources/documents/{{ f.document_id }}">{{ f.title }}</a>
+      <span class="lib-tag">saved to <a href="{{ prefix }}/sources/corpora/{{ f.corpus|urlencode }}/versions/{{ f.version }}">{{ f.corpus }} v{{ f.version }}</a></span>
+      {% if f.url %}<a class="hint" href="{{ f.url }}" target="_blank" rel="noopener">original</a>{% endif %}
+      <span class="hint">from {{ f.provider }} &middot; read as {{ f.source }}</span></li>
     {% endfor %}
   </ul>
 </div>

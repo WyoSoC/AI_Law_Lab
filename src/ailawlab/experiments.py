@@ -19,6 +19,7 @@ from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
 from .grounding import SourceLedger
+from .network_tools import OnlineReader, fetch_library_name
 from .rag import Libraries, all_run_library_names, pin_libraries, run_library_names, wanted_versions
 from .router import get_router
 from .tools import default_registry
@@ -278,8 +279,12 @@ async def execute_run(run_id: str) -> dict:
                          config=config)
         if mode == "agentic_workflow":
             ledger = SourceLedger()
-            ctx.config = {**config, "ledger": ledger, "registry": default_registry(
-                libraries, ledger, allow_network=config.get("allow_network", False))}
+            allow = bool({**config, **inputs}.get("allow_network", False))
+            reader = OnlineReader(router, libraries, ledger, tracer, run_id,
+                                  fetch_library_name(config, run["experiment_name"]),
+                                  added_by=run.get("launched_by")) if allow else None
+            ctx.config = {**config, "ledger": ledger, "reader": reader, "registry": default_registry(
+                libraries, ledger, allow_network=allow, reader=reader)}
 
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
@@ -379,6 +384,7 @@ def _summarize(mode: str, final: dict) -> dict:
             "tool_results": final.get("tool_results", []),
             "citations": final.get("citations", []),
             "sources": final.get("sources", []),
+            "fetched": final.get("fetched", []),
         }
     if mode == "roleplay":
         return {

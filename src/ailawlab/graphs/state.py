@@ -58,6 +58,7 @@ class AgenticState(TypedDict, total=False):
     answer: str
     citations: list[dict]
     sources: list[dict]         # every passage any search returned, by its run-wide number
+    fetched: list[dict]         # documents read online and saved to a library
     done: bool
     error: str
 

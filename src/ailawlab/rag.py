@@ -416,10 +416,30 @@ _USES = ("((CASE WHEN e.config ? 'libraries' THEN COALESCE(e.config->'libraries'
          "WHERE jsonb_typeof(a->'libraries') = 'array' AND a->'libraries' ? {name}))")
 
 
+def default_hidden(name: str) -> bool:
+    """Whether a library nobody has hidden or shown is hidden: those named for testing."""
+    return "test" in name.casefold()
+
+
+def library_hidden(name: str, setting: bool | None) -> bool:
+    return default_hidden(name) if setting is None else setting
+
+
+async def set_hidden(name: str, hidden: bool, by: Any = None) -> None:
+    """Hide a library from the lists and pickers, or show it again. Nothing else changes:
+    experiments that use it keep using it, and it can still be opened by name."""
+    await fetch_one(
+        "INSERT INTO library_settings (corpus, hidden, changed_by) VALUES (%s, %s, %s) "
+        "ON CONFLICT (corpus) DO UPDATE SET hidden = EXCLUDED.hidden, "
+        "changed_by = EXCLUDED.changed_by, changed_at = now() RETURNING corpus",
+        (name, hidden, by))
+
+
 async def list_corpora() -> list[dict]:
-    """Every library with its size, when it last changed, its current version, and how many
-    experiments use it. A library whose documents have all been removed is still listed
-    (empty) while its versions exist, since past runs point at them."""
+    """Every library with its size, when it last changed, its current version, how many
+    experiments use it, and whether it is hidden from the lists. A library whose documents
+    have all been removed is still listed (empty) while its versions exist, since past runs
+    point at them."""
     live = await fetch_all(
         "SELECT d.corpus, COUNT(DISTINCT d.id) AS documents, COUNT(c.id) AS chunks, "
         "       MAX(d.created_at) AS last_added, "
@@ -437,7 +457,17 @@ async def list_corpora() -> list[dict]:
              for r in await fetch_all("SELECT corpus, MAX(version) AS version, MAX(created_at) AS changed "
                                       "FROM corpus_versions GROUP BY corpus")
              if r["corpus"] not in names]
-    return sorted(live + empty, key=lambda c: c["corpus"].casefold())
+    chosen = {r["corpus"]: r["hidden"] for r in await fetch_all(
+        "SELECT corpus, hidden FROM library_settings")}
+    out = sorted(live + empty, key=lambda c: c["corpus"].casefold())
+    for c in out:
+        c["hidden"] = library_hidden(c["corpus"], chosen.get(c["corpus"]))
+    return out
+
+
+async def is_hidden(name: str) -> bool:
+    row = await fetch_one("SELECT hidden FROM library_settings WHERE corpus=%s", (name,))
+    return library_hidden(name, row["hidden"] if row else None)
 
 
 async def corpus_documents(name: str | None = None,
@@ -461,7 +491,8 @@ async def corpus_experiments(name: str) -> list[dict]:
     """Experiments (not in the trash) that retrieve from this library."""
     return await fetch_all(
         "SELECT e.id, e.name, e.mode FROM experiments e WHERE e.deleted_at IS NULL "
-        f"AND {_USES.format(name='%s')} ORDER BY e.created_at DESC", (name, name))
+        f"AND {_USES.format(name='%s')} ORDER BY e.created_at DESC",
+        (name,) * _USES.count("{name}"))
 
 
 async def get_document(document_id: int) -> dict | None:

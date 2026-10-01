@@ -102,7 +102,7 @@
     <table>
       <thead><tr><th>Library</th><th>Documents</th><th>Chunks</th><th>Used by</th></tr></thead>
       <tbody>
-        {% for c in corpora %}
+        {% for c in corpora|rejectattr('hidden') %}
         <tr><td><a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a></td>
             <td>{{ c.documents }}</td><td>{{ c.chunks }}</td>
             <td>{{ c.experiments }} experiment{{ '' if c.experiments == 1 else 's' }}</td></tr>
@@ -110,6 +110,13 @@
       </tbody>
     </table>
   </div>
+  {% set hidden = corpora|selectattr('hidden')|list %}
+  {% if hidden %}
+  <details class="hidden-libs">
+    <summary>Hidden libraries ({{ hidden|length }})</summary>
+    <p class="hint">{% for c in hidden %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>
+  </details>
+  {% endif %}
   {% else %}
   <p class="empty">No sources yet. <a href="{{ prefix }}/sources">Add legal sources</a>.</p>
   {% endif %}

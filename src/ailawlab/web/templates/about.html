@@ -110,11 +110,12 @@
       <div class="note"><a href="{{ prefix }}/dashboard">see the dashboard</a></div>
     </div>
     <div class="stat">
+      {% set shown = corpora|rejectattr('hidden')|list %}
       <div class="label">Curated libraries</div>
-      <div class="value">{{ corpora|length }}</div>
+      <div class="value">{{ shown|length }}</div>
       <div class="note">
         {% if not user %}sign in to browse them
-        {% elif corpora %}{% for c in corpora %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}
+        {% elif shown %}{% for c in shown %}<a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>{{ ', ' if not loop.last }}{% endfor %}
         {% else %}empty &mdash; <a href="{{ prefix }}/sources">add sources</a>{% endif %}
       </div>
     </div>

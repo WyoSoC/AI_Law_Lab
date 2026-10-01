@@ -15,6 +15,7 @@ from ..agent_spec import SECTIONS, check_cast, normalize_agent
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
+from ..network_tools import fetch_library_name
 from ..rag import case_files, library_names, run_library_names
 
 MODE_LABELS = {
@@ -260,7 +261,9 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
                   "think-then-act cycles before it must answer"),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
-                  "none are installed yet, so the agent uses library search either way"),
+                  (f"searches online databases and reads pages; saves what it reads to "
+                   f"“{fetch_library_name(config, str(exp.get('name') or ''))}”")
+                  if config.get("allow_network") else "works from its libraries only"),
         ]
     view.update(facts=facts, libraries=libraries, launch_defaults={"libraries": libraries})
     return view
@@ -410,6 +413,9 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         "summary_md": result.get("outcome") or result.get("answer") or "",
         # Every passage the answer could cite, by marker (document analysis and agents).
         "sources": [src for src in result.get("sources") or [] if isinstance(src, dict)],
+        # Documents an agent read online, each saved to a library.
+        "fetched": [{**f, "url": safe_url(f.get("url"))} for f in result.get("fetched") or []
+                    if isinstance(f, dict)],
     }
     view["rerun_versions"] = {lib["name"]: lib["version"] for lib in view["libraries"]
                               if lib.get("version")}

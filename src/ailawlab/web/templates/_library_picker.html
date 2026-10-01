@@ -1,13 +1,23 @@
 {# Choose several libraries. `libraries` is [{name, documents}]; `selected` the names ticked. #}
 {% macro library_picker(id, libraries, selected=[], onchange='') %}
-<div class="library-picker" id="{{ id }}">
-  {% for lib in libraries %}
+{% macro option(lib, selected, onchange) %}
   <label class="check lib-option"><input type="checkbox" value="{{ lib.name }}"
          {% if lib.name in selected %}checked{% endif %} onchange="{{ onchange }}">
     <span class="lib-name">{{ lib.name }}</span>
     <span class="hint-inline">{{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</span></label>
-  {% else %}
+{% endmacro %}
+{# Hidden libraries sit behind a drop-down, except one already chosen. #}
+<div class="library-picker" id="{{ id }}">
+  {% set tucked = libraries|selectattr('hidden')|rejectattr('name', 'in', selected)|list %}
+  {% for lib in libraries if lib not in tucked %}{{ option(lib, selected, onchange) }}
+  {% else %}{% if not tucked %}
   <p class="empty">No library holds any documents yet. Add some under <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
-  {% endfor %}
+  {% endif %}{% endfor %}
+  {% if tucked %}
+  <details class="lib-more">
+    <summary>Hidden libraries ({{ tucked|length }})</summary>
+    {% for lib in tucked %}{{ option(lib, selected, onchange) }}{% endfor %}
+  </details>
+  {% endif %}
 </div>
 {% endmacro %}

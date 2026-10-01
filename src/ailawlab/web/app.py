@@ -254,7 +254,7 @@ async def empty_trash(request: Request):
 
 async def _library_choices() -> list[dict]:
     """Libraries an experiment can retrieve from: those holding documents, with how many."""
-    return [{"name": c["corpus"], "documents": c["documents"]}
+    return [{"name": c["corpus"], "documents": c["documents"], "hidden": c["hidden"]}
             for c in await rag.list_corpora() if c["documents"]]
 
 
@@ -429,8 +429,8 @@ async def api_sources_corpora(request: Request):
     html = templates.get_template("_corpora.html").render(
         corpora=corpora, **_prefix(request))
     return JSONResponse({"html": html,
-                         "corpora": [{"name": c["corpus"], "documents": c["documents"]}
-                                     for c in corpora]})
+                         "corpora": [{"name": c["corpus"], "documents": c["documents"],
+                                      "hidden": c["hidden"]} for c in corpora]})
 
 
 def _corpus_url(name: str) -> str:
@@ -455,7 +455,20 @@ async def corpus_page(request: Request, name: str):
         "experiments": await rag.corpus_experiments(name),
         "versions": versions,
         "citations": citations.citation_list(documents),
+        "hidden": await rag.is_hidden(name),
+        "hidden_by_name": not await fetch_one("SELECT 1 AS x FROM library_settings WHERE corpus=%s",
+                                              (name,)) and rag.default_hidden(name),
     })
+
+
+@app.post("/sources/corpora/{name}/visibility")
+async def corpus_visibility(request: Request, name: str, hidden: str = Form("1")):
+    """Hide a library from the lists and pickers, or show it again."""
+    hide = hidden == "1"
+    await rag.set_hidden(name, hide, user_id(request))
+    return RedirectResponse(_corpus_url(name) + "?msg=" + quote(
+        "Hidden from the lists and pickers. Experiments that use it keep using it." if hide
+        else "Shown in the lists and pickers again."), status_code=303)
 
 
 @app.get("/sources/corpora/{name}/versions/{version}", response_class=HTMLResponse)

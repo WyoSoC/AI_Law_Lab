@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     web_link_max_words: int = 100_000
     web_link_max_per_request: int = 20
 
+    # --- network tools for agents -----------------------------------------
+    # With "Allow network tools" an agent may search the online databases and read a result
+    # or a public web page. Each read is saved into a library and embedded, so it occupies
+    # cluster slots like an ingest: a run may read at most this many documents.
+    network_max_reads: int = 8
+    network_hits_per_source: int = 4
+
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per
     # side, which tends to end with positions restated rather than shifted. The moderator

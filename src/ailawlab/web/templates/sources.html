@@ -98,6 +98,7 @@ expanding it over time. Each document is chunked, embedded and made citable.</p>
 const PREFIX = "{{ prefix }}";
 // Existing corpora for the drop-downs; refreshed after every ingest.
 let CORPORA = {{ corpora | map(attribute='corpus') | list | tojson }};
+let HIDDEN = new Set({{ corpora | selectattr('hidden') | map(attribute='corpus') | list | tojson }});
 // "Add documents to this corpus" on a corpus page links here with ?corpus=<name>.
 const PRESET = new URLSearchParams(location.search).get('corpus');
 // Hits from the last search per provider, keyed by ref, so ingest can send back the whole
@@ -131,9 +132,11 @@ showTab({upload: 'upload', links: 'links'}[new URLSearchParams(location.search).
 function fillPicker(el, wanted) {
   const choice = wanted || PRESET || el.dataset.default || 'default';
   const known = CORPORA.includes(choice);
+  const opt = c => `<option value="${esc(c)}"${c === choice ? ' selected' : ''}>${esc(c)}</option>`;
   el.innerHTML = `
     <select class="corpus-select" aria-label="Library">
-      ${CORPORA.map(c => `<option value="${esc(c)}"${c === choice ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+      ${CORPORA.filter(c => !HIDDEN.has(c)).map(opt).join('')}
+      ${[...HIDDEN].length ? `<optgroup label="Hidden libraries">${CORPORA.filter(c => HIDDEN.has(c)).map(opt).join('')}</optgroup>` : ''}
       <option value="${NEW}"${known ? '' : ' selected'}>+ New library…</option>
     </select>
     <input type="text" class="corpus-new" placeholder="Name the new library" aria-label="New library name"
@@ -266,6 +269,7 @@ async function refreshCorpora(justUsed) {
     void panel.offsetWidth;  // restart the CSS animation on repeated ingests
     panel.classList.add('flash');
     const fresh = d.corpora.map(c => c.name);
+    HIDDEN = new Set(d.corpora.filter(c => c.hidden).map(c => c.name));
     const added = fresh.filter(c => !CORPORA.includes(c));
     CORPORA = fresh;
     // Rebuild pickers only when a corpus appeared, keeping each one's current choice

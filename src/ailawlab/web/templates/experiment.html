@@ -225,12 +225,29 @@
       </div>
       {% endfor %}
     </div>
-    {% set others = libraries|rejectattr('name', 'in', v.libraries)|list %}
+    {% set others = libraries|rejectattr('name', 'in', v.libraries)|rejectattr('hidden')|list %}
+    {% set tucked = libraries|rejectattr('name', 'in', v.libraries)|selectattr('hidden')|list %}
     {% if others %}
     <details class="lib-more" {% if not v.libraries %}open{% endif %}>
       <summary>{{ 'Add a library to this run' if v.libraries else 'Choose libraries for this run' }} ({{ others|length }} more)</summary>
       <div class="lib-rows">
         {% for lib in others %}
+        <div class="lib-row" data-name="{{ lib.name }}">
+          <label class="check"><input type="checkbox" value="{{ lib.name }}" onchange="syncInputs()">
+            <span class="lib-name">{{ lib.name }}</span>
+            <span class="hint-inline">{{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</span></label>
+          <select class="lib-version" aria-label="Version of {{ lib.name }}" onchange="syncInputs()"></select>
+          <a class="small-link" href="{{ prefix }}/sources/corpora/{{ lib.name|urlencode }}#versions">versions</a>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if tucked %}
+    <details class="lib-more" >
+      <summary>Hidden libraries ({{ tucked|length }})</summary>
+      <div class="lib-rows">
+        {% for lib in tucked %}
         <div class="lib-row" data-name="{{ lib.name }}">
           <label class="check"><input type="checkbox" value="{{ lib.name }}" onchange="syncInputs()">
             <span class="lib-name">{{ lib.name }}</span>

@@ -1,7 +1,6 @@
-{% if corpora %}
-<div class="corpus-grid">
-  {% for c in corpora %}
-  <a class="corpus-card" href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">
+{# Library cards: shown libraries, then hidden ones behind a drop-down. #}
+{% macro corpus_card(c) %}
+  <a class="corpus-card{{ ' is-hidden' if c.hidden }}" href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">
     <span class="corpus-name">{{ c.corpus }}{% if c.version %} <span class="corpus-version">v{{ c.version }}</span>{% endif %}</span>
     <span class="corpus-stats">{{ c.documents }} document{{ '' if c.documents == 1 else 's' }}
       &middot; {{ c.chunks }} passage{{ '' if c.chunks == 1 else 's' }}</span>
@@ -10,8 +9,27 @@
       &middot; last changed {{ (c.changed or c.last_added).strftime('%b %-d, %Y') }}</span>
     <span class="corpus-open">Inspect →</span>
   </a>
-  {% endfor %}
+{% endmacro %}
+{% set shown = corpora|rejectattr('hidden')|list %}
+{% set hidden = corpora|selectattr('hidden')|list %}
+{% if corpora %}
+{% if shown %}
+<div class="corpus-grid">
+  {% for c in shown %}{{ corpus_card(c) }}{% endfor %}
 </div>
+{% else %}
+<p class="empty">Every library is hidden.</p>
+{% endif %}
+{% if hidden %}
+<details class="hidden-libs">
+  <summary>Hidden libraries ({{ hidden|length }})</summary>
+  <p class="hint">Hidden from the lists and pickers, and still usable. Libraries with “test” in the
+    name start hidden; open a library to show it again.</p>
+  <div class="corpus-grid">
+    {% for c in hidden %}{{ corpus_card(c) }}{% endfor %}
+  </div>
+</details>
+{% endif %}
 {% else %}
 <p class="empty">No libraries yet. Search a database, add web links or upload a document below to start one.</p>
 {% endif %}

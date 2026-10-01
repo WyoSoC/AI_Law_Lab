@@ -46,8 +46,16 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     ctx = ctx_from(config)
     registry = ctx.opt("registry")
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(
-                    sources=_sources_line(ctx.libraries.searchable()))},
+    reader = ctx.opt("reader")
+    names = ctx.libraries.searchable()
+    sources = (_sources_line(names) if names or not reader
+               else "You have no library of legal sources yet.")
+    if reader:
+        sources += (" You may also search public legal databases online (search_online) and "
+                    "read a result or a public web page (read_online). What you read is saved "
+                    f"to the library “{reader.library}” and comes back as numbered passages "
+                    "you cite like any other; search results themselves are not sources.")
+    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(sources=sources)},
                 {"role": "user", "content": state["task"]}]
     messages.extend(state.get("scratchpad", []))
 
@@ -91,7 +99,8 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
         ledger = ctx.opt("ledger")
         citations = link_citations(answer, ledger.get, context="Answer")
         await ctx.tracer.record_citations(event_id, citations)
-        out.update(citations=citations, sources=ledger.sources(cited_numbers(answer)))
+        out.update(citations=citations, sources=ledger.sources(cited_numbers(answer)),
+                   fetched=list(ctx.opt("reader").fetched) if ctx.opt("reader") else [])
     return out
 
 

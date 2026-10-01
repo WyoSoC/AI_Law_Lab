@@ -44,10 +44,14 @@ function fieldHTML([key, label, control, placeholder, group]) {
   const tag = group === "private" ? ' <span class="private-tag">private</span>'
     : control === "list" ? ' <span class="hint-inline">(one per line)</span>' : "";
   if (control === "libraries") {
-    const options = libraryChoices().map(l => libraryOption(l.name, `${plural(l.documents, "document")}`)).join("");
+    const option = l => libraryOption(l.name, plural(l.documents, "document"));
+    const shown = libraryChoices().filter(l => !l.hidden).map(option).join("");
+    const tucked = libraryChoices().filter(l => l.hidden);
     return `<label>${label}${tag}</label><p class="hint">${att(placeholder)}</p>
-      <div class="library-picker case-files" data-field="${key}" data-control="libraries">${options
-        || '<p class="empty">No library holds any documents yet.</p>'}</div>`;
+      <div class="library-picker case-files" data-field="${key}" data-control="libraries">${shown
+        || (tucked.length ? "" : '<p class="empty">No library holds any documents yet.</p>')}${tucked.length
+        ? `<details class="lib-more"><summary>Hidden libraries (${tucked.length})</summary>${tucked.map(option).join("")}</details>`
+        : ""}</div>`;
   }
   const input = control === "input"
     ? `<input type="text" data-field="${key}" placeholder="${att(placeholder)}">`
@@ -119,6 +123,8 @@ function setCaseFiles(box, names) {
     }
   });
   box.querySelectorAll("input").forEach(i => i.checked = names.includes(i.value));
+  // A chosen hidden library is shown, not left folded away.
+  if ([...box.querySelectorAll(".lib-more input:checked")].length) box.querySelector(".lib-more").open = true;
 }
 
 function readCard(card) {

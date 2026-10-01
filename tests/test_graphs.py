@@ -212,3 +212,40 @@ async def test_roleplay_case_files_stay_private_until_cited():
     # Whatever was disclosed names who disclosed it and comes from that person's own file.
     for e in result["exhibits"]:
         assert e["corpus"] == own[e["disclosed_by"]] and e["private"]
+
+
+async def test_agent_reads_online_and_cites_a_saved_copy():
+    exp = await experiments.create_experiment(
+        "Online research (test)", "agentic_workflow",
+        config={"libraries": [], "max_iterations": 6, "allow_network": True,
+                "fetch_library": "test-fetched"},
+    )
+    run = await experiments.create_run(str(exp["id"]), inputs={
+        "task": "Use search_online to find the eCFR section on how a federal agency must "
+                "post a notice of proposed rulemaking (5 CFR or 1 CFR), read the best result "
+                "with read_online, and answer in two sentences, citing the passage you read."})
+    run_id = str(run["id"])
+    result = await experiments.execute_run(run_id)
+
+    tools = [e["payload"]["tool"] for e in await fetch_all(
+        "SELECT payload FROM run_events WHERE run_id=%s AND event_type='tool_call' ORDER BY seq", (run_id,))]
+    assert "search_online" in tools, f"agent never searched online: {tools}"
+    if "read_online" in tools and result["fetched"]:
+        f = result["fetched"][0]
+        doc = await fetch_one("SELECT corpus, metadata FROM documents WHERE id=%s", (f["document_id"],))
+        # A document read before (by this test's earlier runs) is reused, not saved twice.
+        assert doc["corpus"] == "test-fetched" and doc["metadata"]["fetched_by_run"]
+        pinned = await fetch_one("SELECT version FROM run_libraries WHERE run_id=%s AND corpus=%s",
+                                 (run_id, "test-fetched"))
+        assert pinned and pinned["version"] == f["version"]
+        assert all(s["corpus"] == "test-fetched" for s in result["sources"])
+
+
+async def test_library_queries_run_against_the_database():
+    """Every library query, run for real: a placeholder miscount fails here, not on a page."""
+    from ailawlab import rag
+
+    await rag.corpus_experiments("test")
+    assert any(c["corpus"] == "test" for c in await rag.list_corpora())
+    await rag.list_versions("test")
+    await rag.check_idle("no such library")

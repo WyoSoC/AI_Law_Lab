@@ -99,8 +99,14 @@ recorded as `unsupported` rather than dropped — catching fabrication is the po
 
 **`agentic_workflow`** — a ReAct loop over gemma4's native function calling. Tools arrive
 as structured `message.tool_calls`, not scraped JSON. Built-in tools are corpus search and
-a safe arithmetic evaluator. Network-touching tools would be opt-in per experiment via
-`allow_network`, but none are installed yet, so that switch currently changes nothing.
+a safe arithmetic evaluator. With `allow_network` the agent also gets two network tools
+(`network_tools.py`): `search_online` searches CourtListener, the Federal Register, the eCFR,
+govinfo and SEC EDGAR and lists results as [W1], [W2] (leads, not citable), and `read_online`
+reads a result or a public web page. Reading is ingesting: the document is saved to a library
+(`fetch_library`, by default "Fetched: <experiment name>"), which records a new version, and
+the passages come back numbered like any other, so a citation to something read online names
+a document, library and version and survives the page changing. A run reads at most
+`network_max_reads` (8) documents; addresses must be public, as for every outbound fetch.
 
 **`roleplay`** — several agents with distinct roles, goals, and **private memory scoped to
 `(run_id, agent_id)`**. A moderator picks the next speaker or ends the scene; an evaluator
@@ -338,6 +344,10 @@ as unsupported. The run page lists the sources given to the model and a **Refere
 section, the cited documents in the library citation form with the library version each was
 found in and every place it was cited, also as a `.txt` download and in the PDF report.
 
+A library can be hidden from the lists and pickers (its page has "Hide from lists"); hidden
+ones sit under a "Hidden libraries" drop-down and stay usable. With no choice recorded in
+`library_settings`, a library whose name contains "test" starts hidden.
+
 Each library also has a citation list (`citations.py`): one reference per document, built
 from what its source recorded, for the current contents or any version, to copy or download.
 
@@ -356,6 +366,7 @@ src/ailawlab/
   agent_spec.py        Markdown agent files: reading, writing, cast checks
   cast_assistant.py    AI-drafted casts, real-name replacement, AI cast review
   tools.py             tool registry for agentic workflows
+  network_tools.py     online search and reading for agents, saved into a library
   tracing.py           trace writer + run metrics
   experiments.py       experiment/run lifecycle
   graphs/              LangGraph definitions per mode; roleplay_policy.py holds the moderation rules

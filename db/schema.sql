@@ -159,6 +159,16 @@ INSERT INTO run_libraries (run_id, corpus, version)
     SELECT id, corpus, corpus_version FROM runs WHERE corpus IS NOT NULL
     ON CONFLICT DO NOTHING;
 
+-- Whether a library is shown in the lists and pickers. A library has no table of its own,
+-- so this holds only libraries someone has hidden or shown; with no row, a library whose
+-- name contains "test" is hidden and any other is shown (rag.library_hidden).
+CREATE TABLE IF NOT EXISTS library_settings (
+    corpus      TEXT PRIMARY KEY,
+    hidden      BOOLEAN NOT NULL,
+    changed_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    changed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id           BIGSERIAL PRIMARY KEY,
     document_id  BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
