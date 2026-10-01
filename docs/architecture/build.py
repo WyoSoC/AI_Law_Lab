@@ -25,7 +25,7 @@ TITLE = "AI Law Lab: System Architecture"
 SUBTITLE = "How a request becomes a traced, reproducible experiment run"
 AUTHOR = "Jian Gong"
 AFFILIATION = "AI Law Lab, University of Wyoming"
-DATELINE = "Architecture note, September 2026. Describes the software at commit f689797."
+DATELINE = "Architecture note, October 2026. Describes the software at commit 74d2d40."
 FOOTER = "AI Law Lab · Architecture note"
 
 # Palette taken from the portal's own CSS custom properties (web/static/style.css), so the
@@ -49,128 +49,79 @@ def t(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- diagram
+#
+# The diagram follows the layering of the one in the project README: people, the web
+# interface, the experiment manager, the three experiment modes, the services they share,
+# the router and the cluster, and the record every run leaves. Each box says what the tier
+# is for in a line or two; the detail is in the sections that follow it, not on the art.
 
-# One entry per horizontal band, top to bottom. A band is as tall as its fullest box needs
-# to be, with `h` as a floor, so editing the text below never silently clips it; if the page
-# still runs short, every band and gap is scaled alike. `w` is a relative width in the band.
-BANDS = [
-    {"label": "People", "h": 22, "boxes": [
-        {"kind": "plain", "title": "Faculty, students, and external research partners",
-         "body": "A browser is the whole client. Nothing below leaves University of Wyoming "
-                 "hardware except where marked."},
+ROWS = [
+    {"id": "people", "label": "People", "h": 30, "boxes": [
+        {"id": "users", "kind": "plain", "title": "Faculty, students and research partners",
+         "lines": ["A web browser is the whole client."]},
     ]},
-    {"label": "Front door", "h": 46, "boxes": [
-        {"kind": "app", "title": "Apache httpd · datahive.uwyo.edu", "w": 1.0,
-         "body": "TLS with the campus certificate, HSTS, CSP frame-ancestors. Shares the Open "
-                 "OnDemand vhost. ProxyPass /ai_law_lab/ passes the path through unstripped; "
-                 "flushpackets=on keeps the trace stream unbuffered; timeout 900 s covers a "
-                 "model call that is still thinking."},
-        {"kind": "app", "title": "uvicorn · 127.0.0.1:8088", "w": 1.0,
-         "body": "ai-law-lab.service under systemd, run with root_path=/ai_law_lab and "
-                 "--proxy-headers. Bound to loopback: the reverse proxy is the only way in."},
+    {"id": "interface", "label": "Interface", "h": 44, "boxes": [
+        {"id": "apache", "kind": "app", "w": 0.8, "title": "Apache · datahive.uwyo.edu",
+         "lines": ["TLS, reverse proxy to /ai_law_lab"]},
+        {"id": "portal", "kind": "app", "w": 1.5, "title": "Web portal · FastAPI",
+         "lines": ["Experiment builder · legal sources and libraries ·",
+                   "live run pages · references and PDF reports"]},
+        {"id": "keycloak", "kind": "app", "w": 0.9, "title": "Keycloak · sign-in",
+         "lines": ["UW sign-on, Google, Microsoft;", "approval and roles"]},
     ]},
-    {"label": "Web app", "h": 60, "boxes": [
-        {"kind": "app", "title": "Pages · web/app.py, views.py",
-         "body": "Server-rendered Jinja2 for the dashboard, builder, experiment, run and "
-                 "source pages. views.py renders stored JSON config as plain language: a "
-                 "lawyer reads settings, not a config file."},
-        {"kind": "app", "title": "Experiment and cast API",
-         "body": "Markdown agent and experiment files (agent_spec.py), AI-drafted casts "
-                 "with real names substituted (cast_assistant.py), and reading a link, PDF "
-                 "or pasted text (source_material.py)."},
-        {"kind": "app", "title": "Live run trace · SSE",
-         "body": "/api/runs/{id}/stream pushes new run_events rows until the run ends. A "
-                 "poll, not LISTEN/NOTIFY: events arrive seconds apart, and no viewer holds "
-                 "a connection of its own."},
-        {"kind": "app", "title": "Legal sources · sources.py",
-         "body": "Search and ingest across five providers, plus direct PDF upload. A click "
-                 "ingests at most ten documents: each one holds embedding slots on the "
-                 "cluster while it is chunked."},
+    {"id": "manager", "label": "Experiments", "h": 34, "boxes": [
+        {"id": "manager", "kind": "app", "title": "Experiment manager",
+         "lines": ["Snapshots the configuration · pins every library to a version · "
+                   "runs in the background and returns at once"]},
     ]},
-    {"label": "Experiments", "h": 38, "boxes": [
-        {"kind": "app", "title": "Experiment manager · experiments.py",
-         "body": "Defines an experiment, then at launch copies its configuration into the run "
-                 "(runs.config_snapshot) and executes it in a background task, returning the "
-                 "run id at once. Editing an experiment later never rewrites the conditions a "
-                 "past result was produced under. A cast that cannot run fails before the "
-                 "first model call, not halfway through a scene."},
+    {"id": "modes", "label": "Modes", "h": 50, "boxes": [
+        {"id": "doc", "kind": "llm", "title": "Document analysis",
+         "lines": ["plan → analyze → ground → synthesize",
+                   "numbered citations, checked afterwards"]},
+        {"id": "agent", "kind": "llm", "title": "Agentic workflow",
+         "lines": ["reason ⇄ act", "searches libraries, cites what it found"]},
+        {"id": "roleplay", "kind": "llm", "title": "Role-play simulation",
+         "lines": ["moderator → speak → … → assess",
+                   "private memory, case files, exhibits"]},
     ]},
-    {"label": "Graphs", "h": 72, "boxes": [
-        {"kind": "llm", "title": "document_analysis",
-         "body": "plan → analyze → ground → synthesize.  Sub-questions are answered "
-                 "concurrently against the document, grounded in the corpus, then synthesized "
-                 "with numbered citations. A citation marker pointing past the retrieved "
-                 "passages is recorded as unsupported, not dropped."},
-        {"kind": "llm", "title": "agentic_workflow",
-         "body": "reason ⇄ act.  A ReAct loop over gemma4's native function calling: tool "
-                 "calls arrive as structured fields on the message, not scraped out of text, "
-                 "and the loop returns to reason for as long as the model keeps asking for "
-                 "tools."},
-        {"kind": "llm", "title": "roleplay",
-         "body": "moderator → speak → moderator, then assess.  Three model calls a turn: "
-                 "the speaker's private ledger, the reply, and the moderator's verdict on who "
-                 "goes next and whether the scene is over. The rules and the studies behind "
-                 "them are in graphs/roleplay_policy.py."},
+    {"id": "services", "label": "Services", "h": 50, "boxes": [
+        {"id": "tools", "kind": "llm", "w": 0.85, "title": "External tools",
+         "lines": ["library search · calculator", "network tools opt-in"]},
+        {"id": "memory", "kind": "llm", "w": 0.85, "title": "Memory",
+         "lines": ["private to each agent", "recent turns · summaries"]},
+        {"id": "rag", "kind": "llm", "w": 1.15, "title": "Legal RAG · versioned libraries",
+         "lines": ["several libraries searched together,", "page anchors, pinned versions"]},
+        {"id": "online", "kind": "ext", "w": 1.05, "dashed": True, "title": "Online legal databases",
+         "lines": ["CourtListener · Federal Register · eCFR", "govinfo · SEC EDGAR · web pages"]},
     ]},
-    {"label": "Services", "h": 54, "boxes": [
-        {"kind": "llm", "title": "Corpus · rag.py",
-         "body": "Chunks of 2400 characters overlapping by 300, embedded and retrieved "
-                 "top-6 above cosine 0.35. Page anchors let a citation point where a human "
-                 "can check it."},
-        {"kind": "llm", "title": "Tools · tools.py",
-         "body": "The registry the agentic loop is given: corpus search and safe "
-                 "arithmetic. Network tools are gated behind allow_network, and none are "
-                 "installed."},
-        {"kind": "llm", "title": "Memory · memory.py",
-         "body": "Verbatim recent turns in a token budget; overflow is summarized, "
-                 "embedded and recalled by similarity. Scoped to (run_id, agent_id): one "
-                 "party's reasoning cannot reach another's."},
-        {"kind": "llm", "title": "Tracer · tracing.py",
-         "body": "One append-only row per model call, tool call, retrieval and node "
-                 "transition, with queue wait and model time in separate columns and the "
-                 "reasoning trace in its own."},
+    {"id": "router", "label": "Router", "h": 34, "boxes": [
+        {"id": "router", "kind": "llm", "title": "LLM router · one bounded queue",
+         "lines": ["16 slots per host · least-loaded dispatch · queue wait timed apart from "
+                   "model time"]},
     ]},
-    {"label": "Router", "h": 42, "boxes": [
-        {"kind": "llm", "title": "LLM router · router.py — one bounded queue for the cluster",
-         "body": "Capacity is 16 slots per healthy host, 32 across the cluster: measured "
-                 "throughput stops improving there while latency keeps climbing, so admitting "
-                 "more would buy nothing and destroy the latency signal in the results. "
-                 "Waiting here is the backpressure, and that wait is reported apart from model "
-                 "time. Admitted work goes to the least-loaded healthy host; hosts are probed "
-                 "every 30 s and parked after three consecutive failures."},
+    {"id": "cluster", "label": "Cluster", "h": 32, "boxes": [
+        {"id": "spark3", "kind": "hw", "title": "test-spark3 · NVIDIA DGX Spark",
+         "lines": ["Ollama · gemma4 (chat) · nomic-embed-text (embeddings)"]},
+        {"id": "spark4", "kind": "hw", "title": "test-spark4 · NVIDIA DGX Spark",
+         "lines": ["Ollama · gemma4 (chat) · nomic-embed-text (embeddings)"]},
     ]},
-    {"label": "Sparks", "h": 36, "boxes": [
-        {"kind": "llm", "title": "test-spark3 · Ollama",
-         "body": "NVIDIA DGX Spark (GB10, 20 cores, 121 GB unified memory). gemma4:latest for "
-                 "chat, nomic-embed-text for embeddings. Reachable by Tailscale name only."},
-        {"kind": "llm", "title": "test-spark4 · Ollama",
-         "body": "The second unit, identical. The lab-subnet addresses 10.99.252.31/.32 are "
-                 "not routable from the orchestrator and appear in no configuration."},
-    ]},
-    {"label": "State", "h": 50, "boxes": [
-        {"kind": "data", "w": 2.3,
-         "title": "PostgreSQL 17 + pgvector · ailawlab-db container on 127.0.0.1:5433",
-         "body": "experiments · runs, each holding the config it ran under · run_events, the "
-                 "append-only trace · citations with a grounded / unsupported / unchecked "
-                 "verdict · documents and chunks, 768-dimension vectors indexed with HNSW · "
-                 "memory_messages and memory_long_term, scoped per agent. An async pool, not "
-                 "one shared connection: about 32 agents can be in flight at once."},
-        {"kind": "ext", "w": 1.0, "dashed": True,
-         "title": "Online legal sources · outbound HTTPS",
-         "body": "CourtListener, the Federal Register, the eCFR, govinfo and SEC EDGAR, "
-                 "plus any page or PDF a cast is drafted from. Queries for public material "
-                 "only — never an uploaded document."},
+    {"id": "record", "label": "Record", "h": 46, "boxes": [
+        {"id": "postgres", "kind": "data", "w": 1.0, "title": "PostgreSQL + pgvector",
+         "lines": ["experiments and runs · libraries, versions", "and embeddings · memory · accounts"]},
+        {"id": "logging", "kind": "data", "w": 1.45, "title": "Logging and evaluation engine",
+         "lines": ["a trace of every call · each citation traced to its document,",
+                   "library and version · references, exhibits, metrics"]},
     ]},
 ]
 
-# Arrows down the middle of the stack: (upper band index, lower band index). The chain is
-# the path a launch actually takes; it deliberately stops at the hosts, because nothing
-# flows from a Spark into Postgres -- that edge is the dashed spine on the left instead.
-FLOW = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)]
+GUTTER = 50.0                  # row labels
+LEFT_CHANNEL = 26.0            # model calls run down the left
+RIGHT_CHANNEL = 30.0           # the trace runs down the right
+BOX_GAP = 12.0
+TITLE_SIZE, BODY_SIZE, BODY_LEAD = 8.0, 6.7, 8.2
+PAD = 6.0
 
-GUTTER, LEFT_CHANNEL, RIGHT_CHANNEL = 44.0, 14.0, 16.0
-BAND_GAP, BOX_GAP = 6.8, 10.0
-TITLE_SIZE, BODY_SIZE, BODY_LEAD = 7.6, 6.1, 7.3
+KINDS["hw"] = ("#f3f1ec", "#b8b2a4", "#3f3c36")
 
 
 def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
@@ -223,72 +174,51 @@ def _polyline(c, points: list[tuple[float, float]], color, *, dashed: bool = Fal
     c.restoreState()
 
 
-PAD = 5.5
+def _label(c, x: float, y: float, text: str, *, size: float = 6.2, angle: float = 0,
+           anchor: str = "middle", color: str = MUTED, back: str | None = "#ffffff") -> None:
+    """A small edge label, with a white backing so it reads across a line."""
+    from reportlab.lib import colors
+    from reportlab.pdfbase import pdfmetrics
 
-
-def _box_height(spec: dict, w: float) -> float:
-    """How tall this box must be for its title and body to fit at `w` points wide."""
-    inner = w - 2 * PAD
-    title = len(_wrap(spec["title"], "Sans-Bold", TITLE_SIZE, inner))
-    lines = len(_wrap(spec.get("body", ""), "Sans", BODY_SIZE, inner))
-    return PAD + title * (TITLE_SIZE + 1.6) + (1.6 + lines * BODY_LEAD if lines else 0) + PAD - 1
-
-
-def _measure(main_w: float) -> dict[str, list]:
-    """Box widths and band heights for the whole stack, worked out before anything is drawn."""
-    widths, heights = [], []
-    for band in BANDS:
-        weights = [b.get("w", 1.0) for b in band["boxes"]]
-        unit = (main_w - BOX_GAP * (len(band["boxes"]) - 1)) / sum(weights)
-        row = [unit * weight for weight in weights]
-        widths.append(row)
-        heights.append(max([band["h"]] + [_box_height(spec, w)
-                                          for spec, w in zip(band["boxes"], row)]))
-    return {"widths": widths, "heights": heights}
-
-
-def _channel_label(c, colors, x: float, y0: float, y1: float, text: str) -> None:
-    """Name a dashed edge, set along its vertical run in the margin beside the stack."""
+    w = pdfmetrics.stringWidth(text, "Sans", size)
     c.saveState()
-    c.setFillColor(colors.HexColor(MUTED))
-    c.setFont("Sans", 6.0)
-    c.translate(x, (y0 + y1) / 2)
-    c.rotate(90)
-    c.drawCentredString(0, 0, text)
+    c.translate(x, y)
+    c.rotate(angle)
+    x0 = {"middle": -w / 2, "start": 0, "end": -w}[anchor]
+    if back:
+        c.setFillColor(colors.HexColor(back))
+        c.rect(x0 - 1.5, -size * 0.3, w + 3, size * 1.15, stroke=0, fill=1)
+    c.setFillColor(colors.HexColor(color))
+    c.setFont("Sans", size)
+    c.drawString(x0, 0, text)
     c.restoreState()
 
 
-def _box(c, x: float, y: float, w: float, h: float, spec: dict) -> None:
-    """One labelled box. `y` is its bottom edge."""
+def _box(c, rect: tuple[float, float, float, float], spec: dict) -> None:
     from reportlab.lib import colors
 
-    fill, edge, ink = (colors.HexColor(v) for v in KINDS[spec["kind"]])
+    x, y, w, h = rect
+    fill, stroke, ink = KINDS[spec["kind"]]
     c.saveState()
-    c.setFillColor(fill)
-    c.setStrokeColor(edge)
+    c.setFillColor(colors.HexColor(fill))
+    c.setStrokeColor(colors.HexColor(stroke))
     c.setLineWidth(0.8)
     if spec.get("dashed"):
-        c.setDash(2.6, 2.4)
-    c.roundRect(x, y, w, h, 3.2, stroke=1, fill=1)
+        c.setDash(3, 2)
+    c.roundRect(x, y, w, h, 4, stroke=1, fill=1)
     c.setDash()
-
-    pad = PAD
-    inner = w - 2 * pad
-    ty = y + h - pad - TITLE_SIZE + 1.4
-    c.setFillColor(ink)
+    lines = [ln for raw in spec.get("lines", []) for ln in _wrap(raw, "Sans", BODY_SIZE, w - 2 * PAD)]
+    block = TITLE_SIZE + 2.5 + BODY_LEAD * len(lines)
+    if block > h - 4:
+        raise ValueError(f"box {spec['id']!r} needs {block:.0f} pt, row allows {h - 4:.0f}")
+    top = y + h / 2 + block / 2 - TITLE_SIZE
+    c.setFillColor(colors.HexColor(ink))
     c.setFont("Sans-Bold", TITLE_SIZE)
-    for line in _wrap(spec["title"], "Sans-Bold", TITLE_SIZE, inner):
-        c.drawString(x + pad, ty, line)
-        ty -= TITLE_SIZE + 1.6
-
-    c.setFillColor(colors.HexColor(MUTED))
+    c.drawCentredString(x + w / 2, top, spec["title"])
+    c.setFillColor(colors.HexColor(INK))
     c.setFont("Sans", BODY_SIZE)
-    by = ty - 1.6
-    for line in _wrap(spec.get("body", ""), "Sans", BODY_SIZE, inner):
-        if by < y + 3:                      # never spill out of the box
-            break
-        c.drawString(x + pad, by, line)
-        by -= BODY_LEAD
+    for i, line in enumerate(lines):
+        c.drawCentredString(x + w / 2, top - 2.5 - BODY_LEAD * (i + 1), line)
     c.restoreState()
 
 
@@ -302,105 +232,146 @@ def draw_diagram(c, width: float, height: float) -> None:
 
     left = GUTTER + LEFT_CHANNEL
     main_w = width - left - RIGHT_CHANNEL
-    spine_x = left - LEFT_CHANNEL / 2
-    channel_x = left + main_w + RIGHT_CHANNEL / 2
+    gap = (height - sum(r["h"] for r in ROWS)) / (len(ROWS) - 1)
 
-    plan = _measure(main_w)
-    natural = sum(plan["heights"]) + BAND_GAP * (len(BANDS) - 1)
-    scale = min(1.0, height / natural)
-    gap = BAND_GAP * scale
-
-    # Place every band top-down, remembering each box's rectangle for the arrows.
-    placed: list[dict] = []
+    # Place the rows top-down; remember every box's rectangle (x, y, w, h) by id.
+    R: dict[str, tuple[float, float, float, float]] = {}
+    row_y: dict[str, tuple[float, float]] = {}
     y = height
-    for band, widths, h in zip(BANDS, plan["widths"], plan["heights"]):
-        h *= scale
-        y -= h
+    for row in ROWS:
+        y -= row["h"]
+        row_y[row["id"]] = (y, y + row["h"])
+        weights = [b.get("w", 1.0) for b in row["boxes"]]
+        free = main_w - BOX_GAP * (len(weights) - 1)
         x = left
-        rects = []
-        for spec, w in zip(band["boxes"], widths):
-            _box(c, x, y, w, h, spec)
-            rects.append((x, y, w, h))
-            x += w + BOX_GAP
-        placed.append({"label": band["label"], "y": y, "h": h, "rects": rects})
+        for box, wt in zip(row["boxes"], weights):
+            bw = free * wt / sum(weights)
+            R[box["id"]] = (x, y, bw, row["h"])
+            x += bw + BOX_GAP
         y -= gap
 
-    # Rotated tier labels in the left gutter.
-    c.saveState()
-    c.setFillColor(colors.HexColor(MUTED))
-    c.setFont("Sans-Bold", 6.4)
-    for band in placed:
+    # Row labels and faint separators in the left gutter.
+    rule = colors.HexColor(LINE)
+    for row in ROWS:
+        y0, y1 = row_y[row["id"]]
         c.saveState()
-        c.translate(GUTTER - 13, band["y"] + band["h"] / 2)
+        c.setFillColor(colors.HexColor(MUTED))
+        c.setFont("Sans-Bold", 6.4)
+        c.translate(GUTTER - 30, (y0 + y1) / 2)
         c.rotate(90)
-        c.drawCentredString(0, 0, band["label"].upper())
+        c.drawCentredString(0, 0, row["label"].upper())
         c.restoreState()
+
+    for row in ROWS:
+        for box in row["boxes"]:
+            _box(c, R[box["id"]], box)
+
+    def cx(i: str) -> float:
+        return R[i][0] + R[i][2] / 2
+
+    def top(i: str) -> float:
+        return R[i][1] + R[i][3]
+
+    def bottom(i: str) -> float:
+        return R[i][1]
+
+    def mid(i: str) -> float:
+        return R[i][1] + R[i][3] / 2
+
+    solid, soft = colors.HexColor("#6d6a63"), colors.HexColor("#9a958a")
+
+    # People reach the portal through Apache; Keycloak vouches for who they are.
+    _polyline(c, [(cx("apache"), bottom("users")), (cx("apache"), top("apache"))], solid)
+    _polyline(c, [(R["apache"][0] + R["apache"][2], mid("apache")), (R["portal"][0], mid("portal"))], solid)
+    _polyline(c, [(R["keycloak"][0], mid("keycloak")),
+                  (R["portal"][0] + R["portal"][2], mid("portal"))], solid)
+
+    # The portal hands experiments to the manager, which launches one of the three modes.
+    _polyline(c, [(cx("portal"), bottom("portal")), (cx("portal"), top("manager"))], solid)
+    for m in ("doc", "agent", "roleplay"):
+        _polyline(c, [(cx(m), bottom("manager")), (cx(m), top(m))], solid)
+
+    # Modes use the shared services: a bus beneath them, with a drop to each service.
+    bus_y = (bottom("doc") + top("tools")) / 2
+    c.saveState()
+    c.setStrokeColor(solid)
+    c.setLineWidth(0.8)
+    for m in ("doc", "agent", "roleplay"):
+        c.line(cx(m), bottom(m), cx(m), bus_y)
+    bus_left = GUTTER + LEFT_CHANNEL / 2
+    c.line(bus_left, bus_y, max(cx("rag"), cx("roleplay")), bus_y)
     c.restoreState()
+    for s in ("tools", "memory", "rag"):
+        _polyline(c, [(cx(s), bus_y), (cx(s), top(s))], solid)
+    _label(c, (cx("agent") + cx("roleplay")) / 2, bus_y - 2.2, "retrieve · call tools · remember")
 
-    arrow = colors.HexColor("#8e887c")
+    # Every mode's own model calls go straight to the router, down the left channel.
+    _polyline(c, [(bus_left, bus_y), (bus_left, mid("router")), (R["router"][0], mid("router"))], solid)
+    _label(c, bus_left - 3, (bus_y + mid("router")) / 2, "model calls", angle=90, back="#ffffff")
 
-    # The execution path: a short arrow from the middle of one band to the next.
-    for upper, lower in FLOW:
-        top, bottom = placed[upper], placed[lower]
-        x_mid = left + main_w / 2
-        _polyline(c, [(x_mid, top["y"] - 1), (x_mid, bottom["y"] + bottom["h"] + 1)], arrow)
+    # Retrieval and memory need embeddings and summaries: they queue at the router too.
+    for s in ("memory", "rag"):
+        _polyline(c, [(cx(s), bottom(s)), (cx(s), top("router"))], solid)
+    _label(c, (cx("memory") + cx("rag")) / 2, (bottom("rag") + top("router")) / 2 - 2,
+           "embed · summarize")
 
-    # The router fans out to each host individually -- that split is the whole point of
-    # the tier, so it gets two arrows rather than one down the middle.
-    router = placed[6]
-    for hx, hy, hw, hh in placed[7]["rects"]:
-        _polyline(c, [(hx + hw / 2, router["y"] - 1), (hx + hw / 2, hy + hh + 1)], arrow)
+    # Libraries are filled from the online databases: the one outbound path, dashed.
+    _polyline(c, [(R["online"][0], mid("online")), (R["rag"][0] + R["rag"][2], mid("rag"))],
+              soft, dashed=True)
+    _label(c, cx("online"), bottom("online") - 7.5, "ingested on request · outbound HTTPS",
+           size=5.8, back=None)
 
-    # Left spine: everything above persists through the shared services into Postgres.
-    services, state = placed[5], placed[8]
-    px, py, _pw, ph = state["rects"][0]
-    _polyline(c, [
-        (services["rects"][0][0], services["y"] + services["h"] / 2),
-        (spine_x, services["y"] + services["h"] / 2),
-        (spine_x, py + ph + gap / 2),
-        (px + 30, py + ph + gap / 2),
-        (px + 30, py + ph + 1),
-    ], arrow, dashed=True)
-    _channel_label(c, colors, spine_x - 1.5, py + ph, services["y"], "trace \u00b7 corpus \u00b7 memory")
+    # The router admits work to the least-loaded Spark.
+    for h in ("spark3", "spark4"):
+        _polyline(c, [(cx(h), bottom("router")), (cx(h), top(h))], solid)
 
-    # Right channel: the one edge that leaves campus.
-    sx, sy, sw, sh = placed[2]["rects"][3]
-    ex, ey, ew, eh = state["rects"][1]
-    _polyline(c, [
-        (sx + sw + 1, sy + sh / 2),
-        (channel_x, sy + sh / 2),
-        (channel_x, ey + eh + gap / 2),
-        (ex + ew - 30, ey + eh + gap / 2),
-        (ex + ew - 30, ey + eh + 1),
-    ], arrow, dashed=True)
-    _channel_label(c, colors, channel_x + 6.4, ey + eh, sy, "leaves campus")
+    # Everything above the cluster is traced: a dashed spine down the right to the record.
+    spine_x = left + main_w + RIGHT_CHANNEL / 2
+    for src in ("roleplay", "router"):
+        c.saveState()
+        c.setStrokeColor(soft)
+        c.setLineWidth(0.8)
+        c.setDash(2.4, 2.4)
+        c.line(R[src][0] + R[src][2], mid(src), spine_x, mid(src))
+        c.restoreState()
+    _polyline(c, [(spine_x, mid("roleplay")), (spine_x, mid("logging")),
+                  (R["logging"][0] + R["logging"][2], mid("logging"))], soft, dashed=True)
+    _label(c, spine_x + 3, (mid("roleplay") + mid("logging")) / 2, "every call traced",
+           angle=90, back="#ffffff")
 
+    # The record is kept in Postgres, with the libraries, embeddings and memory.
+    _polyline(c, [(R["logging"][0], mid("logging")), (R["postgres"][0] + R["postgres"][2], mid("postgres"))],
+              solid)
 
-# --------------------------------------------------------------------------- note text
 
 SECTIONS: list[tuple[str, object]] = [
     ("h1", "Reading the diagram"),
     ("body", t("""
-        Each band is a tier, and the stack reads top to bottom in the order a request passes
-        through it. Solid arrows are the path a launched run takes. Dashed arrows are the two
-        edges that are not part of that path: what every tier persists, and the one direction
-        in which traffic leaves the university. Colour carries the same meaning as on the
-        portal itself -- blue for the application, purple for anything that consumes model
-        capacity, green for durable state, grey for hardware and services outside the lab.
+        Rows are tiers, read top to bottom in the order a launched run passes through them.
+        Solid arrows are that path. The two dashed lines are not part of it: on the right,
+        the trace that everything above the cluster writes as it works; on the services row,
+        the one outbound path, by which libraries are filled from public legal databases.
+        Colour carries the meaning it has on the portal itself -- blue for the application,
+        purple for anything that consumes model capacity, grey for hardware and outside
+        services, green for what is kept.
     """)),
     ("bullets", [
         t("""**Two hops, one process.** Apache terminates TLS and proxies to a uvicorn worker
              bound to loopback. There is exactly one application process; concurrency inside it
              is asyncio, not workers, which is why a single bounded queue can speak for the
              whole cluster."""),
-        t("""**The orchestration band is three graphs, not three services.** They share the
-             router, corpus, memory and tracer beneath them, and differ only in their nodes."""),
-        t("""**Everything narrows at the router.** Every model call in every mode, including
-             embeddings during ingestion, passes through one admission point. That is what makes
-             a timing number from one run comparable with a timing number from another."""),
+        t("""**Three modes, one set of services.** Document analysis, the agentic workflow and
+             the role-play are three graphs over the same retrieval, tools, memory and tracer.
+             They differ in their nodes, not in what they stand on."""),
+        t("""**Everything narrows at the router.** Every model call in every mode, and every
+             embedding and summary the services need, passes through one admission point.
+             That is what makes a timing number from one run comparable with another's."""),
+        t("""**Every run leaves a record that can be followed back.** The configuration it ran
+             under, the version of every library it searched, every call it made, and for each
+             citation the document, library and version it points to."""),
     ]),
 
-    ("h1", "1 · Front door"),
+    ("h1", "1 · Interface"),
     ("body", t("""
         The lab is served at `https://datahive.uwyo.edu/ai_law_lab/` from the same Apache vhost
         as the Open OnDemand portal. Three details in that configuration are load-bearing. The
@@ -409,84 +380,123 @@ SECTIONS: list[tuple[str, object]] = [
         its `/static` mount. `flushpackets=on` keeps the live trace stream from being buffered
         into uselessness. And `timeout 900` covers a model call that emits nothing while it is
         thinking -- with the default the browser would lose a role-play turn mid-generation.
+        `X-Forwarded-Proto` is set on the location and uvicorn runs with `--proxy-headers`, so
+        the application never emits `http://` URLs on an HSTS-pinned site.
     """)),
     ("body", t("""
-        `X-Forwarded-Proto` is set on the location and uvicorn runs with `--proxy-headers`:
-        without both, the application would build pages from an http-scheme request and emit
-        `http://` absolute URLs on an HSTS-pinned site. The unit file deliberately has no
-        `EnvironmentFile` -- `.env` holds JSON whose inner quotes systemd's parser strips --
-        so pydantic-settings reads it directly, relative to the working directory.
+        Sign-in is a self-hosted Keycloak, served at `/sso/` (`/auth` belongs to another
+        application on the same host). People sign in with UW sign-on, Google, Microsoft or a
+        Keycloak account of their own. The portal runs OpenID Connect's authorization-code flow
+        with PKCE itself (`web/auth.py`), with one unusual detail: this server cannot reach its
+        own public address, so browsers are sent to Keycloak's public URL while the code
+        exchange and signing keys go over loopback. Keycloak proves who someone is; the portal
+        decides what they may do (`accounts.py`). A verified `uwyo.edu` address is approved as a
+        researcher on first sign-in; anyone else waits for an administrator. A viewer reads and
+        exports, a researcher also builds experiments, runs them and curates libraries, and an
+        administrator also manages people and deletes things for good. Each request re-reads
+        the person from the database, so disabling someone takes effect on their next click.
     """)),
 
-    ("h1", "2 · Web application"),
+    ("h1", "2 · Web portal"),
     ("body", t("""
-        The interface is server-rendered Jinja2 with small amounts of JavaScript for the cast
-        builder, not a single-page application. `views.py` exists so that what a page shows is
-        a plain-language rendering of stored settings rather than the stored settings: an
-        experiment page says how long a role-play is likely to take and shows each cast member
-        as a card, because the people configuring experiments here are lawyers.
+        The interface is server-rendered Jinja2 with small amounts of JavaScript, not a
+        single-page application. `views.py` turns stored settings into plain language, because
+        the people configuring experiments here are lawyers: an experiment page says how long a
+        role-play is likely to take and shows each person in the cast as a card, with their
+        case files.
     """)),
     ("body", t("""
-        A run's trace reaches the browser over server-sent events. The endpoint polls
-        `run_events` once a second rather than using `LISTEN`/`NOTIFY`: events arrive seconds
-        apart, so a one-second poll is well inside budget and avoids holding a dedicated
-        database connection open for every viewer.
+        **Legal Sources** is where libraries are built: search the online databases and ingest
+        what is wanted, upload PDFs and text files, or add web pages by address and check them
+        for changes later. Each library page lists its versions, what changed in each, the runs
+        that searched each one, and a citation list for any version. **Run pages** show the
+        answer or the role-play transcript with every citation marker linked to its document;
+        the passages the model was given and which it cited; a References section listing the
+        cited documents with the library version each came from and every place it was cited;
+        for a role-play, the exhibits each side disclosed; and the metrics and the full trace.
+        A run exports as a PDF report, and "run again with these versions" repeats it against
+        the libraries exactly as it searched them. While a run is in progress its trace reaches
+        the browser over server-sent events, polled from `run_events` once a second.
     """)),
 
     ("h1", "3 · Experiment manager"),
     ("body", t("""
-        `experiments.py` is the seam between the web tier and the graphs. Launching copies the
-        experiment's configuration into `runs.config_snapshot` and only then starts work, so
+        `experiments.py` is the seam between the portal and the graphs. Launching copies the
+        experiment's configuration into `runs.config_snapshot` before any work starts, so
         editing an experiment afterwards cannot rewrite the conditions a past result was
-        produced under. Execution happens in a background task and the run id comes back
-        immediately, which is what lets a browser watch an hour-long scene without holding a
-        request open. A failure is recorded as a status with its trace intact, not raised: a
-        failed experiment is a result.
+        produced under. Libraries are versioned the same way: each library a run will search
+        -- the experiment's own, or those chosen at launch, and in a role-play every agent's
+        case files -- is pinned to a recorded version and written to `run_libraries`, so the
+        result can be traced to, and re-run against, exactly the documents it searched.
     """)),
     ("body", t("""
-        Before a role-play starts, the cast is checked. Without that, a duplicate agent id or
-        a moderator pick matching no agent surfaces mid-run as a bare `StopIteration`, long
-        after the cause was knowable. Lesser problems are written to the trace instead.
+        Execution happens in a background task and the run id comes back immediately, which is
+        what lets a browser watch an hour-long scene without holding a request open. A failure
+        is recorded as a status with its trace intact, not raised: a failed experiment is a
+        result. A role-play's cast is checked before the first model call, so a duplicate agent
+        id fails at once rather than halfway through a scene.
     """)),
 
-    ("h1", "4 · Orchestration"),
+    ("h1", "4 · Experiment modes"),
     ("body", t("""
         Each mode is a LangGraph state graph over a typed state dictionary. Live services --
-        the router, tracer and corpus -- travel in `config.configurable` rather than in state,
-        because state is checkpointed and connections are not serializable.
+        the router, tracer and the run's pinned libraries -- travel in `config.configurable`
+        rather than in state, because state is checkpointed and connections are not
+        serializable.
     """)),
     ("table", {
-        "header": ["Mode", "Nodes", "What ends it"],
+        "header": ["Mode", "Nodes", "Sources and citations"],
         "rows": [
             ["document_analysis", "plan → analyze → ground → synthesize",
-             "The pipeline is linear and runs once."],
+             ("Sub-questions are answered from the document concurrently; the findings are "
+              "grounded in one search of all the run's libraries, and the answer cites the "
+              "passages as [1], [2].")],
             ["agentic_workflow", "reason ⇄ act",
-             "The model stops emitting tool calls, or the iteration ceiling is reached."],
+             ("The agent searches the libraries as a tool, all at once or one at a time. A "
+              "passage keeps one number across all its searches, so a [3] in its answer names "
+              "one passage. Ends when the model stops asking for tools.")],
             ["roleplay", "moderator → speak → moderator … → assess",
-             ("The moderator closes the scene, or max_turns is hit. Never before everyone "
-              "has spoken twice.")],
+             ("Each turn the speaker sees passages from its own case files and the shared "
+              "libraries as [S1], [S2]. Citing one discloses it as an exhibit, [E1], that "
+              "everyone may cite afterwards. Ends when the moderator closes the scene or the "
+              "turn limit is reached, never before everyone has spoken twice.")],
         ],
         "mono_first": True,
         "caption": t("""
-            The recursion limit handed to a role-play is three times its turn ceiling plus
-            twenty, since each turn costs a moderator hop and a speak hop.
+            The role-play's rules -- who speaks next, when an impasse warrants intervention,
+            when a scene is over -- and the studies behind them are in
+            `graphs/roleplay_policy.py` and the companion note on role-play moderation.
         """),
     }),
 
     ("h1", "5 · Shared services"),
     ("bullets", [
-        t("""**Corpus** (`rag.py`) ingests a document once -- identity is a SHA-256 of its text
-             -- chunks it at 2400 characters with 300 of overlap, embeds in batches so one large
-             document cannot hold a cluster slot indefinitely, and retrieves the top six chunks
-             above cosine 0.35 with page anchors attached."""),
-        t("""**Tools** (`tools.py`) is the registry the agentic loop is given: corpus search and
-             a safe arithmetic evaluator. `allow_network` gates network-touching tools, and none
-             are installed, so that switch currently changes nothing."""),
+        t("""**Legal RAG** (`rag.py`). A library is a named set of documents, filled from
+             uploads, the online databases (`sources.py`) or web pages (`web_links.py`). A
+             document is chunked at 2400 characters with 300 of overlap, on paragraph
+             boundaries, embedded, and kept with page anchors so a citation points where a
+             person can check it. Documents are never edited in place: removing one sets
+             `removed_at`, and re-reading a changed page adds a new row, so every recorded
+             version of a library can still be searched exactly as it was. A run's libraries
+             are searched together -- the top six passages above cosine 0.35, ranked against
+             each other whichever library they come from, with text held in two libraries
+             returned once -- and each passage is labelled with its library in the prompt."""),
+        t("""**Citations** (`grounding.py`, `citations.py`). Every citation marker a model
+             writes becomes a record holding the passage, document, library and version it
+             names, and where it appeared ("Answer", "Turn 7 · Dana Reyes"). A marker that
+             names no passage the model was given is recorded as unsupported rather than
+             dropped -- catching fabrication is the point. Each library also produces a citation
+             list, one reference per document from what its source recorded, which is the form
+             a run's References take."""),
+        t("""**Tools** (`tools.py`) is the registry the agentic loop is given: library search
+             and a safe arithmetic evaluator. `allow_network` gates network-touching tools, and
+             none are installed, so that switch currently changes nothing."""),
         t("""**Memory** (`memory.py`) keeps a verbatim buffer inside a token budget and folds
              the overflow into model-written summaries that are embedded and recalled by
              similarity. Its scope is `(run_id, agent_id)`: in a negotiation, a shared buffer
-             would leak one side's private reasoning into the other's context and quietly
-             invalidate the exercise."""),
+             would leak one side's private reasoning into the other's context. Case files are
+             private the same way: an agent's own libraries are searched only on its turns,
+             and another agent sees a passage from one only after it is cited."""),
         t("""**Tracer** (`tracing.py`) writes one sequenced row per model call, tool call,
              retrieval and node transition. Queue wait and model time go in separate columns
              because the benchmark showed them diverging threefold under load; reported
@@ -530,50 +540,54 @@ SECTIONS: list[tuple[str, object]] = [
         pass `think=False`; nodes doing substantive legal reasoning pass `think=True`.
     """)),
 
-    ("h1", "7 · State"),
+    ("h1", "7 · Record"),
     ("body", t("""
         One PostgreSQL 17 database with pgvector, in a container on loopback, holds everything
-        a run produces. It is reached through an async pool rather than a single connection:
-        the design this memory tier was ported from held one SQLite connection, which
-        serializes hard under the roughly thirty-two concurrent agents this cluster sustains.
-        Vector columns are 768-dimensional and indexed with HNSW, chosen over IVFFlat because
-        the corpus grows incrementally and HNSW needs no retraining.
+        a run produces and everything it searched. It is reached through an async pool rather
+        than a single connection, since about thirty-two agents can be in flight at once.
+        Vectors are 768-dimensional and indexed with HNSW, chosen over IVFFlat because
+        libraries grow incrementally and HNSW needs no retraining.
     """)),
     ("table", {
         "header": ["Tables", "What they hold"],
         "rows": [
             ["experiments, runs", ("Definitions, and per-run snapshots of the "
                                    "configuration each result was produced under.")],
-            ["run_events, citations", ("The append-only trace, and asserted citations with "
-                                       "a grounded / unsupported / unchecked verdict.")],
-            ["documents, chunks", "The corpus: text, page anchors, and embeddings."],
+            ["run_libraries", "Each library a run searched, and the version it searched."],
+            ["run_events, citations", ("The append-only trace, and every citation marker with "
+                                       "its passage, document, library, version and a "
+                                       "grounded / unsupported verdict.")],
+            ["documents, chunks,\ncorpus_versions", ("The libraries: text, page anchors and "
+                                                     "embeddings, and the exact set of "
+                                                     "documents each version held.")],
             ["memory_messages,\nmemory_long_term", ("Short-term buffers and summarized "
-                                                    "long-term memory, per (run, agent), "
-                                                    "with provenance back to a trace event "
-                                                    "or chunk.")],
+                                                    "long-term memory, per (run, agent).")],
+            ["users, audit_log", ("Who may use the lab and in what role, and a log of "
+                                  "approvals, role changes and permanent deletions.")],
         ],
         "mono_first": True,
         "caption": t("""
-            Everything is addressable by `run_id`, and every foreign key cascades from the run,
-            so a result can be audited or removed as a unit.
+            Everything a run produces is addressable by `run_id` and cascades from the run, so
+            a result can be audited or removed as a unit. Libraries are kept apart from runs:
+            deleting a run never touches what it searched.
         """),
     }),
 
-    ("h1", "8 · What leaves campus"),
+    ("h1", "8 · Outbound traffic"),
     ("body", t("""
-        Inference is local, so documents and queries stay on university hardware. The single
-        exception is drawn dashed on the right of the diagram: outbound requests to public
-        legal sources -- CourtListener, the Federal Register, the eCFR, govinfo and SEC EDGAR
-        -- and to a page or PDF a cast is being drafted from. These carry a search term or a
-        URL, never an uploaded document.
+        Model inference runs on the two Sparks; no prompt or document is sent to a commercial
+        model API. The server makes outbound requests in one case, drawn dashed on the
+        services row: fetching public material -- searches and documents from CourtListener,
+        the Federal Register, the eCFR, govinfo and SEC EDGAR, a web page added to a library,
+        or a page or PDF a cast is drafted from. These carry a search term or an address,
+        never an uploaded document.
     """)),
     ("body", t("""
-        That outbound path is guarded, because this server can reach the Sparks, Postgres and
-        the university network. Only `http`/`https` links whose host resolves exclusively to
-        public addresses are fetched, and every redirect is re-checked the same way. A source
-        is capped at 12,000 words before it reaches a prompt. Real people and private
-        organizations in a source are renamed before a cast is drafted from it, and the same
-        substitution is applied to the model's output: a draft invents bottom lines and
+        That path is guarded, because this server can reach the Sparks, Postgres and the
+        university network. Only `http`/`https` links whose host resolves exclusively to public
+        addresses are fetched, and every redirect is re-checked the same way. Real people and
+        private organizations in a source are renamed before a cast is drafted from it, and the
+        same substitution is applied to the model's output: a draft invents bottom lines and
         confidential facts, and attaching those to a real company is the failure worth
         engineering against.
     """)),
@@ -582,23 +596,24 @@ SECTIONS: list[tuple[str, object]] = [
     ("table", {
         "header": ["Box on the diagram", "Source"],
         "rows": [
-            ["Pages, SSE, HTTP API", "src/ailawlab/web/app.py, web/views.py, web/templates/"],
-            ["Experiment and cast API", "agent_spec.py, cast_assistant.py, source_material.py"],
-            ["Legal sources", "sources.py"],
+            ["Apache", "/etc/apache2/sites-available/ood-portal.conf"],
+            ["Web portal", ("web/app.py, web/views.py, web/templates/, web/report_pdf.py,\n"
+                            "agent_spec.py, cast_assistant.py, source_material.py")],
+            ["Keycloak sign-in", "web/auth.py, accounts.py, scripts/keycloak_setup.py, docs/keycloak.md"],
             ["Experiment manager", "experiments.py"],
-            ["Orchestration", ("graphs/document_analysis.py, graphs/agentic_workflow.py,\n"
-                               "graphs/roleplay.py, graphs/roleplay_policy.py, "
-                               "graphs/state.py")],
-            ["Corpus, tools, memory, tracer", "rag.py, tools.py, memory.py, tracing.py"],
+            ["Modes", ("graphs/document_analysis.py, graphs/agentic_workflow.py,\n"
+                       "graphs/roleplay.py, graphs/roleplay_policy.py, graphs/state.py")],
+            ["Legal RAG", "rag.py, sources.py, web_links.py"],
+            ["Tools, memory", "tools.py, memory.py"],
             ["LLM router", "router.py"],
-            ["State", "db.py, db/schema.sql, docker-compose.yml"],
-            ["Front door", ("/etc/apache2/sites-available/ood-portal.conf,\n"
-                            "/etc/systemd/system/ai-law-lab.service, .env")],
+            ["Logging and evaluation", "tracing.py, grounding.py, citations.py"],
+            ["PostgreSQL", "db.py, db/schema.sql, docker-compose.yml"],
         ],
         "mono_first": False,
         "caption": t("""
-            Settings quoted throughout this note are defaults from `config.py`; every one is
-            overridable by an `AILAWLAB_`-prefixed environment variable.
+            Paths under `src/ailawlab/` unless absolute. Settings quoted throughout this note are
+            defaults from `config.py`; every one is overridable by an `AILAWLAB_`-prefixed
+            environment variable. The service runs as `ai-law-lab.service` under systemd.
         """),
     }),
 
@@ -610,8 +625,8 @@ SECTIONS: list[tuple[str, object]] = [
             "/tmp/docenv/bin/python docs/architecture/build.py",
         ],
         "caption": t("""
-            The diagram is laid out in `docs/architecture/build.py`; the boxes are data at the
-            top of that file. Re-run it after a change to the tiers, and re-run
+            The diagram is laid out in `docs/architecture/build.py`; its rows and boxes are data
+            at the top of that file. Re-run it after a change to the tiers, and re-run
             `scripts/bench_sparks.py` after any hardware or Ollama change, since the numbers in
             section 6 are what the router's slot count is set from.
         """),

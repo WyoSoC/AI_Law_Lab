@@ -56,7 +56,7 @@ Legal education has long used simulated negotiations, mediations and hearings. L
 agents make such simulations cheap to run at scale and, when every model call is logged,
 auditable, which makes them attractive both for teaching and for research on how models reason
 about legal disputes. The AI Law Lab runs these simulations on university hardware with an
-8-billion-parameter model, so that unpublished or sensitive material never leaves campus.
+8-billion-parameter model.
 """)),
     ("p", t("""
 Exchanges between language-model agents fail in recognizable ways. Negotiating agents without

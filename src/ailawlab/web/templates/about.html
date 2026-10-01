@@ -6,8 +6,8 @@
   <h1 class="hero-title"><img class="logo" width="48" height="48" src="{{ prefix }}/static/logo.svg" alt="">AI Law Lab</h1>
   <p class="lede">
     A research platform for running reproducible experiments on how language models reason
-    about law &mdash; contracts, case law, statutes and regulation &mdash; executed on the
-    University of Wyoming's own DGX Spark cluster, so no document or query ever leaves campus.
+    about law &mdash; contracts, case law, statutes, regulation, and jurisprudence &mdash; executed
+    on the University of Wyoming's own DGX Spark cluster.
   </p>
   {% if request.query_params.get('signin') == 'out' %}<p class="notice">You have signed out.</p>
   {% elif request.query_params.get('signin') == 'cancelled' %}<p class="notice">Sign-in was cancelled.</p>{% endif %}
@@ -32,10 +32,20 @@
     Legal AI claims are easy to make and hard to check. A demo that looks convincing once
     tells you very little about whether a model reasons soundly, cites real authority, or
     behaves consistently when the facts shift. AI Law Lab exists to turn those claims into
-    <strong>experiments</strong>: every run snapshots its exact configuration and records a
-    full trace, so a result is something you can re-run, compare, and cite &mdash; not a
-    screenshot. Because inference runs on local hardware, the lab can be used with sensitive
-    or unpublished material that a commercial API would be the wrong home for.
+    <strong>experiments</strong>: every run snapshots its exact configuration, the version of
+    every library it searched, and a full trace, so a result is something you can re-run,
+    compare, and cite &mdash; not a screenshot.
+  </p>
+  <p class="prose">
+    Law is also argued, not only read. Simulated negotiations, mediations, and hearings have
+    long been how lawyers learn to advocate, and <strong>legal case role-play</strong> brings
+    that practice into the lab. Agents representing each side hold their own objectives,
+    bottom lines, confidential facts, and case files, and must decide what to disclose and
+    when to concede, while a moderator keeps the exchange moving. Running the same dispute
+    many times shows how models argue, persuade, and settle under pressure &mdash; whether
+    they hold a position or give it away, cite their evidence honestly, and keep a confidence
+    &mdash; and gives students an opponent to practice against and instructors a transcript
+    to teach from.
   </p>
 </section>
 
@@ -43,33 +53,40 @@
   <h2>What it does</h2>
   <div class="feature-grid">
     <div class="feature">
+      <div class="feature-icon">🗂️</div>
+      <h3>Grounded retrieval</h3>
+      <p>Build curated libraries from uploaded files, web pages, and searches of CourtListener,
+         the Federal Register, the eCFR, govinfo, and SEC EDGAR. Every document is chunked,
+         embedded, and anchored to its pages; every change is recorded as a new library
+         version, so a run can be repeated against the library exactly as it searched it.
+         Each library produces a citation list for any version.</p>
+    </div>
+    <div class="feature">
       <div class="feature-icon">📄</div>
       <h3>Document analysis</h3>
-      <p>Break a question about a contract or opinion into sub-questions, answer each from
-         the document, and ground the answer in the library with numbered citations that are
-         checked afterwards &mdash; an invented citation is flagged, not hidden.</p>
+      <p>Break a question about a contract or opinion into sub-questions, answer each from the
+         document, and ground the answer in one or more libraries searched together. Each
+         numbered citation is traced to its document, library, and version, and one that names
+         no retrieved passage is flagged as unsupported, not hidden.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">🛠️</div>
       <h3>Agentic workflows</h3>
-      <p>A tool-using loop that plans, searches the library and does damages arithmetic until
-         it can answer, with every tool call recorded for audit.</p>
+      <p>A tool-using agent that searches its libraries &mdash; all at once or one at a
+         time &mdash; and does arithmetic until it can answer. A passage keeps one number
+         across all its searches, so every citation in the answer leads to one source, and
+         every tool call is recorded for audit.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">⚖️</div>
-      <h3>Multi-agent role-play</h3>
-      <p>Stage a negotiation, mediation or hearing between agents that each have a background,
-         a temperament, a private bottom line and confidential facts. A moderator keeps turns
-         fair and steps in when talks stall; an evaluator assesses the outcome. Draft a cast
-         from a news story or opinion, or upload agent files written in plain Markdown.</p>
+      <h3>Legal case role-play</h3>
+      <p>Stage a negotiation, mediation, or hearing between agents with their own background,
+         temperament, bottom line, confidential facts, and private memory. Give each side its
+         own case files: citing a passage discloses it as an exhibit the other side can answer.
+         A moderator keeps turns fair and steps in when talks stall; an evaluator assesses the
+         outcome and the disclosures. Draft a cast from a news story or opinion, or upload
+         agent files written in plain Markdown.</p>
       <p><a href="{{ prefix }}/static/docs/roleplay-moderation.pdf">How the moderator works (PDF)</a></p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">🗂️</div>
-      <h3>Grounded retrieval</h3>
-      <p>Upload PDFs or pull directly from CourtListener, the Federal Register, the eCFR,
-         govinfo and SEC EDGAR &mdash; everything is chunked, embedded, and made citable by
-         topic.</p>
     </div>
   </div>
 </section>
@@ -107,16 +124,20 @@
 <section>
   <h2>How a study runs</h2>
   <ol class="steps">
-    <li><strong>Gather sources.</strong> Upload documents or search the online legal
-        databases and ingest the results you want, grouped by topic.</li>
-    <li><strong>Design an experiment.</strong> Pick a mode and configure it through the
-        builder &mdash; no JSON required &mdash; then save it. For a role-play, write the
-        cast, upload agent files, or let the AI draft one from a link, file or pasted text.</li>
-    <li><strong>Launch a run.</strong> Fill in the run's inputs on the experiment page, which
-        also says how long a role-play can take; work is dispatched across the Spark cluster
-        and streamed back live as a trace.</li>
-    <li><strong>Read the result.</strong> Every run keeps its config snapshot, citations,
-        per-host timing and full event log, so it can be compared or reproduced later.</li>
+    <li><strong>Build your libraries.</strong> Upload documents, add web pages, or search the
+        online legal databases and add the results you want. Each library keeps a numbered
+        history of versions and a citation list for each.</li>
+    <li><strong>Design an experiment.</strong> Pick a mode in the builder &mdash; no JSON
+        required &mdash; and choose the libraries it draws on. For a role-play, write the cast,
+        upload agent files, or let the AI draft one from a link, file, or pasted text; choose
+        the legal sources everyone shares and give each agent its own case files.</li>
+    <li><strong>Launch a run.</strong> Fill in the run's inputs, and optionally change its
+        libraries or pick earlier versions of them. The run records exactly what it searched;
+        work is dispatched across the Spark cluster and streamed back live as a trace.</li>
+    <li><strong>Read and trace the result.</strong> Every citation links to the document it
+        came from; References list each cited source with its library version and every place
+        it was cited, and a role-play shows what each side disclosed. Export the run as a PDF,
+        or run it again with the same library versions to reproduce it.</li>
   </ol>
   <p class="prose muted-note">
     Runs execute real language-model calls against shared research hardware. Please be
@@ -129,13 +150,14 @@
   <ul class="method-notes">
     <li>
       <div class="method-title">AI Law Lab: System Architecture</div>
-      <div class="method-meta">Jian Gong, AI Law Lab &middot; architecture note, September 2026 &middot;
+      <div class="method-meta">Jian Gong, AI Law Lab &middot; architecture note, October 2026 &middot;
         <a href="{{ prefix }}/static/docs/architecture.pdf">PDF</a></div>
-      <p class="method-blurb">A one-page diagram of the whole system &mdash; browser to reverse
-         proxy to orchestrator to the Spark cluster and the database &mdash; followed by a
-         component reference: what each tier does, why inference is admitted through a single
-         bounded queue, what every run records, and the one path on which anything leaves
-         campus.</p>
+      <p class="method-blurb">A one-page diagram of the whole system &mdash; from sign-in and the
+         web portal, through the experiment manager and the three experiment modes, to the
+         shared retrieval, tools and memory, the router, the Spark cluster and the record every
+         run leaves &mdash; followed by a reference to each tier: how libraries are versioned and
+         searched together, how a citation is traced back to its source, why inference is
+         admitted through a single bounded queue, and what the server fetches from outside.</p>
     </li>
     <li>
       <div class="method-title">Moderating Multi-Agent Legal Role-Play with a Small Local Language Model</div>
