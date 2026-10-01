@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     web_link_max_words: int = 100_000
     web_link_max_per_request: int = 20
 
+    # --- crawling a page's links into a library ---------------------------
+    # "Add everything linked from this page": the rules in crawler.py. Pages are fetched one
+    # at a time at least crawl_delay_s apart (longer if robots.txt asks, up to
+    # crawl_max_delay_s); one crawl takes at most crawl_max_pages.
+    crawl_delay_s: float = 2.0
+    crawl_max_delay_s: float = 30.0
+    crawl_max_pages: int = 100
+    crawl_user_agent: str = ("AILawLab-crawler/1.0 (+https://datahive.uwyo.edu/ai_law_lab/; "
+                             "University of Wyoming legal research; gojian@uwyo.edu)")
+
     # --- network tools for agents -----------------------------------------
     # With "Allow network tools" an agent may search the online databases and read a result
     # or a public web page. Each read is saved into a library and embedded, so it occupies

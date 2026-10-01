@@ -63,6 +63,14 @@
     <div><div class="fact-label">Last checked</div><div>{{ (m.checked_at or '')[:10] or '—' }}</div>
       {% if m.changed_at %}<div class="fact-note">last changed {{ m.changed_at[:10] }}</div>{% endif %}</div>
   </div>
+  {% if m.crawled_from %}
+  <p class="hint">Collected by a crawl of <a href="{{ m.crawled_from }}" target="_blank" rel="noopener">{{ m.crawled_from }}</a>,
+    which linked to it.</p>
+  {% endif %}
+  {% if m.licence is defined %}
+  <p class="licence-note"><strong>Licence notice{% if m.licence_from %} ({{ m.licence_from }}){% endif %}:</strong>
+    {{ m.licence or 'none found. Check the site’s terms before relying on this document.' }}</p>
+  {% endif %}
   {% if m.check_error %}<p class="provider-note warn">Last check: {{ m.check_error }}</p>{% endif %}
   <div class="launch-row">
     <button type="button" class="small-btn" id="check-btn">↻ Check for updates</button>

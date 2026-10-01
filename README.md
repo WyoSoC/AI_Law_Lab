@@ -344,6 +344,19 @@ as unsupported. The run page lists the sources given to the model and a **Refere
 section, the cited documents in the library citation form with the library version each was
 found in and every place it was cited, also as a `.txt` download and in the PDF report.
 
+**Crawling a page** ("Everything linked from one page, on the same website" under Add web
+links, `crawler.py`) reads an index page and adds the documents it links to on the same
+website, one level deep. A preview, which reads only the page and its robots.txt, shows how
+many links there are, what robots.txt allows, the pause it will use and the licence notice it
+found, before anything is collected. Its rules are shown on the page and enforced in code:
+robots.txt is obeyed (a failing one stops the crawl), requests go one at a time at least
+`crawl_delay_s` (2 s) apart or slower if robots.txt asks, at most `crawl_max_pages` (100) a
+crawl, it stops on HTTP 429/503 or three failures in a row, it identifies itself with
+`crawl_user_agent`, and only public addresses and web pages, PDFs and text are read. Each
+document keeps the licence notice found, the page it was linked from and when it was read;
+each crawl is a row in `crawls` (and the audit log) with its rules and every link's outcome.
+It runs in the background, one crawl per website at a time, and can be stopped.
+
 A library can be hidden from the lists and pickers (its page has "Hide from lists"); hidden
 ones sit under a "Hidden libraries" drop-down and stay usable. With no choice recorded in
 `library_settings`, a library whose name contains "test" starts hidden.
@@ -367,6 +380,7 @@ src/ailawlab/
   cast_assistant.py    AI-drafted casts, real-name replacement, AI cast review
   tools.py             tool registry for agentic workflows
   network_tools.py     online search and reading for agents, saved into a library
+  crawler.py           polite one-level crawl of a page's same-site links into a library
   tracing.py           trace writer + run metrics
   experiments.py       experiment/run lifecycle
   graphs/              LangGraph definitions per mode; roleplay_policy.py holds the moderation rules

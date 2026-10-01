@@ -169,6 +169,30 @@ CREATE TABLE IF NOT EXISTS library_settings (
     changed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- "Add everything linked from this page" (crawler.py): one row per crawl, with the rules it
+-- ran under and what happened to every link, so a library's crawled documents can be traced
+-- to the crawl that took them and to who started it.
+CREATE TABLE IF NOT EXISTS crawls (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    corpus       TEXT NOT NULL,
+    start_url    TEXT NOT NULL,
+    host         TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'running'
+                 CHECK (status IN ('running', 'stopping', 'finished', 'stopped', 'failed', 'interrupted')),
+    max_pages    INTEGER NOT NULL,
+    rules        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    total        INTEGER NOT NULL DEFAULT 0,
+    done         INTEGER NOT NULL DEFAULT 0,
+    added        INTEGER NOT NULL DEFAULT 0,
+    results      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    message      TEXT NOT NULL DEFAULT '',
+    version      INTEGER,
+    started_by   UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_crawls_created ON crawls(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id           BIGSERIAL PRIMARY KEY,
     document_id  BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

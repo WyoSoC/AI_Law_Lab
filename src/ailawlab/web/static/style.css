@@ -634,6 +634,15 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .ref-list .ref-uses { font-size: .8rem; color: var(--muted); }
 .ref-list .ref-uses .cite { margin-right: .1rem; }
 .hidden-libs { margin-top: .8rem; }
+.crawl-rules { margin: .8rem 0; font-size: .86rem; }
+.crawl-rules > summary { cursor: pointer; font-weight: 600; }
+.crawl-rules ol { margin: .4rem 0; padding-left: 1.3rem; display: grid; gap: .3rem; line-height: 1.45; }
+.crawl-plan ul { margin: .3rem 0 .6rem; padding-left: 1.2rem; font-size: .88rem; display: grid; gap: .25rem; }
+.crawl-sample { font-size: .8rem; overflow-wrap: anywhere; }
+.crawl-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: .3rem 0 .5rem; }
+.crawl-bar span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.crawl-history { margin-top: 1rem; font-size: .86rem; }
+.crawl-history .link-btn { overflow-wrap: anywhere; text-align: left; }
 .hidden-libs > summary { font-size: .88rem; color: var(--muted); cursor: pointer; }
 .corpus-card.is-hidden { opacity: .75; }
 .inline-form { display: inline; margin: 0; }

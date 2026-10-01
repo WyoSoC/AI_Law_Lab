@@ -91,5 +91,5 @@ const LinkUI = (() => {
     }
   }
 
-  return {add, check, checkAll};
+  return {add, check, checkAll, resultList};
 })();

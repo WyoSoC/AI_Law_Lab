@@ -56,6 +56,64 @@ expanding it over time. Each document is chunked, embedded and made citable.</p>
 
 <div id="pane-links" role="tabpanel" aria-labelledby="tab-links" hidden>
 <div class="panel">
+  <div class="source-choice" role="radiogroup" aria-label="How to add">
+    <label class="check"><input type="radio" name="link-mode" value="list" checked onchange="showLinkMode()"> These links</label>
+    <label class="check"><input type="radio" name="link-mode" value="crawl" onchange="showLinkMode()"> Everything linked from one page, on the same website (crawl)</label>
+  </div>
+
+  <div id="crawl-pane" hidden>
+    <label for="crawl-url">The page that lists the documents</label>
+    <input type="text" id="crawl-url" spellcheck="false" placeholder="https://www.example.gov/opinions/index.html">
+    <div class="two-col">
+      <div>
+        <label for="crawl-max">Read at most</label>
+        <input type="number" id="crawl-max" min="1" max="{{ crawl_max }}" value="{{ crawl_max }}">
+        <p class="hint">pages (no more than {{ crawl_max }} in one crawl).</p>
+      </div>
+      <div>
+        <label>Add them to</label>
+        <span class="corpus-picker" id="crawl-picker" data-default="web"></span>
+      </div>
+    </div>
+    <label>Take</label>
+    <div class="source-choice" id="crawl-kinds">
+      <label class="check"><input type="checkbox" value="pdf" checked> PDFs</label>
+      <label class="check"><input type="checkbox" value="page" checked> web pages</label>
+      <label class="check"><input type="checkbox" value="text" checked> text files</label>
+      <label class="check"><input type="checkbox" id="crawl-folder"> only links under this page's folder</label>
+    </div>
+    <p class="hint">An index page usually also links to the site's own navigation (home, help, search).
+      Keeping to PDFs, or to the page's folder, usually leaves just the documents; the preview shows
+      how many each choice keeps.</p>
+    <details class="crawl-rules" open>
+      <summary>How the crawler behaves (its rules)</summary>
+      <ol>
+        {% for r in crawl_rules %}<li><strong>{{ r.title }}.</strong> {{ r.text }}</li>{% endfor %}
+      </ol>
+      <p class="hint">Following these rules does not by itself make collecting a site's content
+        appropriate. Read the site's terms and licence first; the preview shows the notice it found.</p>
+    </details>
+    <div class="cast-toolbar">
+      <button type="button" id="crawl-preview">Preview crawl</button>
+      <span class="hint">Reads only the page and its robots.txt; nothing is added yet.</span>
+    </div>
+    <div id="crawl-result" class="source-results"></div>
+    {% if crawls %}
+    <details class="crawl-history">
+      <summary>Recent crawls ({{ crawls|length }})</summary>
+      <ul class="link-results">
+        {% for c in crawls %}
+        <li><a href="{{ prefix }}/sources?crawl={{ c.id }}#add" onclick="watchCrawl('{{ c.id }}'); return false;">{{ c.start_url }}</a>
+          <span class="hint">{{ c.status }} &middot; {{ c.added }} added of {{ c.total }} &middot; into
+            <a href="{{ prefix }}/sources/corpora/{{ c.corpus|urlencode }}">{{ c.corpus }}</a>
+            &middot; {{ c.started_by_name or 'someone' }}, {{ c.created_at.strftime('%b %-d, %H:%M') }}</span></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+
+  <div id="list-pane">
   <label for="links-text">Web links (one per line; up to {{ link_limit }} at a time)</label>
   <textarea id="links-text" class="short" spellcheck="false"
             placeholder="https://wyoleg.gov/statutes/compress/title35.pdf&#10;https://deq.wyoming.gov/...&#10;https://www.courtlistener.com/opinion/..."></textarea>
@@ -71,6 +129,7 @@ expanding it over time. Each document is chunked, embedded and made citable.</p>
   <div id="links-result" class="source-results"></div>
   <p class="hint">Web pages change. To keep a link current, open its library and use
     <strong>Check for updates</strong>: pages that changed are re-read, the rest are left as they are.</p>
+  </div>
 </div>
 </div>
 
@@ -122,7 +181,8 @@ function showTab(name) {
 }
 document.querySelectorAll('.subtabs [role=tab]').forEach(t =>
   t.addEventListener('click', () => showTab(t.dataset.tab)));
-showTab({upload: 'upload', links: 'links'}[new URLSearchParams(location.search).get('tab')] || 'search');
+showTab({upload: 'upload', links: 'links'}[new URLSearchParams(location.search).get('tab')]
+        || (new URLSearchParams(location.search).get('crawl') ? 'links' : 'search'));
 
 // ---------------------------------------------------------------- corpus picker
 //
@@ -170,6 +230,131 @@ document.getElementById('upload-form').addEventListener('submit', ev => {
   if (!name) { ev.preventDefault(); alert('Name the new library first.'); return; }
   ev.target.corpus.value = name;
 });
+
+// ---------------------------------------------------------------- crawling a page's links
+
+function showLinkMode() {
+  const crawl = document.querySelector('input[name=link-mode]:checked').value === 'crawl';
+  document.getElementById('crawl-pane').hidden = !crawl;
+  document.getElementById('list-pane').hidden = crawl;
+}
+
+async function postJSON(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                              body: body ? JSON.stringify(body) : undefined});
+  let d = {};
+  try { d = await r.json(); } catch (e) { /* not JSON */ }
+  if (!r.ok) throw new Error(d.detail || `The server answered ${r.status}.`);
+  return d;
+}
+
+function crawlRequest() {
+  return {url: document.getElementById('crawl-url').value.trim(),
+          max_pages: parseInt(document.getElementById('crawl-max').value, 10) || undefined,
+          kinds: [...document.querySelectorAll('#crawl-kinds input[value]:checked')].map(i => i.value),
+          same_folder: document.getElementById('crawl-folder').checked,
+          corpus: pickedCorpus(document.getElementById('crawl-picker'))};
+}
+
+document.getElementById('crawl-preview').addEventListener('click', async ev => {
+  const box = document.getElementById('crawl-result'), req = crawlRequest();
+  if (!req.url) { box.innerHTML = '<p class="hint">Give the page to start from.</p>'; return; }
+  ev.target.disabled = true;
+  box.innerHTML = '<p class="hint">Reading robots.txt and the page…</p>';
+  try {
+    const p = await postJSON(`${PREFIX}/api/crawls/preview`, req);
+    if (p.found === undefined) {
+      box.innerHTML = `<p class="provider-note warn">${esc(p.robots)}</p>`;
+      return;
+    }
+    const kinds = countText(p.kinds);
+    box.innerHTML = `<div class="crawl-plan">
+      <p class="cast-msg-head">${p.found} link${p.found === 1 ? '' : 's'} on ${esc(p.host)} found on this page.</p>
+      <ul>
+        <li><strong>robots.txt:</strong> ${esc(p.robots)}${p.disallowed ? ` ${p.disallowed} link${p.disallowed === 1 ? ' is' : 's are'} disallowed and will be skipped.` : ''}</li>
+        <li><strong>Allowed links:</strong> ${countText(p.allowed_kinds)}; ${p.in_folder} of them under ${esc(p.folder)}.</li>
+        <li><strong>Would read:</strong> ${p.take} (${esc(kinds) || 'none'})${p.chosen > p.take ? `, the first ${p.take} of the ${p.chosen} your choices keep, because of the limit` : ''}.</li>
+        <li><strong>Pace:</strong> one at a time, ${p.delay} s apart; about ${p.minutes} minute${p.minutes === 1 ? '' : 's'} in all.</li>
+        <li><strong>Licence notice found:</strong> ${p.licence ? esc(p.licence) : '<em>none on this page. Check the site\'s terms before using what is collected.</em>'}</li>
+      </ul>
+      ${p.sample.length ? `<details><summary>First links</summary><ul class="crawl-sample">${p.sample.map(u => `<li>${esc(u)}</li>`).join('')}</ul></details>` : ''}
+      ${p.ok ? `<div class="cast-toolbar"><button type="button" class="primary" id="crawl-start">Start crawl into “${esc(req.corpus || 'the new library')}”</button>
+        <span class="hint">It runs on the server; you can leave this page.</span></div>` : '<p class="provider-note warn">Nothing here this crawler may read.</p>'}
+    </div>`;
+    const start = document.getElementById('crawl-start');
+    if (start) start.addEventListener('click', () => startCrawl(start));
+  } catch (e) {
+    box.innerHTML = `<p class="provider-note warn">${esc(e.message)}</p>`;
+  } finally {
+    ev.target.disabled = false;
+  }
+});
+
+function countText(kinds) {
+  const word = {pdf: 'PDF', page: 'web page', text: 'text file'};
+  const parts = Object.entries(kinds || {}).map(([k, n]) => `${n} ${word[k] || k}${n === 1 ? '' : 's'}`);
+  return parts.join(', ') || 'none';
+}
+
+async function startCrawl(button) {
+  const req = crawlRequest(), box = document.getElementById('crawl-result');
+  if (!req.corpus) { alert('Choose a library, or name a new one.'); return; }
+  button.disabled = true;
+  try {
+    const c = await postJSON(`${PREFIX}/api/crawls`, req);
+    watchCrawl(c.id);
+  } catch (e) {
+    box.insertAdjacentHTML('beforeend', `<p class="provider-note warn">${esc(e.message)}</p>`);
+    button.disabled = false;
+  }
+}
+
+let crawlTimer = null;
+const CRAWL_WORD = {running: 'Crawling', stopping: 'Stopping', finished: 'Finished', stopped: 'Stopped',
+                    failed: 'Failed', interrupted: 'Interrupted'};
+
+async function watchCrawl(id) {
+  clearTimeout(crawlTimer);
+  document.querySelector('input[name=link-mode][value=crawl]').checked = true;
+  showLinkMode();
+  const box = document.getElementById('crawl-result');
+  let c;
+  try {
+    const r = await fetch(`${PREFIX}/api/crawls/${id}`);
+    c = await r.json();
+    if (!r.ok) throw new Error(c.detail || r.statusText);
+  } catch (e) {
+    box.innerHTML = `<p class="provider-note warn">${esc(e.message)}</p>`;
+    return;
+  }
+  const live = c.status === 'running' || c.status === 'stopping';
+  const pct = c.total ? Math.round(100 * c.done / c.total) : 100;
+  const results = [...c.results].reverse().map(x => ({...x, link: x.link}));
+  box.innerHTML = `<div class="crawl-plan">
+    <p class="cast-msg-head">${CRAWL_WORD[c.status] || c.status}: ${c.done} of ${c.total} read, ${c.added} added to
+      <a href="${PREFIX}/sources/corpora/${encodeURIComponent(c.corpus)}${c.version ? `/versions/${c.version}` : ''}"><strong>${esc(c.corpus)}</strong></a>${c.version ? `, now version ${c.version}` : ''}.</p>
+    <div class="crawl-bar"><span style="width:${pct}%"></span></div>
+    ${c.message ? `<p class="hint">${esc(c.message)}</p>` : ''}
+    <p class="hint">From ${esc(c.start_url)} &middot; ${esc((c.rules || {}).delay_s)} s between requests &middot;
+      ${esc((c.rules || {}).robots || '')}</p>
+    ${live && c.status === 'running' ? '<div class="cast-toolbar"><button type="button" class="small-btn" id="crawl-stop">Stop crawl</button></div>' : ''}
+    ${LinkUI.resultList ? LinkUI.resultList(results) : ''}
+  </div>`;
+  const stopBtn = document.getElementById('crawl-stop');
+  if (stopBtn) stopBtn.addEventListener('click', async () => {
+    stopBtn.disabled = true;
+    try { await postJSON(`${PREFIX}/api/crawls/${id}/stop`); } catch (e) { /* finished meanwhile */ }
+    watchCrawl(id);
+  });
+  if (live) crawlTimer = setTimeout(() => watchCrawl(id), 2500);
+  else if (c.added) refreshCorpora(c.corpus);
+}
+
+// A crawl's progress can be opened by link: ?crawl=<id> (the recent-crawls list uses it).
+if (new URLSearchParams(location.search).get('crawl')) {
+  showTab('links');
+  watchCrawl(new URLSearchParams(location.search).get('crawl'));
+}
 
 // ---------------------------------------------------------------- search and ingest
 

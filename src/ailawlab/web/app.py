@@ -21,6 +21,7 @@ from .. import (
     agent_spec,
     cast_assistant,
     citations,
+    crawler,
     experiments,
     rag,
     source_material,
@@ -418,7 +419,66 @@ async def sources_page(request: Request):
         "corpora": await rag.list_corpora(),
         "topics": sources.by_topic(),
         "link_limit": settings.web_link_max_per_request,
+        "crawl_rules": crawler.rules(),
+        "crawl_max": settings.crawl_max_pages,
+        "crawls": await crawler.recent(),
     })
+
+
+# ---------------------------------------------------------------- crawling a page's links
+
+
+def _crawl_json(row: dict) -> dict:
+    return json.loads(json.dumps(row, default=str))
+
+
+@app.post("/api/crawls/preview")
+async def api_crawl_preview(request: Request):
+    """What crawling a page would do. Body: {url, max_pages}. Reads robots.txt and the page
+    itself, nothing it links to."""
+    body = await request.json()
+    try:
+        return JSONResponse(await crawler.preview(str(body.get("url") or ""), body.get("max_pages"),
+                                                  body.get("kinds"), bool(body.get("same_folder"))))
+    except source_material.SourceError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/crawls")
+async def api_crawl_start(request: Request):
+    """Start crawling a page's same-site links into a library. Body: {url, corpus, max_pages}."""
+    body = await request.json()
+    try:
+        row = await crawler.start(await get_router(), str(body.get("url") or ""),
+                                  str(body.get("corpus") or ""), body.get("max_pages"), user_id(request),
+                                  body.get("kinds"), bool(body.get("same_folder")))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except (ValueError, source_material.SourceError) as e:
+        raise HTTPException(400, str(e)) from e
+    await accounts.audit(user_id(request), "library.crawl", row["start_url"],
+                         id=str(row["id"]), corpus=row["corpus"], pages=row["total"])
+    return JSONResponse(_crawl_json(row))
+
+
+@app.get("/api/crawls")
+async def api_crawls():
+    return JSONResponse([_crawl_json(r) for r in await crawler.recent()])
+
+
+@app.get("/api/crawls/{crawl_id}")
+async def api_crawl(crawl_id: str):
+    row = await crawler.get(crawl_id) if _is_uuid(crawl_id) else None
+    if row is None:
+        raise HTTPException(404, "no such crawl")
+    return JSONResponse(_crawl_json(row))
+
+
+@app.post("/api/crawls/{crawl_id}/stop")
+async def api_crawl_stop(crawl_id: str):
+    if not _is_uuid(crawl_id) or not await crawler.stop(crawl_id):
+        raise HTTPException(409, "That crawl is not running.")
+    return JSONResponse({"status": "stopping"})
 
 
 @app.get("/api/sources/corpora")

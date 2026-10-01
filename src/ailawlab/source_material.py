@@ -42,7 +42,12 @@ MAX_REDIRECTS = 5
 
 
 class SourceError(ValueError):
-    """A source that cannot be read, explained in words a lawyer can act on."""
+    """A source that cannot be read, explained in words a lawyer can act on. `status` is the
+    HTTP status the website answered with, when that was the reason."""
+
+    def __init__(self, message: str = "", *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -386,12 +391,13 @@ async def check_public_url(url: str) -> None:
                               "which this server will not fetch.")
 
 
-async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None,
-                    max_words: int | None = None) -> SourceDoc:
-    """Fetch a link and read it. `transport` exists so tests can stand in for the network;
-    `max_words` overrides the drafting cap, for links kept whole in a corpus."""
+async def fetch_raw(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None,
+                    user_agent: str | None = None) -> tuple[str, str, bytes]:
+    """Fetch a link's bytes: (final url, content type, body). Every hop of a redirect is
+    re-checked for a public address, and the body is capped at settings.source_max_bytes.
+    `transport` exists so tests can stand in for the network."""
     url = normalize_link(raw_url)
-    headers = {"User-Agent": settings.sec_user_agent,
+    headers = {"User-Agent": user_agent or settings.sec_user_agent,
                "Accept": "text/html,application/xhtml+xml,application/pdf,text/plain;q=0.9,*/*;q=0.5"}
     async with httpx.AsyncClient(timeout=settings.source_timeout_s, follow_redirects=False,
                                  transport=transport, headers=headers) as client:
@@ -410,23 +416,30 @@ async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None 
                             raise SourceError(
                                 f"That page is too large to read (over "
                                 f"{settings.source_max_bytes // 1_000_000} MB).")
-                    # PDF extraction is CPU-bound; keep it off the event loop.
-                    return await asyncio.to_thread(
-                        from_bytes, bytes(body), content_type=r.headers.get("content-type", ""),
-                        url=url, max_words=max_words)
+                    return url, r.headers.get("content-type", ""), bytes(body)
             except httpx.RequestError as e:
                 raise SourceError(f"Could not reach {_host(url) or 'that website'}: it did not "
                                   "respond. Check the link, or paste the text instead.") from e
     raise SourceError("That link redirects too many times to follow.")
 
 
+async def fetch_url(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None,
+                    max_words: int | None = None, user_agent: str | None = None) -> SourceDoc:
+    """Fetch a link and read it. `max_words` overrides the drafting cap, for links kept
+    whole in a corpus."""
+    url, ctype, body = await fetch_raw(raw_url, transport=transport, user_agent=user_agent)
+    # PDF extraction is CPU-bound; keep it off the event loop.
+    return await asyncio.to_thread(from_bytes, body, content_type=ctype, url=url,
+                                   max_words=max_words)
+
+
 def _raise_for_status(code: int) -> None:
     if code in (401, 402, 403, 451):
-        raise SourceError("The website would not let this server read that page (it may need "
+        raise SourceError(status=code, message="The website would not let this server read that page (it may need "
                           "a login or subscription, or block automated readers). Copy the "
                           "text and paste it instead.")
     if code == 404:
-        raise SourceError("That page was not found. Check the link.")
+        raise SourceError("That page was not found. Check the link.", status=code)
     if code >= 400:
-        raise SourceError(f"The website returned an error (HTTP {code}). Try again later, or "
+        raise SourceError(status=code, message=f"The website returned an error (HTTP {code}). Try again later, or "
                           "paste the text instead.")
