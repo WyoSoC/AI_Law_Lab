@@ -255,10 +255,12 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
                 cited = [s for s in e["sources"] if s.get("cited")]
                 lines = "<br/>".join(
                     f'[{_plain(s["marker"])}] {_plain(s["label"])}'
-                    + (f' (in {_plain(s["corpus"])}{" v" + str(s["version"]) if s.get("version") else ""})'
-                       if s.get("corpus") else "")
+                    + (f' ({"own case file" if s.get("private") else "in"} {_plain(s["corpus"])}'
+                       f'{" v" + str(s["version"]) if s.get("version") else ""})' if s.get("corpus") else "")
                     + (" — cited" if s.get("cited") else "")
                     for s in e["sources"])
+                if e.get("disclosed"):
+                    lines += "<br/><b>Disclosed:</b> " + ", ".join(_plain(m) for m in e["disclosed"])
                 inner.append(Paragraph(f"<b>Legal sources given ({len(e['sources'])}, {len(cited)} cited)</b><br/>{lines}",
                                        st["small"]))
             if include_private and e["private_notes"]:
@@ -271,6 +273,17 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
             # A turn may run past a page; the box then splits rather than jumping pages.
             story.append(_boxed(inner, rule, fill, width))
             story.append(Spacer(1, 6))
+
+    if view.get("exhibits"):
+        story.append(CondPageBreak(1.5 * inch))
+        story.append(Paragraph("Exhibits", st["h1"]))
+        for e in view["exhibits"]:
+            where = (f"{'case file' if e.get('private') else 'shared library'} {e['corpus']}"
+                     + (f" v{e['version']}" if e.get("version") else "")) if e.get("corpus") else ""
+            story.append(Paragraph(
+                f"<b>[{_plain(e['marker'])}]</b> {_plain(e['label'])}"
+                f'<br/><font color="{MUTED}" size="8">Disclosed by {_plain(e["name"])} in turn {e["turn"]}'
+                + (f"; {_plain(where)}" if where else "") + ".</font>", st["body"]))
 
     refs = view.get("refs") or {}
     if refs.get("references") or refs.get("unsupported"):

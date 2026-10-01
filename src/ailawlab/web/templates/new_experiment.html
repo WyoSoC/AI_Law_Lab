@@ -94,9 +94,12 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
       </div>
     </div>
 
-    <label>Legal sources the cast can cite</label>
+    <label>Shared legal sources (every participant can cite these)</label>
     {{ library_picker('rp_libs', libraries, [], 'syncJSON()') }}
-    <p class="hint">Tick none and the cast argues from the scenario alone. Otherwise, before each
+    <p class="hint">Shared: every participant can draw on these. Each agent can also hold its own
+       <strong>case files</strong> (set on its card below), which only that agent sees until it
+       cites a passage, disclosing it to everyone as an exhibit, [E1], [E2].
+       Tick none and the cast argues from the scenario alone. Otherwise, before each
        turn the speaker is shown the passages closest to their objective and to what was just
        said, from all the libraries ticked, and can cite them as [S1], [S2]. The run page shows
        which sources each turn was given, from which library, and which it cited. Manage
@@ -194,6 +197,7 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
 <script src="{{ prefix }}/static/cast_builder.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
+const LIBRARY_CHOICES = {{ libraries|tojson }};   // for each agent's case files
 // Once someone hand-edits the JSON, the builder stops overwriting it: their text is the
 // source of truth from that point, and silently clobbering it would be hostile.
 let rawEdited = false;

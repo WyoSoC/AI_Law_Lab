@@ -77,7 +77,10 @@ class RoleplayState(TypedDict, total=False):
     directive: str              # moderator's instruction to the next speaker, if any
     last_intervention: int      # turn of the moderator's last impasse intervention
     ledgers: dict[str, dict]    # agent_id -> that agent's private negotiation notes
-    libraries: list[str]        # libraries of legal sources the cast may cite; empty for none
+    libraries: list[str]        # shared libraries every agent may search; empty for none
+    # Passages disclosed on the record, in order: [E1], [E2], ... Each was cited by an agent
+    # from its own case file or a shared library, and every agent may see and cite it after.
+    exhibits: list[dict]
     outcome: str
     done: bool
     error: str

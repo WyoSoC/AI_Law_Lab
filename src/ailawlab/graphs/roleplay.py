@@ -24,14 +24,16 @@ from langgraph.graph import END, StateGraph
 from ..config import settings
 from ..grounding import in_list, link_citations
 from ..memory import Memory, MemoryScope, estimate_tokens
-from ..rag import Passage
+from ..rag import Passage, case_files
 from .roleplay_policy import (
     MODERATOR_ID,
     character_reminder,
     cited_sources,
     compose_agent_prompt,
     context_window,
+    disclose,
     format_entries,
+    format_exhibits,
     format_ledger,
     format_sources,
     intervention_due,
@@ -97,14 +99,16 @@ Private information the participants held (they could not see each other's):
 {briefs}
 
 {transcript}
-
+{exhibits}
 Assess the exercise concretely, citing turn numbers:
 1. Outcome: did the parties reach agreement, and on what exact terms? If not, why not?
 2. Movement: which positions shifted, what caused each shift, and where did the exchange
    repeat itself instead of moving?
 3. Discipline: did anyone accept terms past their bottom line, or reveal confidential
    information? Did revealing it help or hurt them?
-4. Law: note any legal proposition asserted that appears unsupported.
+4. Law: note any legal proposition asserted that appears unsupported. Where parties drew on
+   their own case files, say which disclosures moved the exchange and whether any exhibit
+   was misdescribed by the side that cited it.
 5. Realism: were the participants' concessions and resistance plausible for real counsel
    in this situation, or did anyone give in or dig in implausibly?"""
 
@@ -229,10 +233,14 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
         label = "Since your last turn" if has_spoken else "What has been said so far"
         incoming = f"{label}:\n{format_entries(new)}"
 
-    passages = await _consult_sources(ctx, state, agent, new or transcript)
-    sources = format_sources([{"label": p.cite_label() + (f" (library {p.library_label()})"
-                                                          if p.corpus else ""),
-                               "content": p.content} for p in passages])
+    found = await _consult_sources(ctx, state, agent, new or transcript)
+    passages = [p for p, _ in found]
+    exhibits = list(state.get("exhibits") or [])
+    sources = format_sources([{"label": p.cite_label() + (
+                                  f" (your case file {p.library_label()})" if private
+                                  else f" (library {p.library_label()})" if p.corpus else ""),
+                               "content": p.content, "private": private}
+                              for p, private in found], exhibits)
 
     num_ctx = context_window(estimate_tokens(system) + estimate_tokens(incoming) + 20_000
                              + estimate_tokens(sources) + speech_budget(word_limit, think) + 1500)
@@ -280,41 +288,84 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
     entry = {"turn": turn, "agent_id": agent["id"], "name": name,
              "role": agent.get("role", ""), "content": content,
              "private_notes": ledger, "thinking": res.thinking, "host": res.host}
-    if passages:
-        cited = set(cited_sources(content, len(passages)))
-        entry["sources"] = [p.source(f"S{i}", i in cited) for i, p in enumerate(passages, start=1)]
-    if state.get("libraries"):
-        # [S2] names this turn's second passage only; a marker past the passages this turn
-        # was given is recorded as unsupported.
-        await ctx.tracer.record_citations(event_id, link_citations(
-            content, in_list(passages), prefix="S", context=f"Turn {turn} · {name}"))
+    cited = cited_sources(content, len(passages))
+    records = [{**p.source(f"S{i}", i in cited), "private": private,
+                "holder": agent["id"] if private else None, "content": p.content}
+               for i, (p, private) in enumerate(found, start=1)]
+    # What this turn cited goes on the record as exhibits the others can see from now on.
+    after, disclosed = disclose(exhibits, records, cited, agent, turn)
+    if records:
+        entry["sources"] = [{k: v for k, v in r.items() if k != "content"} for r in records]
+    if disclosed:
+        entry["disclosed"] = disclosed
+    if found or exhibits or state.get("libraries") or case_files(agent):
+        # [S2] names this turn's second passage only, [E1] the first exhibit on the record
+        # before this turn; a marker naming neither is recorded as unsupported.
+        where = f"Turn {turn} · {name}"
+        await ctx.tracer.record_citations(event_id, [
+            *link_citations(content, in_list(passages), prefix="S", context=where),
+            *link_citations(content, _exhibit_lookup(exhibits), prefix="E", context=where)])
+    if disclosed:
+        await ctx.tracer.note(f"{name} disclosed {', '.join(disclosed)}", node="speak",
+                              agent_id=agent["id"])
     return {
         "transcript": [entry],
         "turn": turn,
         "ledgers": {**state.get("ledgers", {}), agent["id"]: ledger},
+        "exhibits": after,
         "directive": "",
     }
 
 
+def _exhibit_lookup(exhibits: list[dict]):
+    """[E<n>] -> the exhibit as a Passage, for link_citations."""
+    def lookup(n: int) -> Passage | None:
+        if not 1 <= n <= len(exhibits):
+            return None
+        e = exhibits[n - 1]
+        return Passage(chunk_id=e["chunk_id"], document_id=e["document_id"], title=e["label"],
+                       content=e.get("content", ""), page_start=None, page_end=None,
+                       similarity=e.get("similarity") or 0.0, corpus=e.get("corpus") or "",
+                       version=e.get("version"))
+    return lookup
+
+
 async def _consult_sources(ctx, state: RoleplayState, agent: dict,
-                           recent: list[dict]) -> list[Passage]:
-    """The passages put before this speaker, from all the run's libraries together, if it
-    has legal sources.
+                           recent: list[dict]) -> list[tuple[Passage, bool]]:
+    """The passages put before this speaker, each with whether it is from the speaker's own
+    case file: up to three from its case files, then the closest from the shared libraries.
+
+    Only this agent's case files and the shared libraries are searched, so another agent's
+    case file can reach this prompt only once disclosed, as an exhibit. Passages already on
+    the record as exhibits are left out here, since the speaker sees them there.
 
     A failed search is noted in the trace and the turn goes ahead without sources: losing
     the citations for one turn is better than losing an hour-long run.
     """
-    if not state.get("libraries") or not ctx.libraries:
+    own = case_files(agent)
+    shared = [n for n in state.get("libraries") or [] if n not in own]
+    if not own and not shared:
         return []
     query = source_query(agent, recent)
+    found: list[tuple[Passage, bool]] = []
     try:
-        found = await ctx.libraries.search(query, top_k=min(settings.rag_top_k, 4))
+        if own and ctx.libraries.subset(own):
+            found += [(p, True) for p in await ctx.libraries.subset(own).search(query, top_k=3)]
+        if shared and ctx.libraries.subset(shared):
+            k = 2 if own else min(settings.rag_top_k, 4)
+            found += [(p, False) for p in await ctx.libraries.subset(shared).search(query, top_k=k)]
     except Exception as e:  # noqa: BLE001 - see docstring
         await ctx.tracer.note(f"legal source search failed ({type(e).__name__}); this turn "
                               "has no sources", node="speak", agent_id=agent["id"])
         return []
-    await ctx.tracer.retrieval(query, found, node="speak", agent_id=agent["id"])
-    return found
+    await ctx.tracer.retrieval(query, [p for p, _ in found], node="speak", agent_id=agent["id"])
+    on_record = {e["chunk_id"] for e in state.get("exhibits") or []}
+    out, seen = [], set()
+    for p, private in found:
+        if p.chunk_id not in on_record and p.chunk_id not in seen:
+            seen.add(p.chunk_id)
+            out.append((p, private))
+    return out
 
 
 async def _summarize_segment(ctx, segment: list[dict]) -> str:
@@ -346,8 +397,10 @@ async def assess_node(state: RoleplayState, config: RunnableConfig) -> dict:
         body = ("Summaries of the earlier turns:\n\n" + "\n\n".join(summaries)
                 + f"\n\nThe final turns, verbatim:\n{format_entries(tail)}")
 
+    exhibits = state.get("exhibits") or []
     prompt = ASSESS_PROMPT.format(scenario=state["scenario"],
-                                  briefs=private_briefs(state["agents"]), transcript=body)
+                                  briefs=private_briefs(state["agents"]), transcript=body,
+                                  exhibits=f"\n{format_exhibits(exhibits)}\n" if exhibits else "")
     res = await ctx.router.chat(
         [{"role": "user", "content": prompt}],
         think=True, num_ctx=context_window(estimate_tokens(prompt) + 6000), temperature=0.2,

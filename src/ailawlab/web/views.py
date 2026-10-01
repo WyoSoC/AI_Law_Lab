@@ -15,7 +15,7 @@ from ..agent_spec import SECTIONS, check_cast, normalize_agent
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
-from ..rag import library_names
+from ..rag import case_files, library_names, run_library_names
 
 MODE_LABELS = {
     "document_analysis": "Document analysis",
@@ -123,6 +123,7 @@ def agent_view(raw: dict) -> dict[str, Any]:
         "goal": a.get("goal", ""),
         "details": [item(k) for k in _PUBLIC_KEYS if a.get(k)],
         "private": [item(k) for k in _PRIVATE_KEYS if a.get(k)],
+        "case_files": case_files(a),
         "prompt": a.get("system_prompt", ""),
     }
 
@@ -231,10 +232,19 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
                   "if every turn is used"),
         ]
         if libraries:
-            facts.append(_fact("Legal sources", _quoted(libraries), "libraries of passages the cast can cite"))
+            facts.append(_fact("Legal sources", _quoted(libraries), "shared: everyone can cite them"))
+        held: dict[str, list[str]] = {}
+        for a in agents:
+            for name in case_files(a):
+                held.setdefault(name, []).append(str(a.get("name") or a.get("id") or "?"))
+        if held:
+            holders = sorted({h for hs in held.values() for h in hs})
+            facts.append(_fact("Case files", f"{len(held)} librar{'y' if len(held) == 1 else 'ies'}",
+                               "private to " + ", ".join(holders) + " until cited"))
         view.update(
             facts=facts,
             libraries=libraries,
+            case_files=[{"name": n, "holders": hs} for n, hs in held.items()],
             scenario=str(config.get("scenario") or ""),
             agents=[agent_view(a) for a in agents],
             cast_errors=[i["message"] for i in check_cast(agents) if i["level"] == "error"],
@@ -284,7 +294,8 @@ def _speakers(transcript: list[dict], agents: list[dict]) -> dict[str, dict[str,
     for i, aid in enumerate(order):
         a = by_id.get(aid, {})
         info[aid] = {"id": aid, "name": a.get("name") or aid, "role": a.get("role", ""),
-                     "color": i % PALETTE_SIZE + 1, "turns": 0, "words": 0, "cited": 0}
+                     "color": i % PALETTE_SIZE + 1, "turns": 0, "words": 0, "cited": 0,
+                     "disclosed": 0}
     for t in transcript:
         s = info.get(t.get("agent_id"))
         if s:
@@ -293,6 +304,7 @@ def _speakers(transcript: list[dict], agents: list[dict]) -> dict[str, dict[str,
             s["turns"] += 1
             s["words"] += len((t.get("content") or "").split())
             s["cited"] += sum(1 for src in t.get("sources") or [] if src.get("cited"))
+            s["disclosed"] += len(t.get("disclosed") or [])
     return info
 
 
@@ -306,8 +318,8 @@ def library_text(src: dict) -> str:
 
 
 def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
-    """Turn [S2] (role-play) or [3] markers into links to the document the passage came
-    from, with its source and library in the link's tooltip."""
+    """Turn [3], or a role-play's [S2] and [E1], markers into links to the document the
+    passage came from, with its source and library in the link's tooltip."""
     by_marker = {str(s.get("marker")): s for s in sources}
 
     def link(m: re.Match) -> str:
@@ -319,7 +331,7 @@ def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
         return (f'<a class="cite" href="{prefix}/sources/documents/{int(src["document_id"])}" '
                 f'title="{title}">[{m.group(1)}]</a>')
 
-    return re.sub(r'<span class="cite">\[(S?\d+)\]</span>', link, html)
+    return re.sub(r'<span class="cite">\[([SE]?\d+)\]</span>', link, html)
 
 
 def cited_references(rows: list[dict], documents: dict[int, dict]) -> dict[str, Any]:
@@ -401,6 +413,10 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
     }
     view["rerun_versions"] = {lib["name"]: lib["version"] for lib in view["libraries"]
                               if lib.get("version")}
+    # Which of those were shared (the rest were role-play agents' case files), so "run again"
+    # ticks the same shared libraries.
+    view["rerun_shared"] = run_library_names(mode, run.get("config_snapshot") or {},
+                                             run.get("inputs") or {})
     view["summary_html"] = (link_turns(_link_sources(to_html(view["summary_md"]), view["sources"], prefix))
                             if view["summary_md"] else "")
 
@@ -408,6 +424,9 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         transcript = [t for t in result.get("transcript") or [] if isinstance(t, dict)]
         agents = [a for a in config.get("agents") or [] if isinstance(a, dict)]
         speakers = _speakers(transcript, agents)
+        exhibits = [e for e in result.get("exhibits") or [] if isinstance(e, dict)]
+        if view["summary_md"] and exhibits:          # the assessor may cite exhibits too
+            view["summary_html"] = link_turns(_link_sources(to_html(view["summary_md"]), exhibits, prefix))
         entries = []
         for t in transcript:
             moderator = t.get("agent_id") == "moderator"
@@ -418,7 +437,9 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
                 "role": t.get("role", ""), "color": s.get("color", 0),
                 "agent_id": t.get("agent_id"),
                 "content": t.get("content", ""),
-                "html": _link_sources(to_html(t.get("content", "")), t.get("sources") or [], prefix),
+                "html": _link_sources(to_html(t.get("content", "")),
+                                      [*(t.get("sources") or []), *exhibits], prefix),
+                "disclosed": t.get("disclosed") or [],
                 "words": len((t.get("content") or "").split()),
                 "private_notes": t.get("private_notes") or {}, "thinking": t.get("thinking") or "",
                 "sources": t.get("sources") or [], "host": t.get("host", ""),
@@ -427,6 +448,8 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
             scenario=str(config.get("scenario") or ""),
             speakers=list(speakers.values()),
             transcript=entries,
+            exhibits=[{**e, "color": speakers.get(e.get("disclosed_by"), {}).get("color", 0)}
+                      for e in exhibits],
             turns=sum(1 for e in entries if not e["moderator"]),
             interventions=sum(1 for e in entries if e["moderator"]),
             cast=[{**agent_view(a), "id": a.get("id")} for a in agents],

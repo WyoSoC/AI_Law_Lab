@@ -40,7 +40,8 @@ own instructions. What the reader cannot place is never silently dropped. It is 
 "Leverage" should find out it was not read as one of the standard sections.
 
 "Bottom line" and "Confidential information" mirror how negotiators actually prepare (a
-walk-away point, and facts the other side does not have). Studies of LLM negotiators found
+walk-away point, and facts the other side does not have). "Case files" names libraries only
+that person can search; what they cite from one is disclosed to everyone as an exhibit. Studies of LLM negotiators found
 that agents without a threshold to measure offers against tend to repeat themselves rather
 than converge; see graphs/roleplay.py for how the engine uses them.
 
@@ -98,6 +99,12 @@ SECTIONS: tuple[Section, ...] = (
             "Private. Facts only this person knows. They guard them unless revealing one helps.",
             ("confidential", "private information", "private facts", "secrets",
              "secret information", "what only they know", "hidden information")),
+    Section("libraries", "Case files",
+            "Private. Libraries from Legal Sources that only this person can draw on, one per "
+            "line starting with a dash (-). Citing a passage from one discloses it to everyone.",
+            ("case file", "case files", "own case files", "library", "libraries",
+             "private libraries", "own sources", "private sources", "evidence", "documents"),
+            is_list=True),
     Section("notes", "Additional notes",
             "Anything else about this person.",
             ("notes", "other notes", "extra notes"),

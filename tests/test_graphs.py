@@ -177,3 +177,38 @@ async def test_roleplay_agents_keep_separate_memory():
     )
     by_agent = {r["agent_id"]: r["n"] for r in rows}
     assert len(by_agent) >= 2, f"agents shared a memory scope: {by_agent}"
+
+
+async def test_roleplay_case_files_stay_private_until_cited():
+    exp = await experiments.create_experiment(
+        "Case files (test)", "roleplay",
+        config={"libraries": [], "max_turns": 4, "word_limit": 200, "agents": [
+            {"id": "provider", "name": "Dana Reyes", "role": "counsel for the Provider",
+             "goal": "Keep the Provider's right to terminate for convenience.",
+             "libraries": ["test"]},
+            {"id": "client", "name": "Sam Okafor", "role": "counsel for the Client",
+             "goal": "Require at least thirty days' notice of any termination.",
+             "libraries": ["test-regs"]},
+        ]},
+    )
+    run = await experiments.create_run(str(exp["id"]), inputs={
+        "scenario": "Provider and Client negotiate the termination clause of a Wyoming services "
+                    "agreement. Each side should support its position with its own sources."})
+    run_id = str(run["id"])
+    result = await experiments.execute_run(run_id)
+
+    pinned = await fetch_all("SELECT corpus FROM run_libraries WHERE run_id=%s ORDER BY position", (run_id,))
+    assert [p["corpus"] for p in pinned] == ["test", "test-regs"]
+    # Each agent searched only its own case file.
+    hits = await fetch_all("SELECT agent_id, payload FROM run_events WHERE run_id=%s "
+                           "AND event_type='retrieval'", (run_id,))
+    assert hits, "no agent consulted its case file"
+    own = {"provider": "test", "client": "test-regs"}
+    for h in hits:
+        assert {x["library"] for x in h["payload"]["hits"]} <= {own[h["agent_id"]]}
+    for t in result["transcript"]:
+        for src in t.get("sources", []):
+            assert src["private"] and src["corpus"] == own[t["agent_id"]]
+    # Whatever was disclosed names who disclosed it and comes from that person's own file.
+    for e in result["exhibits"]:
+        assert e["corpus"] == own[e["disclosed_by"]] and e["private"]

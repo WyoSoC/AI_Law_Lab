@@ -19,7 +19,7 @@ from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
 from .grounding import SourceLedger
-from .rag import Libraries, pin_libraries, run_library_names, wanted_versions
+from .rag import Libraries, all_run_library_names, pin_libraries, run_library_names, wanted_versions
 from .router import get_router
 from .tools import default_registry
 from .tracing import Tracer, run_metrics
@@ -140,7 +140,7 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
         raise ValueError(f"no such experiment: {experiment_id}")
     if exp.get("deleted_at"):
         raise ValueError("this experiment is in the trash; restore it before running it")
-    names = run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
+    names = all_run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
     pool = await get_pool()
     async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
         await cur.execute(
@@ -244,7 +244,9 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "last_intervention": 0,
             "ledgers": {},
             # Legal sources are optional for a role-play; with none, turns are as before.
+            # These are the shared ones; an agent's own case files travel with the agent.
             "libraries": run_library_names(mode, config, inputs),
+            "exhibits": [],
             "done": False,
         }
     raise ValueError(f"unknown mode {mode!r}")
@@ -311,12 +313,14 @@ async def _libraries_for_run(run_id: str, mode: str, config: dict, inputs: dict,
                              router, tracer: Tracer) -> Libraries:
     """The libraries this run searches, each pinned to one version and recorded on the run.
 
-    A run may choose its own libraries at launch, and may name a version of any of them, to
+    In a role-play these are the shared libraries and every agent's case files; which agent
+    may search which is decided per turn (graphs/roleplay.py). A run may choose its own
+    shared libraries at launch, and may name a version of any library, to
     repeat an earlier result against a library as it was then. A library with no version
     named is searched as it is now: its current contents are recorded as a version if they
     changed since the last one, and that version is used.
     """
-    names = run_library_names(mode, config, inputs)
+    names = all_run_library_names(mode, config, inputs)
     libraries = await pin_libraries(router, names, wanted_versions(names, inputs))
     pool = await get_pool()
     async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
@@ -381,6 +385,7 @@ def _summarize(mode: str, final: dict) -> dict:
             "outcome": final.get("outcome", ""),
             "transcript": final.get("transcript", []),
             "turns": final.get("turn", 0),
+            "exhibits": final.get("exhibits", []),
         }
     return dict(final)
 

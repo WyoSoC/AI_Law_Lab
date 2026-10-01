@@ -319,10 +319,19 @@ similarity, not taken in turns from each library, and text present in two librar
 returned once. Every passage put in a prompt is labelled with its library, and an agent can
 confine a search to one library (`search_libraries(..., library=...)`).
 
+In a role-play each agent can also hold **case files**: libraries only it can search (the
+agent's `libraries` list, the "Case files" section of an agent file). Before each turn the
+speaker sees up to three passages from its own case files, marked as unseen by anyone else,
+then the closest from the shared libraries. Citing a case-file passage discloses it: it goes
+on the record as an exhibit, [E1], [E2], which every participant sees from then on and may
+cite to rely on it or answer it. Another agent's case file never reaches a prompt except as
+an exhibit. The run stores the exhibits with who disclosed each and in which turn; the
+assessor sees them and each side's case files, and the run page and PDF list them.
+
 Citations are traced to the source in every mode (`grounding.py`). Document analysis numbers
 its one retrieval [1], [2]; an agent's passages keep one number across all of its searches
 (`SourceLedger`), so a [3] in its answer names one passage whichever search found it; a
-role-play speaker cites the passages shown that turn as [S1], [S2]. Each marker becomes a
+role-play speaker cites the passages shown that turn as [S1], [S2], and exhibits as [E1]. Each marker becomes a
 `citations` row holding the chunk, document, library and version, and where it appeared
 ("Answer", "Turn 7 · Dana Reyes"); a marker naming no passage the model was given is recorded
 as unsupported. The run page lists the sources given to the model and a **References**

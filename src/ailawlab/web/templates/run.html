@@ -23,7 +23,7 @@
   {% if v.turns is defined %}&middot; {{ v.turns }} turns{% if v.interventions %}, {{ v.interventions }} moderator note{{ '' if v.interventions == 1 else 's' }}{% endif %}{% endif %}
   {% if v.libraries %}&middot; {{ 'library' if v.libraries|length == 1 else 'libraries' }}
     {% for lib in v.libraries %}<a href="{{ prefix }}/sources/corpora/{{ lib.name|urlencode }}{% if lib.version %}/versions/{{ lib.version }}{% endif %}">{{ lib.name }}{% if lib.version %} v{{ lib.version }}{% elif run.status not in ('pending',) %} (empty){% endif %}</a>{{ ', ' if not loop.last }}{% endfor %}
-    {% if v.rerun_versions %}(<a href="{{ prefix }}/experiments/{{ run.experiment_id }}?versions={{ v.rerun_versions|tojson|urlencode }}#launch">run again with {{ 'this version' if v.rerun_versions|length == 1 else 'these versions' }}</a>){% endif %}
+    {% if v.rerun_versions %}(<a href="{{ prefix }}/experiments/{{ run.experiment_id }}?versions={{ v.rerun_versions|tojson|urlencode }}{% if run.mode == 'roleplay' %}&amp;shared={{ v.rerun_shared|tojson|urlencode }}{% endif %}#launch">run again with {{ 'this version' if v.rerun_versions|length == 1 else 'these versions' }}</a>){% endif %}
   {% elif run.status != 'pending' and run.mode != 'roleplay' %}&middot; no library
   {% endif %}
 </p>
@@ -31,6 +31,7 @@
 <nav class="jump" aria-label="On this page">
   {% if v.summary_html %}<a href="#summary">{{ v.summary_title }}</a>{% endif %}
   {% if v.transcript %}<a href="#transcript">Transcript</a>{% endif %}
+  {% if v.exhibits %}<a href="#exhibits">Exhibits</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
   {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
   {% if citations %}<a href="#citations">References</a>{% endif %}
@@ -70,6 +71,7 @@
       <div class="person-name">{{ a.name }}</div>
       {% if a.role %}<div class="person-role">{{ a.role }}</div>{% endif %}
       {% if a.goal %}<div class="person-field"><div class="person-label">Objective</div><div class="person-text">{{ a.goal }}</div></div>{% endif %}
+      {% if a.case_files %}<div class="person-field"><div class="person-label">Case files</div><div class="person-text">{{ a.case_files|join(', ') }}</div></div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -85,7 +87,7 @@
   <button type="button" class="speaker-chip c{{ s.color }}" data-agent="{{ s.id }}" aria-pressed="true"
           title="Show or hide {{ s.name }}'s turns">
     <span class="dot"></span>{{ s.name }}
-    <span class="chip-meta">{{ s.turns }} turn{{ '' if s.turns == 1 else 's' }}{% if s.cited %} &middot; {{ s.cited }} citation{{ '' if s.cited == 1 else 's' }}{% endif %}</span>
+    <span class="chip-meta">{{ s.turns }} turn{{ '' if s.turns == 1 else 's' }}{% if s.cited %} &middot; {{ s.cited }} citation{{ '' if s.cited == 1 else 's' }}{% endif %}{% if s.disclosed %} &middot; {{ s.disclosed }} disclosed{% endif %}</span>
   </button>
   {% endfor %}
   {% if v.interventions %}
@@ -109,6 +111,7 @@
       <a class="turn-anchor" href="#turn-{{ t.turn }}" title="Link to this turn">#</a>
     </div>
     <div class="turn-body md">{{ t.html|safe }}</div>
+    {% if t.disclosed %}<p class="disclosed-note">Disclosed {% for m in t.disclosed %}<a href="#exhibit-{{ m }}" class="cite">[{{ m }}]</a>{{ ', ' if not loop.last }}{% endfor %} from {{ t.name }}'s sources.</p>{% endif %}
     {% if t.sources %}
     {% set cited = t.sources|selectattr('cited')|list %}
     <details class="turn-extra"><summary>legal sources given ({{ t.sources|length }}, {{ cited|length }} cited)</summary>
@@ -116,7 +119,7 @@
         {% for src in t.sources %}
         <li class="{{ 'cited' if src.cited }}"><span class="cite">[{{ src.marker }}]</span>
           <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
-          {% if src.corpus %}<span class="lib-tag">in {{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</span>{% endif %}
+          {% if src.corpus %}<span class="lib-tag">{{ 'own case file' if src.private else 'in' }} {{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</span>{% endif %}
           <span class="hint">{{ '%.2f'|format(src.similarity) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
         {% endfor %}
       </ul>
@@ -133,6 +136,24 @@
   </article>
   {% endif %}
   {% endfor %}
+</div>
+{% endif %}
+
+{% if v.exhibits %}
+<h2 id="exhibits">Exhibits</h2>
+<div class="panel">
+  <p class="lib-summary">Passages put on the record by citing them, in order. A passage from a case
+    file was seen only by the person holding it until then; from then on everyone could cite it.</p>
+  <ol class="exhibit-list">
+    {% for e in v.exhibits %}
+    <li id="exhibit-{{ e.marker }}" class="c{{ e.color }}"><span class="cite">[{{ e.marker }}]</span>
+      <a href="{{ prefix }}/sources/documents/{{ e.document_id }}">{{ e.label }}</a>
+      {% if e.corpus %}<span class="lib-tag">{{ 'case file' if e.private else 'shared library' }} {{ e.corpus }}{% if e.version %} v{{ e.version }}{% endif %}</span>{% endif %}
+      <div class="ref-uses">Disclosed by <strong>{{ e.name }}</strong> in <a href="#turn-{{ e.turn }}">turn {{ e.turn }}</a> (cited there as [{{ e.from_marker }}]).</div>
+      <details><summary>Passage</summary><div class="thinking">{{ e.content }}</div></details>
+    </li>
+    {% endfor %}
+  </ol>
 </div>
 {% endif %}
 

@@ -8,7 +8,7 @@ can never inject markup. Links are kept only when they are http(s).
 
 parse() returns blocks that both the web page (to_html) and the PDF export read, so the two
 show the same structure. Inline formatting inside a block is a limited HTML subset:
-<strong>, <em>, <code>, <a href>, and <span class="cite"> for role-play source markers
+<strong>, <em>, <code>, <a href>, and <span class="cite"> for citation markers ([3], and a role-play's [S1] sources and [E1] exhibits)
 like [S2] and document-analysis markers like [3].
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ _CODE = re.compile(r"`([^`\n]+)`")
 _LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
 _BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|__(?=\S)(.+?)(?<=\S)__")
 _ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])|(?<![\w_])_(?=\S)([^_\n]+?)(?<=\S)_(?![\w_])")
-_CITE = re.compile(r"\[(S?\d{1,3})\]")
+_CITE = re.compile(r"\[([SE]?\d{1,3})\]")
 
 
 def inline(text: str) -> str:

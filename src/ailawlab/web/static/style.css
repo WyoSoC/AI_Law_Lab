@@ -633,6 +633,12 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .ref-list { margin: 0; padding-left: 1.6rem; display: grid; gap: .7rem; font-size: .9rem; line-height: 1.5; }
 .ref-list .ref-uses { font-size: .8rem; color: var(--muted); }
 .ref-list .ref-uses .cite { margin-right: .1rem; }
+.exhibit-list { margin: 0; padding-left: 0; list-style: none; display: grid; gap: .6rem; font-size: .9rem; }
+.exhibit-list li { border-left: 3px solid var(--c, var(--line)); padding-left: .6rem; }
+.exhibit-list a { color: var(--accent); }
+.exhibit-list details summary { font-size: .8rem; color: var(--muted); }
+.disclosed-note { font-size: .82rem; color: var(--muted); margin: .3rem 0 0; }
+.lib-row.case-file input:disabled { opacity: .6; }
 .lib-summary { font-size: .86rem; color: var(--muted); margin: 0 0 .6rem; }
 
 /* ---------------------------------------------------------------- accounts */

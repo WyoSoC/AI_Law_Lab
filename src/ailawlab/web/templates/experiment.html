@@ -106,6 +106,12 @@
       <div class="person-text">{{ a.goal }}</div>
     </div>
     {% endif %}
+    {% if a.case_files %}
+    <div class="person-field">
+      <div class="person-label">Case files <span class="private-tag">private until cited</span></div>
+      <div class="person-text">{% for f in a.case_files %}<a href="{{ prefix }}/sources/corpora/{{ f|urlencode }}">{{ f }}</a>{{ ', ' if not loop.last }}{% endfor %}</div>
+    </div>
+    {% endif %}
     {% if a.details or a.private or a.prompt %}
     <details class="person-more">
       <summary>More about {{ a.name }}</summary>
@@ -189,7 +195,25 @@
 
   {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
   <div class="library-launch">
-    <label>{{ 'Legal sources for this run' if exp.mode == 'roleplay' else 'Libraries for this run' }}</label>
+    {% if v.case_files %}
+    <label>Case files</label>
+    <div class="lib-rows">
+      {% for cf in v.case_files %}
+      <div class="lib-row case-file" data-name="{{ cf.name }}" data-kind="case">
+        <label class="check"><input type="checkbox" value="{{ cf.name }}" checked disabled>
+          <span class="lib-name">{{ cf.name }}</span>
+          <span class="hint-inline">{{ cf.holders|join(', ') }}'s{% if cf.name in doc_counts %} &middot; {{ doc_counts[cf.name] }} document{{ '' if doc_counts[cf.name] == 1 else 's' }}{% else %} &middot; now empty{% endif %}</span></label>
+        <select class="lib-version" aria-label="Version of {{ cf.name }}" onchange="syncInputs()"></select>
+        <a class="small-link" href="{{ prefix }}/sources/corpora/{{ cf.name|urlencode }}#versions">versions</a>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="hint">Each person searches only their own case files (and the shared sources). What
+      they cite from a case file is disclosed to everyone as an exhibit, [E1], [E2]. Change who
+      holds what in the cast; here you can choose which version of each is searched.</p>
+    <label>Shared legal sources</label>
+    {% endif %}
+    {% if not v.case_files %}<label>{{ 'Legal sources for this run' if exp.mode == 'roleplay' else 'Libraries for this run' }}</label>{% endif %}
     <div class="lib-rows" id="lib-rows">
       {% for name in v.libraries %}
       <div class="lib-row" data-name="{{ name }}">
@@ -306,9 +330,10 @@ if (!WANTED && PARAMS.get("corpus_version")) {
 }
 
 function libRows() { return [...document.querySelectorAll(".lib-row")]; }
+function sharedRows() { return libRows().filter(r => r.dataset.kind !== "case"); }
 
 function chosenLibraries() {
-  return libRows().filter(r => r.querySelector("input").checked).map(r => r.dataset.name);
+  return sharedRows().filter(r => r.querySelector("input").checked).map(r => r.dataset.name);
 }
 
 function fillVersions() {
@@ -321,11 +346,16 @@ function fillVersions() {
 
 // "Run again with these versions": tick exactly the libraries the earlier run searched,
 // each at the version it searched.
+// A role-play's link also names which were shared (the rest were case files).
+let WANTED_SHARED = null;
+try { WANTED_SHARED = JSON.parse(PARAMS.get("shared") || "null"); } catch (e) { WANTED_SHARED = null; }
+
 function applyWanted() {
   if (!WANTED || typeof WANTED !== "object") return;
   libRows().forEach(row => {
     const name = row.dataset.name, want = WANTED[name];
-    row.querySelector("input").checked = want !== undefined;
+    if (row.dataset.kind !== "case")
+      row.querySelector("input").checked = Array.isArray(WANTED_SHARED) ? WANTED_SHARED.includes(name) : want !== undefined;
     const sel = row.querySelector("select");
     if (want !== undefined && [...sel.options].some(o => o.value === String(want))) sel.value = String(want);
     if (want !== undefined) row.closest("details")?.setAttribute("open", "");
@@ -335,6 +365,7 @@ function applyWanted() {
 function showVersionPickers() {
   libRows().forEach(row => row.querySelector("select").hidden = !row.querySelector("input").checked);
 }
+
 
 function sameList(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
 

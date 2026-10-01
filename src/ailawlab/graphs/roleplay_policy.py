@@ -153,6 +153,13 @@ def format_entries(entries: list[dict], max_words: int | None = None) -> str:
 # are cut to a few hundred words: they are there to be cited, and the turn's context
 # window is shared with memory and the conversation.
 
+#
+# An agent may also hold case files: libraries only it can search. Its case-file passages are
+# shown to it alone, first, and citing one discloses it: the passage becomes an exhibit
+# ([E1], [E2], ...) that every participant sees from then on and may cite to rely on it or
+# to answer it. A passage is never shown to another agent before its holder discloses it,
+# which is what lets the two sides argue from evidence the other has not seen.
+
 SOURCE_WORDS = 220
 
 
@@ -163,15 +170,81 @@ def source_query(agent: dict, recent: list[dict], max_words: int = 160) -> str:
                           max_words)
 
 
-def format_sources(passages: list[dict]) -> str:
-    """Passages ({label, content}) as the numbered block a speaker sees, or "" if none."""
-    if not passages:
+def format_sources(passages: list[dict], exhibits: list[dict] | None = None) -> str:
+    """The legal-sources block a speaker sees, or "" if there is nothing in it.
+
+    `passages` ({label, content, private}) are numbered [S1], [S2] in the order given, so the
+    caller puts the speaker's own case-file passages first. `exhibits` are the passages
+    already disclosed on the record (see disclose()), which anyone may cite as [E1], [E2].
+    """
+    if not passages and not exhibits:
         return ""
-    body = "\n\n".join(f"[S{i}] {p['label']}\n{truncate_words(p['content'], SOURCE_WORDS)}"
-                         for i, p in enumerate(passages, start=1))
-    return ("Legal sources you may rely on. Cite one as [S1], [S2] when you use it; cite "
-            "only what the passage actually says, and do not invent other authority.\n\n"
-            + body)
+
+    def listed(items: list[tuple[int, dict]]) -> str:
+        return "\n\n".join(f"[S{i}] {p['label']}\n{truncate_words(p['content'], SOURCE_WORDS)}"
+                           for i, p in items)
+
+    numbered = list(enumerate(passages, start=1))
+    own = [(i, p) for i, p in numbered if p.get("private")]
+    shared = [(i, p) for i, p in numbered if not p.get("private")]
+    parts: list[str] = []
+    if own:
+        parts.append(
+            "From your own case file. No one else has seen these passages. Citing one, as [S1], "
+            "discloses it: it goes on the record as an exhibit that everyone can read and "
+            "answer. Disclose a passage when it strengthens your position; keep back one that "
+            "would hurt it.\n\n" + listed(own))
+    if shared:
+        parts.append(("From the shared legal sources, which every participant can consult. "
+                      if own else "Legal sources you may rely on. ")
+                     + "Cite one as [S1], [S2] when you use it.\n\n" + listed(shared))
+    if exhibits:
+        parts.append(format_exhibits(exhibits))
+    parts.append("Cite only what a passage actually says, and do not invent other authority.")
+    return "\n\n".join(parts)
+
+
+# Exhibits accumulate over a long run; the most recent are shown in full, older ones by
+# label only, so the block stays a bounded share of the context window.
+EXHIBIT_WORDS = 160
+EXHIBITS_IN_FULL = 8
+
+
+def format_exhibits(exhibits: list[dict]) -> str:
+    """The exhibits on the record, for every speaker: who disclosed each, and when."""
+    rows = []
+    for k, e in enumerate(exhibits):
+        head = (f"[{e['marker']}] {e['label']} (disclosed by {e['name']} in turn {e['turn']}"
+                + (", from their case file)" if e.get("private") else ")"))
+        recent = k >= len(exhibits) - EXHIBITS_IN_FULL
+        rows.append(f"{head}\n{truncate_words(e['content'], EXHIBIT_WORDS)}" if recent else head)
+    return ("Exhibits on the record. Any participant may cite these as [E1], [E2], to rely on "
+            "one or to answer it.\n\n" + "\n\n".join(rows))
+
+
+def disclose(exhibits: list[dict], sources: list[dict], cited: list[int], agent: dict,
+             turn: int) -> tuple[list[dict], list[str]]:
+    """The exhibits after a turn, and the markers of those it added.
+
+    Every passage the speaker cited from this turn's sources ([S<n>] for n in `cited`)
+    becomes an exhibit, unless the same passage is already one. `sources` are the turn's
+    source records (Passage.source() plus `private`, `content` and `title`). Pure.
+    """
+    out = list(exhibits)
+    known = {e["chunk_id"] for e in out}
+    added: list[str] = []
+    for n in cited:
+        if not 1 <= n <= len(sources) or sources[n - 1]["chunk_id"] in known:
+            continue
+        src = sources[n - 1]
+        marker = f"E{len(out) + 1}"
+        out.append({**src, "marker": marker, "cited": True,
+                    "content": truncate_words(src.get("content", ""), SOURCE_WORDS),
+                    "disclosed_by": agent["id"], "name": agent.get("name", agent["id"]),
+                    "turn": turn, "from_marker": f"S{n}"})
+        known.add(src["chunk_id"])
+        added.append(marker)
+    return out, added
 
 
 def cited_sources(content: str, count: int) -> list[int]:
@@ -326,11 +399,13 @@ def transcript_segments(transcript: list[dict], max_tokens: int) -> list[list[di
 
 
 def private_briefs(agents: list[dict]) -> str:
-    """Bottom lines and confidential facts, for the assessor only."""
+    """Bottom lines, confidential facts and case files, for the assessor only."""
     rows = []
     for a in agents:
+        files = a.get("libraries") or []
         bits = [f"bottom line: {a['bottom_line']}" if a.get("bottom_line") else "",
-                f"confidential: {a['confidential']}" if a.get("confidential") else ""]
+                f"confidential: {a['confidential']}" if a.get("confidential") else "",
+                ("own case files: " + ", ".join(files)) if files else ""]
         if any(bits):
             rows.append(f"- {a.get('name', a['id'])}: " + "; ".join(b for b in bits if b))
     return "\n".join(rows) or "(no participant had a bottom line or confidential information)"

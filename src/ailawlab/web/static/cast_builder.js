@@ -16,6 +16,7 @@ const CAST_FIELDS = [
   ["priorities", "Priorities", "area", "The interests behind their position: what they care about most, and why."],
   ["bottom_line", "Bottom line", "area", "The point past which they would rather walk away than agree, and what they would do instead.", "private"],
   ["confidential", "Confidential information", "area", "Facts only this person knows.", "private"],
+  ["libraries", "Case files", "libraries", "Libraries only this person can search. Citing a passage from one discloses it to everyone as an exhibit.", "private"],
   ["notes", "Additional notes", "area", "Anything else about this person.", "more"],
   ["id", "Short id", "input", "made from the name automatically", "more"],
   ["system_prompt", "Full prompt (replaces everything above)", "area", "Only if you want to write the whole prompt yourself.", "more"],
@@ -31,9 +32,23 @@ function slugify(s) {
 
 function field(card, key) { return card.querySelector(`[data-field="${key}"]`); }
 
+// Libraries a case file can be chosen from: [{name, documents}], set by the page.
+function libraryChoices() { return typeof LIBRARY_CHOICES === "undefined" ? [] : LIBRARY_CHOICES; }
+
+function libraryOption(name, note) {
+  return `<label class="check lib-option"><input type="checkbox" value="${att(name)}">
+    <span class="lib-name">${att(name)}</span> <span class="hint-inline">${att(note)}</span></label>`;
+}
+
 function fieldHTML([key, label, control, placeholder, group]) {
   const tag = group === "private" ? ' <span class="private-tag">private</span>'
     : control === "list" ? ' <span class="hint-inline">(one per line)</span>' : "";
+  if (control === "libraries") {
+    const options = libraryChoices().map(l => libraryOption(l.name, `${plural(l.documents, "document")}`)).join("");
+    return `<label>${label}${tag}</label><p class="hint">${att(placeholder)}</p>
+      <div class="library-picker case-files" data-field="${key}" data-control="libraries">${options
+        || '<p class="empty">No library holds any documents yet.</p>'}</div>`;
+  }
   const input = control === "input"
     ? `<input type="text" data-field="${key}" placeholder="${att(placeholder)}">`
     : `<textarea class="short" data-field="${key}" placeholder="${att(placeholder)}"></textarea>`;
@@ -57,6 +72,11 @@ function addAgent(agent) {
     </details>`;
   card.querySelectorAll("[data-field]").forEach(el => {
     const v = agent[el.dataset.field];
+    if (el.dataset.control === "libraries") {
+      setCaseFiles(el, Array.isArray(v) ? v : (v ? [v] : []));
+      el.addEventListener("change", () => onCardInput(card, el));
+      return;
+    }
     el.value = Array.isArray(v) ? v.join("\n") : (v || "");
     el.addEventListener("input", () => onCardInput(card, el));
   });
@@ -89,9 +109,26 @@ function renumber() {
 
 function removeAgent(card) { card.remove(); renumber(); syncJSON(); }
 
+// Tick an agent's case files; a name with no library here (from an uploaded file, or a
+// library since emptied) is kept as an extra, ticked option rather than silently dropped.
+function setCaseFiles(box, names) {
+  names.forEach(name => {
+    if (![...box.querySelectorAll("input")].some(i => i.value === name)) {
+      box.querySelector(".empty")?.remove();
+      box.insertAdjacentHTML("beforeend", libraryOption(name, "not found among the libraries"));
+    }
+  });
+  box.querySelectorAll("input").forEach(i => i.checked = names.includes(i.value));
+}
+
 function readCard(card) {
   const a = {};
   CAST_FIELDS.forEach(([key, , control]) => {
+    if (control === "libraries") {
+      const names = [...field(card, key).querySelectorAll("input:checked")].map(i => i.value);
+      if (names.length) a[key] = names;
+      return;
+    }
     const raw = field(card, key).value;
     if (control === "list") {
       const items = raw.split("\n")

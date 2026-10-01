@@ -248,6 +248,23 @@ def run_library_names(mode: str, config: dict[str, Any], inputs: dict[str, Any])
     return library_names(config, mode)
 
 
+def case_files(agent: dict[str, Any]) -> list[str]:
+    """The libraries only this role-play agent may search (its "Case files"). Pure."""
+    return library_names({"libraries": agent.get("libraries") or []})
+
+
+def all_run_library_names(mode: str, config: dict[str, Any], inputs: dict[str, Any]) -> list[str]:
+    """Every library a run must pin: its shared libraries and, in a role-play, each agent's
+    case files (from the run's own cast if it brought one). Pure."""
+    names = run_library_names(mode, config, inputs)
+    if mode == "roleplay":
+        agents = inputs.get("agents") if "agents" in inputs else config.get("agents")
+        for agent in agents if isinstance(agents, list) else []:
+            if isinstance(agent, dict):
+                names += [n for n in case_files(agent) if n not in names]
+    return names
+
+
 def wanted_versions(names: list[str], inputs: dict[str, Any]) -> dict[str, int]:
     """Versions a run asks for, by library: `library_versions` ({name: n}), or the older
     single `corpus_version`, which applies when the run searches one library. Pure."""
@@ -292,6 +309,10 @@ class Libraries:
 
     def __bool__(self) -> bool:
         return bool(self.searchable())
+
+    def subset(self, names: list[str]) -> Libraries:
+        """The same pins, narrowed to `names`: what one role-play agent may search."""
+        return Libraries(self.router, [p for p in self.pins if p.name in names])
 
     def describe(self) -> str:
         return ", ".join(f"“{p.name}”" + (f" v{p.version}" if p.version else " (empty)")
@@ -384,10 +405,15 @@ _LIVE = "d.removed_at IS NULL"
 
 # Whether experiment `e` retrieves from the library {name}: listed in `libraries`, or, for an
 # experiment from before that, named in `corpus` (with "default" standing in for a missing
-# one, except in a role-play, which then has no legal sources). See library_names().
-_USES = ("(CASE WHEN e.config ? 'libraries' THEN COALESCE(e.config->'libraries' ? {name}, FALSE) "
+# one, except in a role-play, which then has no legal sources), or held as a case file by
+# one of a role-play's agents. See library_names() and case_files().
+_USES = ("((CASE WHEN e.config ? 'libraries' THEN COALESCE(e.config->'libraries' ? {name}, FALSE) "
          "ELSE COALESCE(e.config->>'corpus', CASE WHEN e.mode <> 'roleplay' THEN 'default' END) "
-         "= {name} END)")
+         "= {name} END) "
+         # ... or a role-play agent holds it as a case file.
+         "OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.config->'agents') "
+         "= 'array' THEN e.config->'agents' ELSE '[]'::jsonb END) a "
+         "WHERE jsonb_typeof(a->'libraries') = 'array' AND a->'libraries' ? {name}))")
 
 
 async def list_corpora() -> list[dict]:
