@@ -174,10 +174,25 @@
     <p class="estimate" id="estimate"></p>
   {% elif exp.mode == 'document_analysis' %}
     <label for="in_question">Question</label>
-    <textarea id="in_question" class="short" oninput="syncInputs()">What are the principal legal risks in this document?</textarea>
+    <textarea id="in_question" class="short" oninput="syncInputs()"
+              placeholder="e.g. How do these sources treat restraint, and where do they disagree?"></textarea>
+    <p class="hint">Asked of the libraries below. Add a document to have the question answered
+      from it instead, with the libraries as supporting authority.</p>
+  {% else %}
+    <label for="in_task">Task</label>
+    <textarea id="in_task" class="short tall" oninput="syncInputs()"
+              placeholder="e.g. Search the library and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
+  {% endif %}
+
+  {% if exp.mode != 'roleplay' %}
+  <details class="doc-optional" id="doc-optional">
+    <summary>Add a document <span class="hint-inline">(optional)</span></summary>
+    <p class="hint">{% if exp.mode == 'document_analysis' %}With a document, each part of the question is
+      answered from it, and the libraries supply supporting authority.{% else %}The agent is given the
+      document with its task, alongside its libraries.{% endif %}</p>
     <label for="in_title">Document title</label>
     <input type="text" id="in_title" placeholder="Master Services Agreement" oninput="syncInputs()">
-    <label for="in_text">Document text <span class="req">*</span></label>
+    <label for="in_text">Document text</label>
     <div class="load-row">
       <input type="text" id="load-url" placeholder="Load it from a link: https://…">
       <button type="button" class="small-btn" onclick="loadDocument('link')">Load link</button>
@@ -187,10 +202,7 @@
     </div>
     <textarea id="in_text" class="doc-text" placeholder="Or paste the document here." oninput="syncInputs()"></textarea>
     <p class="hint" id="load-status"></p>
-  {% else %}
-    <label for="in_task">Task</label>
-    <textarea id="in_task" class="short tall" oninput="syncInputs()"
-              placeholder="e.g. Search the library and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
+  </details>
   {% endif %}
 
   {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
@@ -262,7 +274,7 @@
     <p class="hint">Starts as the experiment's {{ 'legal sources' if exp.mode == 'roleplay' else 'libraries' }}; changes
       apply to this run only, and the run records what it used. Ticked libraries are searched together.
       {% if exp.mode == 'roleplay' %}Passages are put before each speaker, who can cite them as [S1], [S2].
-      {% elif exp.mode == 'document_analysis' %}Untick all for a run without retrieved authority.{% endif %}
+      {% elif exp.mode == 'document_analysis' %}With a document, you may untick all for a run without retrieved authority.{% endif %}
       Each library is searched as it is now unless you choose an earlier version, which repeats an
       earlier result exactly. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
   </div>
@@ -325,12 +337,14 @@ function buildInputs() {
     if (words !== BASE.word_limit) inputs.word_limit = words;
     return withLibraries(inputs);
   }
-  if (MODE === "document_analysis") {
-    const inputs = {question: $("in_question").value.trim(), document_text: $("in_text").value};
+  const inputs = MODE === "document_analysis" ? {question: $("in_question").value.trim()}
+                                              : {task: $("in_task").value.trim()};
+  // The document is optional: sent only when there is one.
+  if ($("in_text").value.trim()) {
+    inputs.document_text = $("in_text").value;
     if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
-    return withLibraries(inputs);
   }
-  return withLibraries({task: $("in_task").value.trim()});
+  return withLibraries(inputs);
 }
 
 // ---------------------------------------------------------------- libraries and versions
@@ -427,7 +441,9 @@ function syncInputs() {
 function missingInput() {
   const inputs = buildInputs();
   if (MODE === "roleplay" && !inputs.scenario) return "Write a scenario for this run.";
-  if (MODE === "document_analysis" && !inputs.document_text.trim()) return "Paste the document text, or load it from a link or file.";
+  if (MODE === "document_analysis" && !inputs.question) return "Ask a question for this run.";
+  if (MODE === "document_analysis" && !inputs.document_text && !chosenLibraries().length)
+    return "Choose at least one library to ask, or add a document.";
   if (MODE === "agentic_workflow" && !inputs.task) return "Describe the task for this run.";
   return "";
 }

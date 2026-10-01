@@ -69,6 +69,11 @@ async def seed_corpus():
     await Corpus(router, name="test-regs").add_document("Model Termination Regulation", REGULATION,
                                                         doc_type="authority")
     yield
+    # The experiments these tests create go to the trash, so they do not crowd the dashboard;
+    # their runs are kept there for inspection.
+    for row in await fetch_all("SELECT id FROM experiments WHERE deleted_at IS NULL AND name LIKE %s",
+                               ("%(test)",)):
+        await experiments.trash_experiment(str(row["id"]))
     await close_pool()
 
 
@@ -278,3 +283,31 @@ async def test_removing_several_documents_and_reverting():
     assert list(v4["document_ids"]) == [ids[2]]
     assert sorted((await rag.get_version(name, v1["version"]))["document_ids"]) == sorted(ids)
     await rag.delete_corpus(name)
+
+
+async def test_document_analysis_can_ask_the_libraries_directly():
+    exp = await experiments.create_experiment(
+        "Ask the libraries (test)", "document_analysis",
+        config={"libraries": ["test", "test-regs"]},
+    )
+    # A question with neither a document nor a library cannot run, and says why.
+    empty = await experiments.create_experiment("No sources (test)", "document_analysis",
+                                                config={"libraries": []})
+    with pytest.raises(ValueError, match="choose at least one library"):
+        await experiments.create_run(str(empty["id"]), inputs={"question": "Anything?"})
+    await experiments.trash_experiment(str(empty["id"]))
+
+    run = await experiments.create_run(str(exp["id"]), inputs={
+        "question": "How much notice must a party give to terminate a services agreement for "
+                    "convenience, and are one-sided termination rights enforceable in Wyoming?"})
+    run_id = str(run["id"])
+    result = await experiments.execute_run(run_id)
+    await experiments.trash_experiment(str(exp["id"]))
+
+    assert result["plan"] and result["findings"] == []          # no document to analyze
+    assert result["answer"].strip() and result["sources"], "nothing was retrieved or answered"
+    first = result["answer"].lstrip()[:200].lower()
+    assert not any(w in first for w in ("memorandum", "to:", "from:", "[your name]")), first
+    assert all(s["corpus"] in ("test", "test-regs") for s in result["sources"])
+    cites = await fetch_all("SELECT verdict, corpus FROM citations WHERE run_id=%s", (run_id,))
+    assert cites and all(c["corpus"] for c in cites if c["verdict"] == "grounded")

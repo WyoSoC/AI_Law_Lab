@@ -15,11 +15,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from ..grounding import cited_numbers, link_citations
+from .answer_style import ANSWER_STYLE, strip_letter_format
 from .state import AgenticState, ctx_from
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a legal research agent. You have tools available and should use them to ground your work in real sources rather than recalling from memory.
+SYSTEM_PROMPT = """You are a research assistant answering a question from legal sources. You have tools available and should use them to ground your work in real sources rather than recalling from memory.
 
 {sources}
 
@@ -28,7 +29,9 @@ Guidelines:
 - Quote operative language rather than paraphrasing when precision matters.
 - Cite a passage as [n] with the number the search gave it; cite only passages a search returned.
 - If the tools cannot establish something, say so explicitly. Do not fill the gap with plausible-sounding invention.
-- When you have enough to answer, give the final answer directly with citations."""
+- When you have enough to answer, give the final answer directly with citations.
+
+""" + ANSWER_STYLE
 
 
 def _sources_line(names: list[str]) -> str:
@@ -39,6 +42,24 @@ def _sources_line(names: list[str]) -> str:
         return f"You can search one library of legal sources: “{names[0]}”."
     return ("You can search these libraries of legal sources, all at once or one at a time: "
             + "; ".join(f"“{n}”" for n in names) + ".")
+
+
+# A document given with the task goes into the first message whole, up to this many
+# characters (about 50k tokens), leaving the rest of the 128K window for the work.
+DOCUMENT_CHARS = 200_000
+
+
+def _task_message(state: AgenticState) -> str:
+    """The task, with the document the run was given, if any."""
+    text = (state.get("document_text") or "").strip()
+    if not text:
+        return state["task"]
+    cut = len(text) > DOCUMENT_CHARS
+    return (f"{state['task']}\n\nA document was provided with this task: "
+            f"“{state.get('document_title') or 'Untitled'}”"
+            + (f" (only its first {DOCUMENT_CHARS:,} characters are shown)" if cut else "")
+            + ". Quote it where it matters; cite library passages by number.\n\n"
+            f"--- DOCUMENT ---\n{text[:DOCUMENT_CHARS]}\n--- END DOCUMENT ---")
 
 
 async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
@@ -56,7 +77,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
                     f"to the library “{reader.library}” and comes back as numbered passages "
                     "you cite like any other; search results themselves are not sources.")
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(sources=sources)},
-                {"role": "user", "content": state["task"]}]
+                {"role": "user", "content": _task_message(state)}]
     messages.extend(state.get("scratchpad", []))
 
     res = await ctx.router.chat(
@@ -82,7 +103,10 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
             "done": False,
         }
 
-    answer = res.text.strip()
+    answer, stripped = strip_letter_format(res.text)
+    if stripped:
+        await ctx.tracer.note("removed a memo-style header or sign-off from the answer "
+                              "(the reply as written is in the trace above)", node="reason")
     if not answer and res.truncated:
         # Reasoning consumed the whole budget. Don't silently return "".
         await ctx.tracer.error("reason node truncated before producing an answer", node="reason")

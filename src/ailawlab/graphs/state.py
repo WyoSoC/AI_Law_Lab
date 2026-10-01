@@ -51,6 +51,8 @@ class DocState(TypedDict, total=False):
 class AgenticState(TypedDict, total=False):
     """Agentic workflow (tool-using ReAct loop) state."""
     task: str
+    document_title: str         # an optional document given with the task
+    document_text: str
     scratchpad: Annotated[list[dict], operator.add]
     tool_results: Annotated[list[dict], operator.add]
     iterations: int

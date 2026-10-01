@@ -142,6 +142,12 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
     if exp.get("deleted_at"):
         raise ValueError("this experiment is in the trash; restore it before running it")
     names = all_run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
+    merged = {**(exp["config"] or {}), **(inputs or {})}
+    if exp["mode"] == "document_analysis":
+        if not str(merged.get("question") or "").strip():
+            raise ValueError("Ask a question for this run.")
+        if not str(merged.get("document_text") or "").strip() and not names:
+            raise ValueError("Give a document to analyze, or choose at least one library to ask.")
     pool = await get_pool()
     async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
         await cur.execute(
@@ -225,6 +231,8 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
     if mode == "agentic_workflow":
         return {
             "task": merged.get("task", ""),
+            "document_title": merged.get("document_title", ""),
+            "document_text": merged.get("document_text", ""),
             "scratchpad": [],
             "tool_results": [],
             "iterations": 0,
@@ -288,6 +296,9 @@ async def execute_run(run_id: str) -> dict:
 
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
+        if mode == "document_analysis" and not state["document_text"].strip() and not libraries:
+            raise ValueError("there is no document and the run's libraries hold nothing, so "
+                             "there is nothing to answer the question from")
         if mode == "roleplay":
             await _check_roleplay(state, tracer)
         # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle. Read

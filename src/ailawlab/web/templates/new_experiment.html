@@ -36,19 +36,19 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
   <!-- ───────────── document_analysis ───────────── -->
   <div class="panel mode-panel" data-mode="document_analysis">
     <h2>Document analysis setup</h2>
-    <p class="hint">The document itself is supplied per run. Configure retrieval here.</p>
-    <label>Libraries to retrieve from</label>
+    <p class="hint">Each run asks a question. It is answered from the libraries chosen here, or, if
+       the run is given a document, from that document with the libraries as supporting authority.</p>
+    <label>Libraries to ask</label>
     {{ library_picker('da_libs', libraries, preset, 'syncJSON()') }}
-    <p class="hint">The findings are grounded in passages from every library ticked, searched
-       together and ranked by how closely they match, whichever library they come from. Each
-       citation records the library and version it came from. Tick none for a baseline run
-       without retrieved authority.</p>
+    <p class="hint">Every library ticked is searched together, and passages are ranked by how closely
+       they match, whichever library they come from. Each citation records the library and
+       version it came from. With no library ticked, every run needs a document.</p>
   </div>
 
   <!-- ───────────── agentic_workflow ───────────── -->
   <div class="panel mode-panel" data-mode="agentic_workflow">
     <h2>Agentic workflow setup</h2>
-    <p class="hint">The task is supplied per run. Configure the tool loop here.</p>
+    <p class="hint">Each run gives the agent a task, and optionally a document. Configure its sources and tools here.</p>
     <label>Libraries the agent can search</label>
     {{ library_picker('aw_libs', libraries, preset, 'syncJSON()') }}
     <p class="hint">The agent's search covers every library ticked, and it can confine a search

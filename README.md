@@ -92,12 +92,21 @@ Consequences worth knowing:
 ## Experiment modes
 
 **`document_analysis`** — `plan → analyze → ground → synthesize`. The planner splits the
-question into sub-questions, which are analyzed concurrently against the document (128K
-context usually swallows a whole contract), grounded against the corpus, and synthesized
-with numbered citations. Citation markers pointing past the retrieved passage list are
-recorded as `unsupported` rather than dropped — catching fabrication is the point.
+question into sub-questions. With no document, the question is asked of the run's libraries
+directly: each sub-question (and the question itself) is a search, run concurrently, and the
+answer is written from the passages found. With a document, the sub-questions are analyzed
+concurrently against it (128K context usually swallows a whole contract) and grounded
+against the libraries. Either way the answer cites numbered passages; markers pointing past
+the passage list are recorded as `unsupported` rather than dropped — catching fabrication is
+the point. A run needs a document, a library, or both.
 
-**`agentic_workflow`** — a ReAct loop over gemma4's native function calling. Tools arrive
+Answers are written as answers (`graphs/answer_style.py`): the prompts ask for no memo or
+letter format, no persona and no placeholders, and a header or sign-off that slips through
+anyway ("To: / From: / Date:", "[Your Name]") is removed from the stored answer, with a note
+in the trace, which keeps the reply as written.
+
+**`agentic_workflow`** — a ReAct loop over gemma4's native function calling, given a task and
+optionally a document (put in its first message, up to 200,000 characters). Tools arrive
 as structured `message.tool_calls`, not scraped JSON. Built-in tools are corpus search and
 a safe arithmetic evaluator. With `allow_network` the agent also gets two network tools
 (`network_tools.py`): `search_online` searches CourtListener, the Federal Register, the eCFR,

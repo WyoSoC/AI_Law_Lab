@@ -26,12 +26,14 @@ MODE_LABELS = {
 
 MODE_BLURBS = {
     "document_analysis": (
-        "Each run analyzes one document. The question is split into sub-questions, each is "
-        "answered from the document, and the answer is grounded in the chosen libraries with "
-        "numbered citations that are checked afterwards."),
+        "Each run asks a question. It is split into sub-questions, each is searched across the "
+        "chosen libraries, and the answer is written from what is found, with numbered citations "
+        "that are checked afterwards. Give a run a document and the question is answered from "
+        "the document instead, with the libraries as supporting authority."),
     "agentic_workflow": (
-        "Each run gives an agent one task. It works in a think-then-act loop, calling tools "
-        "such as library search, until it can answer, citing the passages it found."),
+        "Each run gives an agent one task, and optionally a document. It works in a "
+        "think-then-act loop, calling tools such as library search, until it can answer, "
+        "citing the passages it found."),
     "roleplay": (
         "Each run plays out the scenario between the cast. A moderator decides who speaks, "
         "steps in when talks stall, and ends the scene; an evaluator then assesses the "
