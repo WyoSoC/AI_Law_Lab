@@ -642,6 +642,8 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .crawl-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: .3rem 0 .5rem; }
 .crawl-bar span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
 .crawl-history { margin-top: 1rem; font-size: .86rem; }
+.crawl-time { font-size: .86rem; margin: 0 0 .4rem; }
+.link-result.unreadable .hit-mark { color: var(--warn); }
 .crawl-history .link-btn { overflow-wrap: anywhere; text-align: left; }
 .hidden-libs > summary { font-size: .88rem; color: var(--muted); cursor: pointer; }
 .corpus-card.is-hidden { opacity: .75; }

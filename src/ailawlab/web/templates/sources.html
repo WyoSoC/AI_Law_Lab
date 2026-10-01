@@ -310,6 +310,13 @@ async function startCrawl(button) {
 }
 
 let crawlTimer = null;
+
+function duration(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
 const CRAWL_WORD = {running: 'Crawling', stopping: 'Stopping', finished: 'Finished', stopped: 'Stopped',
                     failed: 'Failed', interrupted: 'Interrupted'};
 
@@ -329,12 +336,22 @@ async function watchCrawl(id) {
   }
   const live = c.status === 'running' || c.status === 'stopping';
   const pct = c.total ? Math.round(100 * c.done / c.total) : 100;
+  const n = c.counts || {};
+  const tally = [['added', 'added'], ['exists', 'already there'], ['unreadable', 'unreadable'], ['error', 'failed']]
+    .filter(([k]) => n[k]).map(([k, w]) => `${n[k]} ${w}`).join(' · ');
+  const finish = new Date(Date.now() + 1000 * (c.eta_s || 0));
+  const timeLine = live
+    ? `${duration(c.elapsed_s)} so far · about ${duration(c.eta_s)} left${c.estimated ? '' : ' (a first guess until a few pages are in)'} · done around ${finish.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})} · ${c.pace_s} s a page`
+    : `took ${duration(c.elapsed_s)}`;
   const results = [...c.results].reverse().map(x => ({...x, link: x.link}));
   box.innerHTML = `<div class="crawl-plan">
     <p class="cast-msg-head">${CRAWL_WORD[c.status] || c.status}: ${c.done} of ${c.total} read, ${c.added} added to
       <a href="${PREFIX}/sources/corpora/${encodeURIComponent(c.corpus)}${c.version ? `/versions/${c.version}` : ''}"><strong>${esc(c.corpus)}</strong></a>${c.version ? `, now version ${c.version}` : ''}.</p>
-    <div class="crawl-bar"><span style="width:${pct}%"></span></div>
+    <div class="crawl-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}"><span style="width:${pct}%"></span></div>
+    <p class="crawl-time"><strong>${pct}%</strong> · ${esc(timeLine)}${tally ? ` · ${esc(tally)}` : ''}</p>
     ${c.message ? `<p class="hint">${esc(c.message)}</p>` : ''}
+    ${!live && c.done < c.total ? `<div class="cast-toolbar"><button type="button" class="small-btn" id="crawl-resume">Continue this crawl</button>
+      <span class="hint">${c.total - c.done} link${c.total - c.done === 1 ? '' : 's'} not yet read; documents already added are passed over.</span></div>` : ''}
     <p class="hint">From ${esc(c.start_url)} &middot; ${esc((c.rules || {}).delay_s)} s between requests &middot;
       ${esc((c.rules || {}).robots || '')}</p>
     ${live && c.status === 'running' ? '<div class="cast-toolbar"><button type="button" class="small-btn" id="crawl-stop">Stop crawl</button></div>' : ''}
@@ -345,6 +362,12 @@ async function watchCrawl(id) {
     stopBtn.disabled = true;
     try { await postJSON(`${PREFIX}/api/crawls/${id}/stop`); } catch (e) { /* finished meanwhile */ }
     watchCrawl(id);
+  });
+  const resumeBtn = document.getElementById('crawl-resume');
+  if (resumeBtn) resumeBtn.addEventListener('click', async () => {
+    resumeBtn.disabled = true;
+    try { const n = await postJSON(`${PREFIX}/api/crawls/${id}/resume`); watchCrawl(n.id); }
+    catch (e) { box.insertAdjacentHTML('beforeend', `<p class="provider-note warn">${esc(e.message)}</p>`); resumeBtn.disabled = false; }
   });
   if (live) crawlTimer = setTimeout(() => watchCrawl(id), 2500);
   else if (c.added) refreshCorpora(c.corpus);

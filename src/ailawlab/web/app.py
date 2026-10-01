@@ -471,6 +471,22 @@ async def api_crawl(crawl_id: str):
     row = await crawler.get(crawl_id) if _is_uuid(crawl_id) else None
     if row is None:
         raise HTTPException(404, "no such crawl")
+    return JSONResponse(_crawl_json({**row, **crawler.timing(row)}))
+
+
+@app.post("/api/crawls/{crawl_id}/resume")
+async def api_crawl_resume(request: Request, crawl_id: str):
+    """Continue a stopped or interrupted crawl: same page, library and choices."""
+    if not _is_uuid(crawl_id):
+        raise HTTPException(404, "no such crawl")
+    try:
+        row = await crawler.resume(await get_router(), crawl_id, user_id(request))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except (ValueError, source_material.SourceError) as e:
+        raise HTTPException(400, str(e)) from e
+    await accounts.audit(user_id(request), "library.crawl", row["start_url"], id=str(row["id"]),
+                         corpus=row["corpus"], pages=row["total"], continues=crawl_id)
     return JSONResponse(_crawl_json(row))
 
 

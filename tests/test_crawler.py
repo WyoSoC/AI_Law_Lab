@@ -108,3 +108,73 @@ def test_the_rules_shown_are_the_rules_in_force():
     assert f"at least {settings.crawl_delay_s:g} seconds apart" in text
     assert f"at most {settings.crawl_max_pages} pages" in text and settings.crawl_user_agent in text
     assert "AILawLab-crawler" in settings.crawl_user_agent and "+https://" in settings.crawl_user_agent
+
+
+def _run_crawl(monkeypatch, outcomes):
+    """Run the crawl loop over fake links whose reads give `outcomes`; return how it ended."""
+    calls, ended = iter(outcomes), {}
+
+    async def read_one(*a, **k):
+        status = next(calls)
+        return {"link": "x", "status": status}, status != "error"
+
+    async def nothing(*a, **k):
+        return []
+
+    async def note(cid, result, added=False):
+        return "running"
+
+    async def finish(sql, params=()):
+        if "UPDATE crawls SET status" in sql:
+            ended.update(status=params[0], message=params[1])
+        return {"id": 1}
+
+    async def no_sleep(*a):
+        return None
+
+    async def version(*a, **k):
+        return {"version": 1}
+
+    monkeypatch.setattr(crawler, "_read_one", read_one)
+    monkeypatch.setattr(crawler, "fetch_all", nothing)
+    monkeypatch.setattr(crawler, "_note", note)
+    monkeypatch.setattr(crawler, "fetch_one", finish)
+    monkeypatch.setattr(crawler, "record_version", version)
+    monkeypatch.setattr(crawler.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(crawler, "Corpus", lambda *a, **k: None)
+    links = [f"https://e.org/{i}.pdf" for i in range(len(outcomes))]
+    asyncio.run(crawler._crawl(None, "c1", "https://e.org/", links, "lib", 0, "", None))
+    return ended
+
+
+def test_unreadable_files_do_not_stop_a_crawl_but_failed_requests_do(monkeypatch):
+    # The 2026-10-01 crawl of 90 PDFs stopped after three damaged PDFs in a row.
+    assert _run_crawl(monkeypatch, ["unreadable"] * 6 + ["added"])["status"] == "finished"
+    ended = _run_crawl(monkeypatch, ["added", "error", "error", "error", "added"])
+    assert ended["status"] == "stopped" and "no answer or an error" in ended["message"]
+    assert _run_crawl(monkeypatch, ["error", "error", "unreadable", "error", "added"])["status"] == "finished"
+
+
+def test_a_downloaded_file_that_cannot_be_read_is_marked_unreadable(monkeypatch):
+    async def fine(*a, **k):
+        return "https://e.org/a.pdf", "application/pdf", b"%PDF-1.5 broken"
+    monkeypatch.setattr(source_material, "fetch_raw", fine)
+    result, ok = asyncio.run(crawler._read_one(None, "https://e.org/a.pdf", "https://e.org/", "", "lib", "c1"))
+    assert ok and result["status"] == "unreadable" and result["detail"].startswith("Downloaded, but")
+
+
+def test_time_left_comes_from_the_pace_kept():
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 10, 1, 20, 10, tzinfo=UTC)
+    row = {"status": "running", "created_at": now - timedelta(seconds=60), "total": 90, "done": 12,
+           "rules": {"delay_s": 2.0},
+           "results": [{"status": "exists"}] * 4 + [{"status": "added", "secs": 6.0}] * 4
+                      + [{"status": "unreadable", "secs": 4.0}] * 4}
+    t = crawler.timing(row, now)
+    assert t["elapsed_s"] == 60 and t["pace_s"] == 5.0 and t["eta_s"] == 78 * 5
+    assert t["counts"] == {"exists": 4, "added": 4, "unreadable": 4} and t["estimated"]
+    first = crawler.timing({**row, "results": []}, now)
+    assert not first["estimated"] and first["eta_s"] == 78 * 5      # delay + 3 s until measured
+    done = crawler.timing({**row, "status": "finished", "finished_at": now}, now)
+    assert done["eta_s"] == 0

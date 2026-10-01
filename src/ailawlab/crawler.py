@@ -67,8 +67,10 @@ def rules() -> list[dict[str, str]]:
                  "limit. Links already in the library are not read again."},
         {"title": "It stops when asked",
          "text": "If the site answers “too many requests” (429) or “service unavailable” (503), "
-                 "or three requests in a row fail, the crawl stops. You can also stop it at any "
-                 "time; what was read until then is kept."},
+                 "or three requests in a row get no answer or an error, the crawl stops. A file "
+                 "that downloads but cannot be read (a damaged PDF, a scanned image) is skipped "
+                 "and does not count. You can also stop a crawl at any time, and continue it "
+                 "later; what was read until then is kept."},
         {"title": "It says who it is",
          "text": f"Every request carries the name “{settings.crawl_user_agent}”, so the site's "
                  "owner can see who is reading and how to reach the lab."},
@@ -373,9 +375,12 @@ async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], 
                     status, message = "stopped", "Stopped by request."
                     break
                 continue
+            began = asyncio.get_running_loop().time()
             if i:
                 await asyncio.sleep(delay)
             result, ok = await _read_one(store, link, start_url, licence, corpus, cid)
+            # Seconds this link took, pause included: what the time-left estimate is made from.
+            result["secs"] = round(asyncio.get_running_loop().time() - began, 1)
             failures = 0 if ok or result["status"] == "exists" else failures + 1
             added += result["status"] == "added"
             state = await _note(cid, result, added=result["status"] == "added")
@@ -383,7 +388,8 @@ async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], 
                 status, message = "stopped", result["halt"]
                 break
             if failures >= 3:
-                status, message = "stopped", "Three requests in a row failed, so the crawl stopped."
+                status, message = "stopped", ("Three requests in a row got no answer or an error, "
+                                               "so the crawl stopped.")
                 break
             if state == "stopping":
                 status, message = "stopped", "Stopped by request."
@@ -399,19 +405,28 @@ async def _crawl(router: LLMRouter, cid: str, start_url: str, links: list[str], 
 
 async def _read_one(store: Corpus, link: str, start_url: str, licence: str, corpus: str,
                     cid: str) -> tuple[dict[str, Any], bool]:
-    """Read one link into the library. Returns its result and whether the request worked."""
+    """Read one link into the library. Returns its result and whether the request worked.
+
+    A request that gets no answer or an HTTP error is a failed request, which the stop rule
+    counts. A file that downloads but cannot be read (a damaged PDF, a scanned image) is the
+    file's problem, not the site's: it is marked unreadable and the crawl goes on.
+    """
     try:
         final, ctype, body = await source_material.fetch_raw(link, user_agent=settings.crawl_user_agent)
-        doc = await asyncio.to_thread(source_material.from_bytes, body, content_type=ctype,
-                                      url=final, max_words=settings.web_link_max_words)
     except source_material.SourceError as e:
         result = {"link": link, "status": "error", "detail": str(e)}
         if e.status in (429, 503):
             result["halt"] = (f"The site answered HTTP {e.status} (it is busy or asking crawlers "
                               "to slow down), so the crawl stopped.")
         return result, False
+    try:
+        doc = await asyncio.to_thread(source_material.from_bytes, body, content_type=ctype,
+                                      url=final, max_words=settings.web_link_max_words)
+    except source_material.SourceError as e:
+        return {"link": link, "status": "unreadable",
+                "detail": f"Downloaded, but no text could be read from it: {e}"}, True
     if not doc.text.strip():
-        return {"link": link, "status": "error", "detail": "No readable text."}, True
+        return {"link": link, "status": "unreadable", "detail": "Downloaded, but it has no text."}, True
     sha = hashlib.sha256(doc.text.encode()).hexdigest()
     holder = await fetch_one("SELECT id, title FROM documents WHERE corpus=%s AND sha256=%s "
                              "AND removed_at IS NULL", (corpus, sha))
@@ -436,6 +451,26 @@ async def stop(cid: str) -> dict | None:
                            "RETURNING id", (cid,))
 
 
+def timing(row: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """Elapsed time and an estimate of the time left, from the pace the crawl has kept: the
+    average time of the links it actually fetched, pause included (links already in the
+    library take no time and are left out of the average). Pure."""
+    now = now or datetime.now(UTC)
+    end = row.get("finished_at") or now
+    elapsed = max(0.0, (end - row["created_at"]).total_seconds())
+    timed = [r["secs"] for r in row.get("results") or [] if r.get("secs") is not None
+             and r.get("status") != "exists"]
+    pace = sum(timed) / len(timed) if timed else (row.get("rules") or {}).get("delay_s", settings.crawl_delay_s) + 3
+    left = max(0, int(row.get("total", 0)) - int(row.get("done", 0)))
+    live = row.get("status") in ("running", "stopping")
+    eta = round(left * pace) if live else 0
+    counts: dict[str, int] = {}
+    for r in row.get("results") or []:
+        counts[r.get("status", "?")] = counts.get(r.get("status", "?"), 0) + 1
+    return {"elapsed_s": round(elapsed), "eta_s": eta, "pace_s": round(pace, 1),
+            "estimated": bool(timed), "counts": counts}
+
+
 async def get(cid: str) -> dict | None:
     """A crawl, marked interrupted if the server restarted while it ran."""
     row = await fetch_one("SELECT c.*, COALESCE(NULLIF(u.name, ''), u.email) AS started_by_name "
@@ -447,6 +482,20 @@ async def get(cid: str) -> dict | None:
         if row["added"]:
             await record_version(row["corpus"])
     return row
+
+
+async def resume(router: LLMRouter, cid: str, by: Any = None) -> dict[str, Any]:
+    """Start a new crawl of the same page, into the same library, with the same choices.
+    Links the earlier crawl added are already in the library and are passed over without a
+    request, so it picks up where the other left off."""
+    row = await fetch_one("SELECT * FROM crawls WHERE id=%s", (cid,))
+    if row is None:
+        raise ValueError("There is no such crawl.")
+    if row["status"] in ("running", "stopping"):
+        raise ValueError("That crawl is still running.")
+    rules_ = row["rules"] or {}
+    return await start(router, row["start_url"], row["corpus"], row["max_pages"], by,
+                       rules_.get("kinds"), bool(rules_.get("same_folder")))
 
 
 async def recent(limit: int = 8) -> list[dict]:
