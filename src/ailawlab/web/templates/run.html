@@ -241,14 +241,18 @@
 {% if v.fetched %}
 <h2 id="fetched">Read online</h2>
 <div class="panel">
-  <p class="lib-summary">The agent read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} online.
+  {% set given = v.fetched|selectattr('given')|list|length %}
+  <p class="lib-summary">{% if given %}{{ given }} web page{{ '' if given == 1 else 's' }} given with the task
+    {{ 'was' if given == 1 else 'were' }} read before the agent started{% if v.fetched|length > given %}, and the agent
+    read {{ v.fetched|length - given }} more document{{ '' if v.fetched|length - given == 1 else 's' }} itself{% endif %}.
+    {% else %}The agent read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} online.{% endif %}
     Each was saved to a library first, so the passages it cites from them point to a fixed copy.</p>
   <ul class="source-list">
     {% for f in v.fetched %}
     <li class="cited"><a href="{{ prefix }}/sources/documents/{{ f.document_id }}">{{ f.title }}</a>
       <span class="lib-tag">saved to <a href="{{ prefix }}/sources/corpora/{{ f.corpus|urlencode }}/versions/{{ f.version }}">{{ f.corpus }} v{{ f.version }}</a></span>
       {% if f.url %}<a class="hint" href="{{ f.url }}" target="_blank" rel="noopener">original</a>{% endif %}
-      <span class="hint">from {{ f.provider }} &middot; read as {{ f.source }}</span></li>
+      <span class="hint">{% if f.given %}given with the task{% else %}from {{ f.provider }} &middot; read as {{ f.source }}{% endif %}</span></li>
     {% endfor %}
   </ul>
 </div>

@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     network_sources_default: int = 5    # sources an agent is asked to read, unless the experiment says
     network_sources_max: int = 20
     network_hits_per_source: int = 4
+    web_pages_max: int = 10             # pages a run may be given to read before the agent starts
 
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per

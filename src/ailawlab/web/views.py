@@ -10,12 +10,13 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from ..agent_spec import SECTIONS, check_cast, normalize_agent
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
-from ..network_tools import fetch_library_name, sources_wanted
+from ..network_tools import fetch_library_name, given_pages, sources_wanted
 from ..rag import case_files, library_names, run_library_names
 
 MODE_LABELS = {
@@ -256,23 +257,32 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         )
         return view
 
+    pages = given_pages(config) if mode == "agentic_workflow" else []
     facts = [libraries_fact(libraries, library_documents,
-                            none="None: answers without retrieved authority")]
+                            none="None: works from the web pages given" if pages
+                            else "None: answers without retrieved authority")]
     if mode == "agentic_workflow":
+        saved_to = fetch_library_name(config, str(exp.get("name") or ""))
         facts += [
+            *([_fact("Web pages to read", str(len(pages)),
+                     f"read first and added to “{saved_to}”: "
+                     + ", ".join(dict.fromkeys(urlparse(u).netloc for u in pages)))]
+              if pages else []),
             *([_fact("Sources to read online", str(sources_wanted(config)),
                      "the most relevant results, read before answering")]
               if config.get("allow_network") else []),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
                   (f"searches online databases and reads several sources; adds what it reads "
                    f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")
-                  if config.get("allow_network") else "works from its libraries only"),
+                  if config.get("allow_network")
+                  else "works from its libraries" + (" and the pages given" if pages else " only")),
         ]
     defaults: dict[str, Any] = {"libraries": libraries}
     if mode == "agentic_workflow":
         chosen = config.get("fetch_library")
         defaults.update(allow_network=bool(config.get("allow_network")),
                         network_sources=sources_wanted(config),
+                        web_pages=given_pages(config),
                         fetch_library=" ".join(chosen.split()) if isinstance(chosen, str) else "",
                         own_library=fetch_library_name({}, str(exp.get("name") or "")))
     view.update(facts=facts, libraries=libraries, launch_defaults=defaults)

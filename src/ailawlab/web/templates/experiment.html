@@ -210,7 +210,7 @@
   {% set d = v.launch_defaults %}
   <div class="network-launch">
     {{ network_opts("net", libraries, "syncInputs()", allowed=d.allow_network, sources=d.network_sources,
-                    fetch=d.fetch_library, own_name=d.own_library, run_only=True) }}
+                    fetch=d.fetch_library, own_name=d.own_library, run_only=True, pages=d.web_pages) }}
   </div>
   {% endif %}
 
@@ -362,9 +362,10 @@ function buildInputs() {
 function withNetwork(inputs) {
   const net = netValues("net");
   if (net.allow_network !== BASE.allow_network) inputs.allow_network = net.allow_network;
-  if (!net.allow_network) return inputs;
-  if (net.network_sources !== BASE.network_sources) inputs.network_sources = net.network_sources;
-  if (net.fetch_library !== BASE.fetch_library) inputs.fetch_library = net.fetch_library;
+  if (net.allow_network && net.network_sources !== BASE.network_sources) inputs.network_sources = net.network_sources;
+  if (!sameList(net.web_pages, BASE.web_pages || [])) inputs.web_pages = net.web_pages;
+  if ((net.allow_network || net.web_pages.length) && net.fetch_library !== BASE.fetch_library)
+    inputs.fetch_library = net.fetch_library;
   return inputs;
 }
 

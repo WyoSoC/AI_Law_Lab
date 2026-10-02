@@ -67,11 +67,15 @@ FINAL_STEP = ("This is your last step: no more tools. Write your answer now from
 
 def _task_message(state: AgenticState) -> str:
     """The task, with the document the run was given, if any."""
+    task = state["task"]
+    if pages := (state.get("given_pages") or "").strip():
+        task += ("\n\nWeb pages given with this task, already read and saved (cite their "
+                 f"passages by number):\n\n{pages}")
     text = (state.get("document_text") or "").strip()
     if not text:
-        return state["task"]
+        return task
     cut = len(text) > DOCUMENT_CHARS
-    return (f"{state['task']}\n\nA document was provided with this task: "
+    return (f"{task}\n\nA document was provided with this task: "
             f"“{state.get('document_title') or 'Untitled'}”"
             + (f" (only its first {DOCUMENT_CHARS:,} characters are shown)" if cut else "")
             + ". Quote it where it matters; cite library passages by number.\n\n"
@@ -87,7 +91,10 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     names = ctx.libraries.searchable()
     sources = (_sources_line(names) if names or not reader
                else "You have no library of legal sources yet.")
-    if reader:
+    if reader and reader.given_read and not reader.online:
+        sources += (f" The web pages the researcher gave you were read and saved to the library "
+                    f"“{reader.library}”; their passages are with your task, cited by number.")
+    if reader and reader.online:
         sources += (" You may also search public legal databases online (search_online) and "
                     "read results or a public web page (read_online). What you read is saved "
                     f"to the library “{reader.library}” and comes back as numbered passages "
@@ -138,10 +145,10 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     # told what it has not read yet. At most twice, and never on the last step, so it cannot
     # loop; it may still answer with fewer if it says the rest are not relevant.
     nudges = state.get("nudges", 0)
-    if (answer and reader and len(reader.fetched) < reader.wanted and nudges < 2 and not last_step
-            and iterations < max_iter - 1 and len(reader.fetched) < reader.max_reads):
+    if (answer and reader and reader.online and reader.agent_reads < reader.wanted and nudges < 2
+            and not last_step and iterations < max_iter - 1 and reader.agent_reads < reader.max_reads):
         note = more_sources_note(reader)
-        await ctx.tracer.note(f"answer held back: {len(reader.fetched)} of {reader.wanted} sources "
+        await ctx.tracer.note(f"answer held back: {reader.agent_reads} of {reader.wanted} sources "
                               "read; asked to read more", node="reason")
         return {
             "scratchpad": [{"role": "assistant", "content": answer},
@@ -231,7 +238,7 @@ def more_sources_note(reader) -> str:
     """What an agent that answered too soon is told: how far it is from the sources asked for,
     and which search results it has not read."""
     unread = [f"W{n}" for n in range(1, len(reader.hits) + 1) if n not in reader.read_hits]
-    have = len(reader.fetched)
+    have = reader.agent_reads
     ask = (f"You have read {have} of the {reader.wanted} sources this task asks for. Before "
            "answering, read more of the relevant ones")
     if unread:

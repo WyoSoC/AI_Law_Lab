@@ -246,8 +246,9 @@ function buildConfig() {
     if (net.allow_network) {
       config.allow_network = true;
       config.network_sources = net.network_sources;
-      if (net.fetch_library) config.fetch_library = net.fetch_library;
     }
+    if (net.web_pages.length) config.web_pages = net.web_pages;
+    if ((net.allow_network || net.web_pages.length) && net.fetch_library) config.fetch_library = net.fetch_library;
     return config;
   }
   if (mode === 'roleplay') {

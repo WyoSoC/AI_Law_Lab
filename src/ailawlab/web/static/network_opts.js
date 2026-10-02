@@ -1,8 +1,17 @@
 // Network tools for an agentic run (templates/_network_opts.html): show the options when
 // allowed, and say whether the save library already exists or will be started.
 function netShow(p) {
-  document.getElementById(`${p}_network_opts`).hidden = !document.getElementById(`${p}_network`).checked;
+  const allowed = document.getElementById(`${p}_network`).checked;
+  document.getElementById(`${p}_network_opts`).hidden = !allowed;
+  document.getElementById(`${p}_save`).hidden = !(allowed || netPages(p).length);
   netStatus(p);
+}
+
+// The web pages to read first: http(s) addresses, one per line, each once, at most 10
+// (mirrors network_tools.given_pages).
+function netPages(p) {
+  const lines = document.getElementById(`${p}_pages`).value.split("\n").map(s => s.trim());
+  return [...new Set(lines.filter(s => /^https?:\/\//i.test(s)))].slice(0, 10);
 }
 
 function netFetchName(p) {
@@ -24,11 +33,13 @@ function netStatus(p) {
       + ` a new library, “${name}”, with the first document it reads.`;
 }
 
-// The run settings the options describe: {allow_network, network_sources, fetch_library}.
+// The run settings the options describe:
+// {allow_network, network_sources, web_pages, fetch_library}.
 function netValues(p) {
   const allowed = document.getElementById(`${p}_network`).checked;
   const n = parseInt(document.getElementById(`${p}_sources`).value, 10);
   return {allow_network: allowed,
           network_sources: Math.max(1, Math.min(20, isNaN(n) ? 5 : n)),
+          web_pages: netPages(p),
           fetch_library: netFetchName(p)};
 }

@@ -43,6 +43,19 @@ def sources_wanted(config: dict[str, Any]) -> int:
     return max(1, min(n, settings.network_sources_max))
 
 
+def given_pages(config: dict[str, Any]) -> list[str]:
+    """The web pages a run was given to read: `web_pages` as a list or one address per line,
+    only http(s) addresses, each once, at most settings.web_pages_max. Pure."""
+    raw = config.get("web_pages") or []
+    items = raw.splitlines() if isinstance(raw, str) else [str(x) for x in raw if x]
+    out: list[str] = []
+    for item in items:
+        url = item.strip()
+        if url.lower().startswith(("http://", "https://")) and url not in out:
+            out.append(url)
+    return out[:settings.web_pages_max]
+
+
 def fetch_library_name(config: dict[str, Any], experiment_name: str) -> str:
     """The library a run saves what it reads into: the experiment's choice, or one named for
     the experiment. Pure."""
@@ -81,7 +94,7 @@ class OnlineReader:
 
     def __init__(self, router: LLMRouter, libraries: Libraries, ledger: SourceLedger, tracer,
                  run_id: str, library: str, added_by: Any = None,
-                 max_reads: int | None = None, wanted: int | None = None):
+                 max_reads: int | None = None, wanted: int | None = None, online: bool = True):
         self.router, self.libraries, self.ledger, self.tracer = router, libraries, ledger, tracer
         self.run_id, self.library, self.added_by = run_id, library, added_by
         # The agent is asked for `wanted` sources; its budget leaves room for two that turn out
@@ -91,6 +104,27 @@ class OnlineReader:
         self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id, hit)
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
         self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
+        # Whether the agent may search and read online itself; without, the reader only
+        # reads the pages the run was given, which never count against the agent's sources.
+        self.online = online
+        self.given_read = 0
+
+    @property
+    def agent_reads(self) -> int:
+        """Documents the agent read itself (not the pages it was given)."""
+        return len(self.fetched) - self.given_read
+
+    async def read_given(self, urls: list[str], look_for: str = "") -> str:
+        """Read the pages the run was given, before the agent starts, and say what came of
+        each: its passages to cite, or why it could not be read."""
+        out = []
+        for url in urls:
+            before = len(self.fetched)
+            out.append(await self._read_one(url, look_for, budget=False))
+            if len(self.fetched) > before:
+                self.fetched[-1]["given"] = True
+                self.given_read += 1
+        return "\n\n".join(out)
 
     @staticmethod
     def databases() -> dict[str, str]:
@@ -151,8 +185,8 @@ class OnlineReader:
         """The passage numbers handed back when search result W<n> was read ([] if never read)."""
         return self.read_hits.get(n, [])
 
-    async def _read_one(self, source: str, look_for: str = "") -> str:
-        if len(self.fetched) >= self.max_reads:
+    async def _read_one(self, source: str, look_for: str = "", budget: bool = True) -> str:
+        if budget and self.agent_reads >= self.max_reads:
             return (f"ERROR: this run has already read {self.max_reads} documents online, the "
                     "most it may. Work with what you have, or search the libraries.")
         try:

@@ -252,3 +252,31 @@ def test_the_last_step_has_no_tools_and_always_answers():
     # So does the step the limit falls on.
     out = asyncio.run(reason_node({**state, "iterations": 399}, config))
     assert offered[-1] is None and out["answer"] == "The answer." and "last step" in FINAL_STEP
+
+
+def test_given_pages_are_clean_addresses_each_once_and_capped():
+    from ailawlab.network_tools import given_pages
+
+    text = "https://a.gov/x\n  https://a.gov/x \nnot a link\nftp://b.org/f\nhttp://c.org/\n"
+    assert given_pages({"web_pages": text}) == ["https://a.gov/x", "http://c.org/"]
+    assert given_pages({"web_pages": [f"https://a.gov/{i}" for i in range(30)]})[-1] == "https://a.gov/9"
+    assert given_pages({}) == [] and given_pages({"web_pages": None}) == []
+
+
+def test_pages_given_are_read_first_and_never_count_against_the_agent():
+    import asyncio
+
+    r = reader(wanted=2)
+    r.online = False
+
+    async def fake_read(source, look_for="", budget=True):
+        if "broken" in source:
+            return f"ERROR: could not read {source}"
+        r.fetched.append({"source": source})
+        return f"Read “{source}”"
+
+    r._read_one = fake_read
+    text = asyncio.run(r.read_given(["https://a.gov/x", "https://broken.example/", "https://a.gov/y"], "q"))
+    assert "ERROR: could not read https://broken.example/" in text and text.count("Read “") == 2
+    assert r.given_read == 2 and r.agent_reads == 0
+    assert all(f.get("given") for f in r.fetched)

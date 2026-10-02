@@ -19,7 +19,7 @@ from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
 from .grounding import SourceLedger
-from .network_tools import OnlineReader, fetch_library_name, sources_wanted
+from .network_tools import OnlineReader, fetch_library_name, given_pages, sources_wanted
 from .rag import Libraries, all_run_library_names, pin_libraries, run_library_names, wanted_versions
 from .router import get_router
 from .tools import default_registry
@@ -287,23 +287,28 @@ async def execute_run(run_id: str) -> dict:
         libraries = await _libraries_for_run(run_id, mode, config, inputs, router, tracer)
         ctx = RunContext(run_id=run_id, router=router, tracer=tracer, libraries=libraries,
                          config=config)
+        pages: list[str] = []
         if mode == "agentic_workflow":
             ledger = SourceLedger()
             settings_ = {**config, **inputs}     # a run's own choices win over the experiment's
             allow = bool(settings_.get("allow_network", False))
+            pages = given_pages(settings_)
             reader = None
-            if allow:
+            if allow or pages:
                 save_to = fetch_library_name(settings_, run["experiment_name"])
                 reader = OnlineReader(router, libraries, ledger, tracer, run_id, save_to,
                                       added_by=run.get("launched_by"),
-                                      wanted=sources_wanted(settings_))
+                                      wanted=sources_wanted(settings_), online=allow)
                 row = await fetch_one("SELECT count(*) AS n FROM documents "
                                       "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
                 held = int(row["n"]) if row else 0
+                where = (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
+                         else f"a new library, “{save_to}”, created with the first document read")
                 await tracer.note(
-                    f"network tools on: reads up to {reader.wanted} sources online and adds them to "
-                    + (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
-                       else f"a new library, “{save_to}”, created with the first document it reads"))
+                    (f"network tools on: reads up to {reader.wanted} sources online" if allow
+                     else "network tools off: the agent cannot search or read online itself")
+                    + (f"; {len(pages)} web page{'' if len(pages) == 1 else 's'} given to read first"
+                       if pages else "") + f". What is read is added to {where}")
             ctx.config = {**config, "ledger": ledger, "reader": reader, "registry": default_registry(
                 libraries, ledger, allow_network=allow, reader=reader)}
 
@@ -314,6 +319,12 @@ async def execute_run(run_id: str) -> dict:
                              "there is nothing to answer the question from")
         if mode == "roleplay":
             await _check_roleplay(state, tracer)
+        if mode == "agentic_workflow" and pages:
+            # The pages the researcher gave are read before the agent's first step, so they
+            # are in front of it whatever it decides; it cites their passages like any other.
+            await tracer.note(f"reading the {len(pages)} web page{'' if len(pages) == 1 else 's'} "
+                              "given with the task")
+            state["given_pages"] = await reader.read_given(pages, look_for=state["task"])
         # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle. Read
         # it from the built state, since run inputs may override the experiment's max_turns.
         limit = int(state.get("max_turns", settings.default_max_turns)) * 3 + 20
