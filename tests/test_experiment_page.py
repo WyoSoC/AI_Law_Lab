@@ -90,7 +90,18 @@ def test_document_and_agentic_experiment_views():
                            library_documents={"cases": 3, "regs": 2}, now=NOW)
     assert both["facts"][0] == {"label": "Libraries", "value": "“cases”, “regs”",
                                 "note": "5 documents across 2 libraries"}
-    assert both["launch_defaults"] == {"libraries": ["cases", "regs"]}
+    assert both["launch_defaults"] == {"libraries": ["cases", "regs"], "allow_network": False,
+                                       "network_sources": 5, "fetch_library": "",
+                                       "own_library": "Fetched:"}
+    # The launch form starts from the experiment's network settings, so a rerun can change them.
+    online = experiment_view({"name": "Treaties", "mode": "agentic_workflow",
+                              "config": {"allow_network": True, "network_sources": 8,
+                                         "fetch_library": "  jurisprudence "}}, [], now=NOW)
+    assert online["launch_defaults"] == {"libraries": ["default"], "allow_network": True, "network_sources": 8,
+                                         "fetch_library": "jurisprudence",
+                                         "own_library": "Fetched: Treaties"}
+    doc_only = experiment_view({"mode": "document_analysis", "config": {}}, [], now=NOW)
+    assert "allow_network" not in doc_only["launch_defaults"]
     none = experiment_view({"mode": "document_analysis", "config": {"libraries": []}}, [], now=NOW)
     assert none["facts"][0]["value"] == "None: answers without retrieved authority"
 

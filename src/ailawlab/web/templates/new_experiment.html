@@ -3,6 +3,7 @@
 {% block title %}New experiment · AI Law Lab{% endblock %}
 {% block content %}
 {% from "_library_picker.html" import library_picker %}
+{% from "_network_opts.html" import network_opts %}
 {% set preset = ['default'] if libraries|selectattr('name', 'equalto', 'default')|list else [] %}
 
 <h1>New experiment</h1>
@@ -57,35 +58,7 @@ past results. Fill in the fields below.</p>
     <label for="aw_max_iter">Max tool iterations</label>
     <input type="number" id="aw_max_iter" value="8" min="1" max="40" oninput="syncJSON()">
     <p class="hint">How many think→act cycles before the agent must answer.</p>
-    <label class="check"><input type="checkbox" id="aw_network" onchange="showNetwork(); syncJSON()">
-      Allow network tools during the run</label>
-    <p class="hint">Off by default: an experiment about model reasoning shouldn't silently
-       reach the open internet. When on, the agent can also search CourtListener, the Federal
-       Register, the eCFR, govinfo and SEC EDGAR, and read a result or a public web page.
-       Everything it reads is saved to a library, so what it cites stays traceable to a
-       document and version after the page changes.</p>
-    <div id="aw_network_opts" hidden>
-      <label for="aw_sources">Sources to read online</label>
-      <input type="number" id="aw_sources" value="5" min="1" max="20" oninput="syncJSON()" style="max-width:8rem">
-      <p class="hint">How many of the most relevant results the agent reads before answering (1 to 20).
-         It reads fewer only if fewer are relevant, and may read two more to replace any that turn out
-         to be unreadable. Each takes a few seconds to read and add.</p>
-      <label for="aw_fetch_pick">Library to save what it reads</label>
-      <div class="cast-toolbar">
-        <select id="aw_fetch_pick" onchange="showFetchNew(); syncJSON()">
-          <option value="">A library of its own: “Fetched: (this experiment's name)”</option>
-          {% for lib in libraries|rejectattr('hidden') %}<option value="{{ lib.name }}">{{ lib.name }} ({{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }})</option>{% endfor %}
-          {% set tucked = libraries|selectattr('hidden')|list %}
-          {% if tucked %}<optgroup label="Hidden libraries">{% for lib in tucked %}<option value="{{ lib.name }}">{{ lib.name }}</option>{% endfor %}</optgroup>{% endif %}
-          <option value="__new__">+ New library…</option>
-        </select>
-        <input type="text" id="aw_fetch_new" placeholder="Name the new library" hidden oninput="syncJSON()">
-      </div>
-      <p class="hint">Choose an existing library to add what the agent reads to it, or keep a library
-         of its own. Each document read is added as a new version of that library, with its source
-         and the date it was read, and the agent can search it for the rest of the run. Tick the
-         same library above as well if the agent should also search what is already in it.</p>
-    </div>
+    {{ network_opts("aw", libraries, "syncJSON()") }}
   </div>
 
   <!-- ───────────── roleplay ───────────── -->
@@ -219,6 +192,7 @@ past results. Fill in the fields below.</p>
 {% endblock %}
 {% block scripts %}
 <script src="{{ prefix }}/static/cast_builder.js?v={{ asset_version }}"></script>
+<script src="{{ prefix }}/static/network_opts.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
 const LIBRARY_CHOICES = {{ libraries|tojson }};   // for each agent's case files
@@ -256,16 +230,6 @@ function checkedLibraries(id) {
 }
 function int(id, d){ const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? d : n; }
 
-function showFetchNew() {
-  const box = document.getElementById('aw_fetch_new');
-  box.hidden = val('aw_fetch_pick') !== '__new__';
-  if (!box.hidden) box.focus();
-}
-
-function showNetwork() {
-  document.getElementById('aw_network_opts').hidden = !document.getElementById('aw_network').checked;
-}
-
 function toggleDraftPanel() {
   const panel = document.getElementById('draft-panel');
   panel.hidden = !panel.hidden;
@@ -279,11 +243,13 @@ function buildConfig() {
   if (mode === 'agentic_workflow') {
     const config = {libraries: checkedLibraries('aw_libs'),
                     max_iterations: int('aw_max_iter', 8),
-                    allow_network: document.getElementById('aw_network').checked};
-    const pick = val('aw_fetch_pick');
-    const fetchLib = pick === '__new__' ? val('aw_fetch_new').trim() : pick;
-    if (config.allow_network && fetchLib) config.fetch_library = fetchLib;
-    if (config.allow_network) config.network_sources = Math.max(1, Math.min(20, int('aw_sources', 5)));
+                    allow_network: false};
+    const net = netValues('aw');
+    if (net.allow_network) {
+      config.allow_network = true;
+      config.network_sources = net.network_sources;
+      if (net.fetch_library) config.fetch_library = net.fetch_library;
+    }
     return config;
   }
   if (mode === 'roleplay') {
@@ -342,5 +308,6 @@ function finalize() {
 
 enableDropZone();
 showMode();
+netStatus("aw");
 </script>
 {% endblock %}

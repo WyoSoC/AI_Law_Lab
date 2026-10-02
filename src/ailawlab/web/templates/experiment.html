@@ -205,6 +205,15 @@
   </details>
   {% endif %}
 
+  {% if exp.mode == 'agentic_workflow' %}
+  {% from "_network_opts.html" import network_opts %}
+  {% set d = v.launch_defaults %}
+  <div class="network-launch">
+    {{ network_opts("net", libraries, "syncInputs()", allowed=d.allow_network, sources=d.network_sources,
+                    fetch=d.fetch_library, own_name=d.own_library, run_only=True) }}
+  </div>
+  {% endif %}
+
   {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
   <div class="library-launch">
     {% if v.case_files %}
@@ -318,6 +327,7 @@
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ prefix }}/static/network_opts.js?v={{ asset_version }}"></script>
 <script>
 const MODE = {{ exp.mode|tojson }};
 const PREFIX = "{{ prefix }}";
@@ -344,7 +354,18 @@ function buildInputs() {
     inputs.document_text = $("in_text").value;
     if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
   }
+  if (MODE === "agentic_workflow") withNetwork(inputs);
   return withLibraries(inputs);
+}
+
+// Network settings that differ from the experiment's go with this run only.
+function withNetwork(inputs) {
+  const net = netValues("net");
+  if (net.allow_network !== BASE.allow_network) inputs.allow_network = net.allow_network;
+  if (!net.allow_network) return inputs;
+  if (net.network_sources !== BASE.network_sources) inputs.network_sources = net.network_sources;
+  if (net.fetch_library !== BASE.fetch_library) inputs.fetch_library = net.fetch_library;
+  return inputs;
 }
 
 // ---------------------------------------------------------------- libraries and versions
@@ -507,6 +528,7 @@ async function loadDocument(from) {
 
 fillVersions();
 applyWanted();
+if (MODE === "agentic_workflow") netStatus("net");
 syncInputs();
 </script>
 {% endblock %}

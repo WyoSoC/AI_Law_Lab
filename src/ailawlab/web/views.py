@@ -270,7 +270,14 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
                    f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")
                   if config.get("allow_network") else "works from its libraries only"),
         ]
-    view.update(facts=facts, libraries=libraries, launch_defaults={"libraries": libraries})
+    defaults: dict[str, Any] = {"libraries": libraries}
+    if mode == "agentic_workflow":
+        chosen = config.get("fetch_library")
+        defaults.update(allow_network=bool(config.get("allow_network")),
+                        network_sources=sources_wanted(config),
+                        fetch_library=" ".join(chosen.split()) if isinstance(chosen, str) else "",
+                        own_library=fetch_library_name({}, str(exp.get("name") or "")))
+    view.update(facts=facts, libraries=libraries, launch_defaults=defaults)
     return view
 
 

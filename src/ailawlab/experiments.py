@@ -287,11 +287,21 @@ async def execute_run(run_id: str) -> dict:
                          config=config)
         if mode == "agentic_workflow":
             ledger = SourceLedger()
-            allow = bool({**config, **inputs}.get("allow_network", False))
-            reader = OnlineReader(router, libraries, ledger, tracer, run_id,
-                                  fetch_library_name(config, run["experiment_name"]),
-                                  added_by=run.get("launched_by"),
-                                  wanted=sources_wanted({**config, **inputs})) if allow else None
+            settings_ = {**config, **inputs}     # a run's own choices win over the experiment's
+            allow = bool(settings_.get("allow_network", False))
+            reader = None
+            if allow:
+                save_to = fetch_library_name(settings_, run["experiment_name"])
+                reader = OnlineReader(router, libraries, ledger, tracer, run_id, save_to,
+                                      added_by=run.get("launched_by"),
+                                      wanted=sources_wanted(settings_))
+                row = await fetch_one("SELECT count(*) AS n FROM documents "
+                                      "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
+                held = int(row["n"]) if row else 0
+                await tracer.note(
+                    f"network tools on: reads up to {reader.wanted} sources online and adds them to "
+                    + (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
+                       else f"a new library, “{save_to}”, created with the first document it reads"))
             ctx.config = {**config, "ledger": ledger, "reader": reader, "registry": default_registry(
                 libraries, ledger, allow_network=allow, reader=reader)}
 
