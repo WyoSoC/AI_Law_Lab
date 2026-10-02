@@ -49,6 +49,9 @@ class Settings(BaseSettings):
                                     # search works but full opinion text 401s, so hits
                                     # are ingested from their search snippet instead.
     govinfo_api_key: str = ""       # free: api.data.gov/signup
+    # Open-web search for research agents (api.search.brave.com). Without a key the
+    # "Search the open web" permission reports itself unavailable.
+    brave_api_key: str = ""
     # SEC blocks generic user agents outright; their fair-access policy wants a real
     # contact address. Sending a fake one gets the whole institution rate-limited.
     sec_user_agent: str = "AI Law Lab (University of Wyoming) gojian@uwyo.edu"
@@ -83,22 +86,29 @@ class Settings(BaseSettings):
     crawl_user_agent: str = ("AILawLab-crawler/1.0 (+https://datahive.uwyo.edu/ai_law_lab/; "
                              "University of Wyoming legal research; gojian@uwyo.edu)")
 
-    # --- agentic workflow --------------------------------------------------
-    # An agent decides for itself when it has enough to answer; this is only a safety net.
-    # Its last step (or the step after its context fills) gets no tools, so it must answer.
-    agent_max_steps: int = 400
-    agent_context_tokens: int = 131072
-    agent_wrap_up_share: float = 0.85    # past this share of the context, the next step answers
+    # --- agentic workflow (research agents) -------------------------------
+    # The experiment's description is the research brief. A planner turns it into a plan the
+    # researcher reviews; then one research agent per sub-question works in parallel and a
+    # lead agent writes the answer. Agents decide for themselves when they have enough: the
+    # step ceiling and the context share are safety nets, and the run's time limit
+    # (adjustable per run) is the only budget. Its last step gets no tools, so it answers.
+    agent_model: str = "qwen3.6:latest"   # planner, research agents and the write-up
+    agent_max_steps: int = 400            # per research agent
+    agent_context_tokens: int = 65536
+    agent_wrap_up_share: float = 0.85     # past this share of the context, the next step answers
+    agent_keep_results: int = 3           # tool results kept whole in an agent's context; older
+                                          # ones shrink to a line, its notes keep what mattered
+    research_parallel: int = 4            # research agents working at once
+    research_time_limit_min: int = 120    # default time limit for a run, in minutes
+    research_time_limit_max: int = 24 * 60
+    research_max_sub_questions: int = 8
 
-    # --- network tools for agents -----------------------------------------
-    # With "Allow network tools" an agent may search the online databases and read a result
-    # or a public web page. Each read is saved into a library and embedded, so it occupies
-    # cluster slots like an ingest: a run may read at most this many documents.
-    network_max_reads: int = 8          # the budget when an experiment sets no number of sources
-    network_sources_default: int = 5    # sources an agent is asked to read, unless the experiment says
-    network_sources_max: int = 20
+    # --- outside sources for research agents ------------------------------
+    # Two permissions: the legal databases (their own APIs) and the open web (Brave search
+    # and any public page). Everything read is saved into a library and embedded first, so
+    # a citation to it names a fixed copy.
     network_hits_per_source: int = 4
-    web_pages_max: int = 10             # pages a run may be given to read before the agent starts
+    web_hits: int = 8                   # results per open-web search
 
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per

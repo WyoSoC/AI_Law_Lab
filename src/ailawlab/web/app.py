@@ -24,6 +24,7 @@ from .. import (
     crawler,
     experiments,
     rag,
+    research,
     source_material,
     sources,
     web_links,
@@ -31,6 +32,7 @@ from .. import (
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..graphs.roleplay_policy import ESTIMATE
+from ..network_tools import web_search_ready
 from ..rag import Corpus
 from ..router import get_router
 from ..tracing import run_metrics
@@ -268,6 +270,8 @@ async def new_experiment_form(request: Request):
         "max_turns_limit": settings.max_turns_limit,
         "default_word_limit": settings.default_word_limit,
         "word_limit_max": settings.word_limit_max,
+        "aw_defaults": views.research_defaults({}, ""),
+        "web_ready": web_search_ready(),
     })
 
 
@@ -335,7 +339,47 @@ async def experiment_detail(request: Request, experiment_id: str):
         "limits": {"max_turns": settings.max_turns_limit, "word_limit": settings.word_limit_max},
         "libraries": libraries,
         "library_versions": await _library_versions(),
+        "web_ready": web_search_ready(),
     })
+
+
+@app.post("/api/experiments/{experiment_id}/plan")
+async def draft_research_plan(request: Request, experiment_id: str):
+    """Start drafting a research plan for a run of an agentic experiment. The body holds the
+    run's settings (as the launch form would send them) and, optionally, its document.
+    Returns a job id; GET /api/plans/{job} gives the plan when it is ready."""
+    exp = await experiments.get_experiment(_experiment_id(experiment_id))
+    if exp is None or exp["mode"] != "agentic_workflow":
+        raise HTTPException(404, "no such agentic experiment")
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    brief = research.brief_of(exp)
+    if not brief:
+        raise HTTPException(409, "This experiment has no research brief: its description is empty.")
+    rs = research.research_settings(exp["config"] or {}, body)
+    job = research.start_draft(await get_router(), brief, rs, str(body.get("document_title") or ""),
+                               str(body.get("document_text") or ""))
+    return {"job": job}
+
+
+@app.get("/api/plans/{job_id}")
+async def research_plan_status(job_id: str):
+    status = research.draft_status(job_id)
+    if status is None:
+        raise HTTPException(404, "no such plan draft (drafts are kept for an hour)")
+    return status
+
+
+@app.post("/runs/{run_id}/stop")
+async def stop_run(run_id: str):
+    """Ask a running agentic run to stop researching: its agents report what they have found
+    and the answer is written from that."""
+    if not experiments.request_stop(_run_id(run_id)):
+        raise HTTPException(409, "this run is not running")
+    return RedirectResponse(f"{P}/runs/{run_id}", status_code=303)
 
 
 @app.get("/experiments/{experiment_id}/cast.md")

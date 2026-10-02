@@ -179,17 +179,16 @@
     <p class="hint">Asked of the libraries below. Add a document to have the question answered
       from it instead, with the libraries as supporting authority.</p>
   {% else %}
-    <label for="in_task">Task</label>
-    <textarea id="in_task" class="short tall" oninput="syncInputs()"
-              placeholder="e.g. Search the library and summarise how Wyoming treats one-sided termination-for-convenience clauses."></textarea>
+    <p class="hint">Each run researches the brief above. Choose what it may use, draft the plan,
+      review and edit it, then run it.</p>
   {% endif %}
 
   {% if exp.mode != 'roleplay' %}
   <details class="doc-optional" id="doc-optional">
     <summary>Add a document <span class="hint-inline">(optional)</span></summary>
     <p class="hint">{% if exp.mode == 'document_analysis' %}With a document, each part of the question is
-      answered from it, and the libraries supply supporting authority.{% else %}The agent is given the
-      document with its task, alongside its libraries.{% endif %}</p>
+      answered from it, and the libraries supply supporting authority.{% else %}The planner sees its
+      opening, and every research agent is given the document with the brief.{% endif %}</p>
     <label for="in_title">Document title</label>
     <input type="text" id="in_title" placeholder="Master Services Agreement" oninput="syncInputs()">
     <label for="in_text">Document text</label>
@@ -206,16 +205,46 @@
   {% endif %}
 
   {% if exp.mode == 'agentic_workflow' %}
-  {% from "_network_opts.html" import network_opts %}
-  {% set d = v.launch_defaults %}
-  <div class="network-launch">
-    {{ network_opts("net", libraries, "syncInputs()", allowed=d.allow_network, sources=d.network_sources,
-                    fetch=d.fetch_library, own_name=d.own_library, run_only=True, pages=d.web_pages) }}
+  {% from "_research_opts.html" import research_opts %}
+  <div class="research-launch">
+    {{ research_opts("net", libraries, "planStale(); syncInputs()", v.launch_defaults, run_only=True, web_ready=web_ready) }}
+  </div>
+
+  <h3 class="plan-head">The plan</h3>
+  <div class="plan-area" id="plan-area">
+    <div class="plan-actions">
+      <button type="button" class="primary" id="draft-btn" onclick="draftPlan()" {% if exp.deleted_at %}disabled{% endif %}>Draft the plan</button>
+      <span class="hint" id="draft-status" aria-live="polite">The planner reads the brief, profiles the libraries and
+        proposes how to research it. You review and edit the plan before anything runs.</span>
+    </div>
+    <div id="plan-editor" hidden>
+      <p class="notice" id="plan-stale" hidden>The settings above changed since this plan was drafted. Draft it
+        again, or run it as it is (it is held to the settings above).</p>
+      <label for="plan_question">Research question</label>
+      <textarea id="plan_question" class="short" oninput="syncInputs()"></textarea>
+      <label for="plan_approach">Approach</label>
+      <textarea id="plan_approach" class="short" oninput="syncInputs()"></textarea>
+      <label>Sub-questions <span class="hint-inline">one research agent each, working in parallel</span></label>
+      <ol class="plan-subs" id="plan-subs"></ol>
+      <button type="button" class="small-btn" onclick="addSub('', [])">+ Add a sub-question</button>
+      <label>Libraries to search</label>
+      <div class="plan-libs" id="plan-libs"></div>
+      <p class="hint" id="plan-lib-reasons"></p>
+      <div id="plan-urls-box">
+        <label for="plan_urls">Web pages to read first</label>
+        <textarea id="plan_urls" class="short" spellcheck="false" oninput="syncInputs()"
+                  placeholder="https://… (one address per line)"></textarea>
+        <p class="hint">Found in the brief; add or remove any. Read before research starts, when the open web is allowed.</p>
+      </div>
+      <label for="plan_enough">Enough when</label>
+      <textarea id="plan_enough" class="short" oninput="syncInputs()"></textarea>
+      <p class="hint" id="plan-meta"></p>
+    </div>
   </div>
   {% endif %}
 
   {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
-  <div class="library-launch">
+  <div class="library-launch" {% if exp.mode == 'agentic_workflow' %}hidden{% endif %}>
     {% if v.case_files %}
     <label>Case files</label>
     <div class="lib-rows">
@@ -290,7 +319,7 @@
 
   <p class="launch-error" id="launch-error" hidden></p>
   <div class="launch-row">
-    <button type="submit" class="primary" {% if v.cast_errors or exp.deleted_at %}disabled{% endif %}>Launch run</button>
+    <button type="submit" class="primary" id="launch-btn" {% if v.cast_errors or exp.deleted_at or exp.mode == 'agentic_workflow' %}disabled{% endif %}>{{ 'Run this plan' if exp.mode == 'agentic_workflow' else 'Launch run' }}</button>
     <span class="hint">Once a run starts you can leave this page; it keeps going.</span>
   </div>
   <details class="advanced">
@@ -327,7 +356,7 @@
 
 {% endblock %}
 {% block scripts %}
-<script src="{{ prefix }}/static/network_opts.js?v={{ asset_version }}"></script>
+<script src="{{ prefix }}/static/research_opts.js?v={{ asset_version }}"></script>
 <script>
 const MODE = {{ exp.mode|tojson }};
 const PREFIX = "{{ prefix }}";
@@ -347,26 +376,142 @@ function buildInputs() {
     if (words !== BASE.word_limit) inputs.word_limit = words;
     return withLibraries(inputs);
   }
-  const inputs = MODE === "document_analysis" ? {question: $("in_question").value.trim()}
-                                              : {task: $("in_task").value.trim()};
+  const inputs = MODE === "document_analysis" ? {question: $("in_question").value.trim()} : {};
   // The document is optional: sent only when there is one.
   if ($("in_text").value.trim()) {
     inputs.document_text = $("in_text").value;
     if ($("in_title").value.trim()) inputs.document_title = $("in_title").value.trim();
   }
-  if (MODE === "agentic_workflow") withNetwork(inputs);
+  if (MODE === "agentic_workflow") return withResearch(inputs);
   return withLibraries(inputs);
 }
 
-// Network settings that differ from the experiment's go with this run only.
-function withNetwork(inputs) {
-  const net = netValues("net");
-  if (net.allow_network !== BASE.allow_network) inputs.allow_network = net.allow_network;
-  if (!net.allow_network) return inputs;     // pages and the save library need network tools
-  if (net.network_sources !== BASE.network_sources) inputs.network_sources = net.network_sources;
-  if (!sameList(net.web_pages, BASE.web_pages || [])) inputs.web_pages = net.web_pages;
-  if (net.fetch_library !== BASE.fetch_library) inputs.fetch_library = net.fetch_library;
+// ---------------------------------------------------------------- research settings and the plan
+// Settings that differ from the experiment's go with this run only; the plan always goes.
+function researchChanges() {
+  const r = resValues("net"), out = {};
+  for (const key of ["choose_libraries", "use_databases", "use_web", "time_limit_minutes"])
+    if (r[key] !== BASE[key]) out[key] = r[key];
+  if (!r.choose_libraries && !sameList(r.libraries, BASE.libraries || [])) out.libraries = r.libraries;
+  if ((r.use_databases || r.use_web) && r.fetch_library !== BASE.fetch_library) out.fetch_library = r.fetch_library;
+  return out;
+}
+
+function withResearch(inputs) {
+  Object.assign(inputs, researchChanges());
+  if (PLAN) inputs.plan = currentPlan();
+  // "Run again with these versions" pins the libraries the earlier run searched.
+  if (WANTED && typeof WANTED === "object") inputs.library_versions = WANTED;
   return inputs;
+}
+
+let PLAN = null, DRAFTED_WITH = "";
+
+function planStale() {
+  if (PLAN) $("plan-stale").hidden = JSON.stringify(researchChanges()) === DRAFTED_WITH;
+}
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+function addSub(question, lookIn) {
+  const li = document.createElement("li");
+  li.className = "plan-sub";
+  li.innerHTML = `<textarea class="short" oninput="syncInputs()"></textarea>
+    <div class="plan-sub-foot"><span class="hint-inline"></span>
+    <button type="button" class="small-btn" onclick="this.closest('li').remove(); syncInputs()">Remove</button></div>`;
+  li.querySelector("textarea").value = question;
+  li.dataset.lookIn = JSON.stringify(lookIn || []);
+  li.querySelector(".hint-inline").textContent = (lookIn || []).length ? "Start with: " + lookIn.join(", ") : "";
+  $("plan-subs").appendChild(li);
+  syncInputs();
+}
+
+function showPlan(plan) {
+  PLAN = plan;
+  DRAFTED_WITH = JSON.stringify(researchChanges());
+  $("plan-stale").hidden = true;
+  $("plan_question").value = plan.question || "";
+  $("plan_approach").value = plan.approach || "";
+  $("plan_enough").value = plan.enough_when || "";
+  $("plan_urls").value = (plan.urls || []).join("\n");
+  $("plan-subs").innerHTML = "";
+  (plan.sub_questions || []).forEach(s => addSub(s.question, s.look_in));
+  const box = $("plan-libs");
+  box.innerHTML = "";
+  (plan.profiles || []).forEach(p => {
+    const row = document.createElement("label");
+    row.className = "check plan-lib";
+    row.innerHTML = `<input type="checkbox" value="${esc(p.name)}" ${plan.libraries.includes(p.name) ? "checked" : ""} onchange="syncInputs()">
+      <span class="lib-name">${esc(p.name)}</span>
+      <span class="hint-inline">${p.documents} document${p.documents === 1 ? "" : "s"} · match ${p.match.toFixed(2)}${p.closest.length ? " · closest: " + esc(p.closest.join("; ")) : ""}</span>`;
+    box.appendChild(row);
+  });
+  if (!(plan.profiles || []).length) box.innerHTML = '<p class="hint">No library holds anything the planner could choose.</p>';
+  $("plan-lib-reasons").textContent = plan.library_reasons || "";
+  $("plan-urls-box").hidden = !resValues("net").use_web;
+  $("plan-meta").textContent = `Drafted by ${plan.model} in ${Math.round(plan.drafted_in_s)} s.`
+    + (plan.web_unavailable ? " The open web is allowed but not set up on this server, so it was left out." : "");
+  $("plan-editor").hidden = false;
+  $("launch-btn").disabled = false;
+  syncInputs();
+}
+
+function currentPlan() {
+  return {
+    question: $("plan_question").value.trim(),
+    approach: $("plan_approach").value.trim(),
+    enough_when: $("plan_enough").value.trim(),
+    sub_questions: [...document.querySelectorAll("#plan-subs .plan-sub")]
+      .map(li => ({question: li.querySelector("textarea").value.trim(), look_in: JSON.parse(li.dataset.lookIn || "[]")}))
+      .filter(s => s.question),
+    libraries: [...document.querySelectorAll("#plan-libs input:checked")].map(i => i.value),
+    library_reasons: PLAN.library_reasons || "",
+    urls: $("plan_urls").value.split("\n").map(s => s.trim()).filter(s => /^https?:\/\//i.test(s)),
+    model: PLAN.model, drafted_in_s: PLAN.drafted_in_s,
+  };
+}
+
+async function draftPlan() {
+  const btn = $("draft-btn"), status = $("draft-status");
+  btn.disabled = true;
+  const body = {...researchChanges()};
+  if ($("in_text").value.trim()) {
+    body.document_text = $("in_text").value;
+    body.document_title = $("in_title").value.trim();
+  }
+  let job;
+  try {
+    const r = await fetch(`${PREFIX}/api/experiments/{{ exp.id }}/plan`, {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    job = data.job;
+  } catch (e) {
+    status.textContent = "Could not start drafting: " + e.message;
+    btn.disabled = false;
+    return;
+  }
+  const started = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    status.textContent = `Drafting the plan… ${s} s` + (s > 20 ? " (the planner model may be loading; a draft takes up to a couple of minutes)" : "");
+  }, 1000);
+  while (true) {
+    await new Promise(res => setTimeout(res, 2000));
+    let data;
+    try { data = await (await fetch(`${PREFIX}/api/plans/${job}`)).json(); } catch (e) { continue; }
+    if (data.status === "drafting") continue;
+    clearInterval(tick);
+    btn.disabled = false;
+    btn.textContent = "Draft it again";
+    if (data.status === "ready") {
+      status.textContent = "Review the plan below: edit anything, then run it.";
+      showPlan(data.plan);
+    } else {
+      status.textContent = "The plan could not be drafted: " + (data.error || "unknown error") + ". Try again.";
+    }
+    return;
+  }
 }
 
 // ---------------------------------------------------------------- libraries and versions
@@ -466,7 +611,8 @@ function missingInput() {
   if (MODE === "document_analysis" && !inputs.question) return "Ask a question for this run.";
   if (MODE === "document_analysis" && !inputs.document_text && !chosenLibraries().length)
     return "Choose at least one library to ask, or add a document.";
-  if (MODE === "agentic_workflow" && !inputs.task) return "Describe the task for this run.";
+  if (MODE === "agentic_workflow" && !PLAN) return "Draft the plan and review it first.";
+  if (MODE === "agentic_workflow" && !inputs.plan.sub_questions.length) return "The plan needs at least one sub-question.";
   return "";
 }
 
@@ -529,7 +675,7 @@ async function loadDocument(from) {
 
 fillVersions();
 applyWanted();
-if (MODE === "agentic_workflow") netStatus("net");
+if (MODE === "agentic_workflow") resShow("net");
 syncInputs();
 </script>
 {% endblock %}

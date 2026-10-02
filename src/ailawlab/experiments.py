@@ -8,19 +8,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from .agent_spec import check_cast, normalize_agent
 from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb
-from .graphs.agentic_workflow import build_agentic_graph
+from .graphs.agentic_workflow import build_agentic_graph, deadline_check
 from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
 from .grounding import SourceLedger
-from .network_tools import OnlineReader, fetch_library_name, given_pages, sources_wanted
+from .network_tools import OnlineReader, fetch_library_name, web_search_ready
 from .rag import Libraries, all_run_library_names, pin_libraries, run_library_names, wanted_versions
+from .research import brief_of, candidate_libraries, draft_plan, normalize_plan, research_settings
 from .router import get_router
 from .tools import default_registry
 from .tracing import Tracer, run_metrics
@@ -141,6 +143,8 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
         raise ValueError(f"no such experiment: {experiment_id}")
     if exp.get("deleted_at"):
         raise ValueError("this experiment is in the trash; restore it before running it")
+    if exp["mode"] == "agentic_workflow":
+        inputs = await _agentic_inputs(exp, inputs or {})
     names = all_run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
     merged = {**(exp["config"] or {}), **(inputs or {})}
     if exp["mode"] == "document_analysis":
@@ -161,6 +165,29 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
             await cur.execute("INSERT INTO run_libraries (run_id, position, corpus) "
                               "VALUES (%s, %s, %s)", (run["id"], position, name))
     return run
+
+
+async def _agentic_inputs(exp: dict, inputs: dict) -> dict:
+    """An agentic run's inputs as it will be recorded: with the brief it researches (copied
+    from the experiment, so the run keeps it), and the reviewed plan checked against what
+    the run may use. The plan's libraries are the libraries the run searches."""
+    inputs = dict(inputs)
+    brief = brief_of(exp, inputs)
+    if not brief:
+        raise ValueError("This experiment has no research brief: its description is empty.")
+    inputs["brief"] = brief
+    if inputs.get("plan"):
+        rs = research_settings(exp["config"] or {}, inputs)
+        candidates = await candidate_libraries(rs["choose_libraries"], rs["libraries"])
+        raw = inputs["plan"] if isinstance(inputs["plan"], dict) else {}
+        plan = normalize_plan(raw, candidates, rs["use_databases"], rs["use_web"], brief)
+        plan["candidates"] = candidates
+        for key in ("model", "drafted_in_s"):
+            if key in raw:
+                plan[key] = raw[key]
+        inputs["plan"] = plan
+        inputs["libraries"] = plan["libraries"]
+    return inputs
 
 
 _RUN_LIBRARIES = (
@@ -230,16 +257,11 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
         }
     if mode == "agentic_workflow":
         return {
-            "task": merged.get("task", ""),
+            "brief": merged.get("brief", ""),
+            "plan": merged.get("plan") or {},
             "document_title": merged.get("document_title", ""),
             "document_text": merged.get("document_text", ""),
-            "scratchpad": [],
-            "tool_results": [],
-            "iterations": 0,
-            # Not the experiment's: older experiments set a small number, and the agent
-            # is no longer limited by one. It stops when it has an answer.
-            "max_iterations": settings.agent_max_steps,
-            "done": False,
+            "findings": [],
         }
     if mode == "roleplay":
         max_turns = int(merged.get("max_turns", settings.default_max_turns))
@@ -280,37 +302,18 @@ async def execute_run(run_id: str) -> dict:
 
     router = await get_router()
     tracer = Tracer(run_id)
+    _running.add(run_id)
     await _set_status(run_id, "running", started_at=datetime.now(UTC))
     await tracer.note(f"run started (mode={mode})")
 
     try:
+        if mode == "agentic_workflow":
+            inputs = await _plan_for_run(run, config, inputs, router, tracer)
         libraries = await _libraries_for_run(run_id, mode, config, inputs, router, tracer)
         ctx = RunContext(run_id=run_id, router=router, tracer=tracer, libraries=libraries,
                          config=config)
-        pages: list[str] = []
         if mode == "agentic_workflow":
-            ledger = SourceLedger()
-            settings_ = {**config, **inputs}     # a run's own choices win over the experiment's
-            allow = bool(settings_.get("allow_network", False))
-            # Web pages given to read are part of the network tools: off, none are read.
-            pages = given_pages(settings_) if allow else []
-            reader = None
-            if allow:
-                save_to = fetch_library_name(settings_, run["experiment_name"])
-                reader = OnlineReader(router, libraries, ledger, tracer, run_id, save_to,
-                                      added_by=run.get("launched_by"),
-                                      wanted=sources_wanted(settings_))
-                row = await fetch_one("SELECT count(*) AS n FROM documents "
-                                      "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
-                held = int(row["n"]) if row else 0
-                where = (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
-                         else f"a new library, “{save_to}”, created with the first document read")
-                await tracer.note(
-                    f"network tools on: reads up to {reader.wanted} sources online"
-                    + (f"; {len(pages)} web page{'' if len(pages) == 1 else 's'} given to read first"
-                       if pages else "") + f". What is read is added to {where}")
-            ctx.config = {**config, "ledger": ledger, "reader": reader, "registry": default_registry(
-                libraries, ledger, allow_network=allow, reader=reader)}
+            reader = await _research_tools(run, ctx, config, inputs)
 
         graph = _GRAPHS[mode]
         state = _initial_state(mode, config, inputs)
@@ -319,17 +322,20 @@ async def execute_run(run_id: str) -> dict:
                              "there is nothing to answer the question from")
         if mode == "roleplay":
             await _check_roleplay(state, tracer)
-        if mode == "agentic_workflow" and pages:
-            # The pages the researcher gave are read before the agent's first step, so they
-            # are in front of it whatever it decides; it cites their passages like any other.
-            await tracer.note(f"reading the {len(pages)} web page{'' if len(pages) == 1 else 's'} "
-                              "given with the task")
-            state["given_pages"] = await reader.read_given(pages, look_for=state["task"])
+        if mode == "agentic_workflow":
+            urls = state["plan"].get("urls") or []
+            if urls and reader and reader.allow_web:
+                # Pages the brief names are read before research starts, so every research
+                # agent has them; their passages are cited like any other.
+                await tracer.note(f"reading the {len(urls)} web page{'' if len(urls) == 1 else 's'} "
+                                  "the brief names")
+                state["given_pages"] = await reader.read_given(urls, look_for=state["plan"]["question"])
+            elif urls:
+                await tracer.note("the brief names web pages, but the open web is not allowed in "
+                                  "this run, so they are not read")
         # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle. Read
         # it from the built state, since run inputs may override the experiment's max_turns.
         limit = int(state.get("max_turns", settings.default_max_turns)) * 3 + 20
-        if mode == "agentic_workflow":      # each step is a think node and an act node
-            limit = 2 * int(state["max_iterations"]) + 10
         final = await graph.ainvoke(
             state,
             config={"configurable": {"ctx": ctx}, "recursion_limit": limit},
@@ -349,6 +355,77 @@ async def execute_run(run_id: str) -> dict:
         await _set_status(run_id, "failed", error=f"{type(e).__name__}: {e}",
                           finished_at=datetime.now(UTC))
         raise
+    finally:
+        _running.discard(run_id)
+        _stop_requests.discard(run_id)
+
+
+# Runs the researcher asked to stop; their agents report what they have and the write-up runs.
+_stop_requests: set[str] = set()
+
+
+def request_stop(run_id: str) -> bool:
+    """Ask a running agentic run to stop researching. False if it is not running here."""
+    if run_id not in _running:
+        return False
+    _stop_requests.add(run_id)
+    return True
+
+
+_running: set[str] = set()
+
+
+async def _plan_for_run(run: dict, config: dict, inputs: dict, router, tracer: Tracer) -> dict:
+    """The run's inputs with its plan settled: the one the researcher reviewed, or (for a run
+    launched without one, such as through the API) one drafted now. The plan's libraries
+    become the libraries the run searches."""
+    inputs = dict(inputs)
+    if not inputs.get("plan"):
+        await tracer.note("no plan was reviewed for this run; drafting one now")
+        plan = await draft_plan(router, inputs.get("brief") or "", research_settings(config, inputs),
+                                inputs.get("document_title", ""), inputs.get("document_text", ""))
+        plan.pop("profiles", None)
+        inputs["plan"] = plan
+        inputs["libraries"] = plan["libraries"]
+        await _set_fields(run["id"], inputs=jsonb(inputs))
+    plan = inputs["plan"]
+    await tracer.note(f"plan: {len(plan['sub_questions'])} sub-question"
+                      f"{'' if len(plan['sub_questions']) == 1 else 's'}; libraries: "
+                      + (", ".join(f"“{n}”" for n in plan["libraries"]) or "none")
+                      + "; legal databases " + ("allowed" if plan.get("use_databases") else "not allowed")
+                      + "; open web " + ("allowed" if plan.get("use_web") else "not allowed"))
+    return inputs
+
+
+async def _research_tools(run: dict, ctx: RunContext, config: dict, inputs: dict) -> OnlineReader | None:
+    """The ledger, the reader for outside sources (if the plan may use any), the tools, and
+    the clock: research ends at the run's time limit or when the researcher presses Stop."""
+    plan = inputs["plan"]
+    rs = research_settings(config, inputs)
+    ledger = SourceLedger()
+    databases = bool(plan.get("use_databases"))
+    web = bool(plan.get("use_web")) and web_search_ready()
+    if plan.get("use_web") and not web:
+        await ctx.tracer.note("the open web is allowed but no search key is set, so it is not used")
+    reader = None
+    if databases or web:
+        save_to = fetch_library_name({**config, **inputs}, run["experiment_name"])
+        reader = OnlineReader(ctx.router, ctx.libraries, ledger, ctx.tracer, str(run["id"]), save_to,
+                              added_by=run.get("launched_by"), databases=databases, web=web)
+        row = await fetch_one("SELECT count(*) AS n FROM documents "
+                              "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
+        held = int(row["n"]) if row else 0
+        await ctx.tracer.note(
+            "what is read outside the libraries is added to "
+            + (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
+               else f"a new library, “{save_to}”, created with the first document read"))
+    run_id = str(run["id"])
+    await ctx.tracer.note(f"time limit: {rs['time_limit_minutes']} minutes")
+    ctx.config = {**config, "ledger": ledger, "reader": reader,
+                  "registry": default_registry(ctx.libraries, ledger, reader),
+                  "should_stop": deadline_check(time.monotonic(), rs["time_limit_minutes"],
+                                                lambda: run_id in _stop_requests)}
+    return reader
 
 
 async def _libraries_for_run(run_id: str, mode: str, config: dict, inputs: dict,
@@ -417,11 +494,14 @@ def _summarize(mode: str, final: dict) -> dict:
     if mode == "agentic_workflow":
         return {
             "answer": final.get("answer", ""),
-            "iterations": final.get("iterations", 0),
-            "tool_results": final.get("tool_results", []),
+            "plan": final.get("plan", {}),
+            "findings": final.get("findings", []),
+            "steps": final.get("steps", 0),
+            "stopped": final.get("stopped", ""),
             "citations": final.get("citations", []),
             "sources": final.get("sources", []),
             "fetched": final.get("fetched", []),
+            "searches": final.get("searches", []),
         }
     if mode == "roleplay":
         return {

@@ -31,7 +31,9 @@
 <nav class="jump" aria-label="On this page">
   {% if v.summary_html %}<a href="#summary">{{ v.summary_title }}</a>{% endif %}
   {% if v.transcript %}<a href="#transcript">Transcript</a>{% endif %}
+  {% if v.plan %}<a href="#plan-head">Plan</a>{% endif %}
   {% if activity is not none %}<a href="#activity-head">Agent activity</a>{% endif %}
+  {% if v.findings %}<a href="#findings">Findings</a>{% endif %}
   {% if v.exhibits %}<a href="#exhibits">Exhibits</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
   {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
@@ -53,6 +55,34 @@
   <strong style="color:var(--bad)">Run failed</strong>
   <pre>{{ run.error }}</pre>
 </div>
+{% endif %}
+
+{% if v.plan %}
+{% set live = run.status in ('running', 'pending') %}
+{% if live %}
+<form class="stop-form" method="post" action="{{ prefix }}/runs/{{ run.id }}/stop"
+      onsubmit="return confirm('Stop researching now? The agents report what they have found and the answer is written from that.')">
+  <button type="submit" class="danger-btn">■ Stop research</button>
+  <span class="hint">Time limit {{ v.time_limit }} minutes. Stopping keeps everything found so far and still writes the answer.</span>
+</form>
+{% elif v.stopped %}
+<p class="notice">Research ended early ({{ 'stopped by the researcher' if v.stopped == 'stopped' else 'the ' ~ v.time_limit ~ '-minute time limit was reached' }});
+  the answer was written from what had been found by then.</p>
+{% endif %}
+<h2 id="plan-head">Plan</h2>
+<details class="panel plan-panel" {% if live %}open{% endif %}>
+  <summary><strong>{{ v.plan.question }}</strong></summary>
+  {% if v.brief %}<p class="hint">Brief: {{ v.brief }}</p>{% endif %}
+  {% if v.plan.approach %}<p>{{ v.plan.approach }}</p>{% endif %}
+  <ol class="plan-list">
+    {% for s in v.plan.sub_questions %}<li><strong>{{ s.id }}</strong> {{ s.question }}{% if s.look_in %} <span class="hint-inline">start with {{ s.look_in|join(', ') }}</span>{% endif %}</li>{% endfor %}
+  </ol>
+  <p class="hint">Libraries: {{ v.plan.libraries|join(', ') if v.plan.libraries else 'none' }}{% if v.plan.library_reasons %}. {{ v.plan.library_reasons }}{% endif %}
+    &middot; legal databases {{ 'allowed' if v.plan.use_databases else 'not allowed' }}
+    &middot; open web {{ 'allowed' if v.plan.use_web else 'not allowed' }}
+    {% if v.plan.urls %}&middot; pages read first: {{ v.plan.urls|join(', ') }}{% endif %}</p>
+  {% if v.plan.enough_when %}<p class="hint">Enough when: {{ v.plan.enough_when }}</p>{% endif %}
+</details>
 {% endif %}
 
 {% if activity is not none %}
@@ -81,6 +111,17 @@
 <div class="panel md summary-panel">
   {{ v.summary_html|safe }}
 </div>
+{% endif %}
+
+{% if v.findings %}
+<h2 id="findings">Findings by sub-question</h2>
+<p class="hint">What each research agent reported, before the lead agent wrote the answer. {{ v.steps }} model steps in all.</p>
+{% for f in v.findings %}
+<details class="panel finding">
+  <summary><strong>{{ f.id }}</strong> {{ f.question }} <span class="hint-inline">{{ f.steps }} step{{ '' if f.steps == 1 else 's' }}{% if f.ended != 'finished' %} &middot; {{ f.ended }}{% endif %}</span></summary>
+  <div class="md">{{ f.html|safe }}</div>
+</details>
+{% endfor %}
 {% endif %}
 
 {% if v.transcript %}

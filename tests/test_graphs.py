@@ -128,28 +128,47 @@ async def test_document_analysis_run_produces_answer_and_trace():
     assert metrics["host_distribution"], "no host attribution recorded"
 
 
+async def test_a_plan_is_drafted_from_the_brief():
+    from ailawlab import research
+
+    brief = "Does Wyoming enforce termination-for-convenience clauses that favour only one party?"
+    rs = research.research_settings({"choose_libraries": False, "libraries": ["test", "test-regs"]})
+    plan = await research.draft_plan(await get_router(), brief, rs)
+    assert plan["question"] and 1 <= len(plan["sub_questions"]) <= 8
+    assert [s["id"] for s in plan["sub_questions"]] == [f"Q{i}" for i in range(1, len(plan["sub_questions"]) + 1)]
+    assert set(plan["libraries"]) <= {"test", "test-regs"} and plan["candidates"] == ["test", "test-regs"]
+    assert not plan["use_databases"] and not plan["use_web"]
+
+
+def _plan(question: str, libraries: list[str], databases=False, web=False) -> dict:
+    return {"question": question, "approach": "", "enough_when": "One clear authority.",
+            "sub_questions": [{"question": question, "look_in": libraries}],
+            "libraries": libraries, "use_databases": databases, "use_web": web}
+
+
 async def test_agentic_workflow_uses_tools():
+    brief = "Does Wyoming enforce termination-for-convenience clauses that favour only one party?"
     exp = await experiments.create_experiment(
-        "Research agent (test)", "agentic_workflow",
-        config={"libraries": ["test", "test-regs"], "max_iterations": 4},
+        "Research agent (test)", "agentic_workflow", brief,
+        config={"libraries": ["test", "test-regs"], "time_limit_minutes": 5},
     )
     run = await experiments.create_run(str(exp["id"]), inputs={
-        "task": "Search the corpus and tell me whether Wyoming enforces "
-                "termination-for-convenience clauses that favour only one party.",
-    })
+        "plan": _plan(brief, ["test", "test-regs"])})
     run_id = str(run["id"])
     result = await experiments.execute_run(run_id)
 
-    assert result["answer"].strip()
+    assert result["answer"].strip() and result["findings"][0]["id"] == "Q1"
     tool_events = await fetch_all(
-        "SELECT payload FROM run_events WHERE run_id=%s AND event_type='tool_call'", (run_id,)
+        "SELECT payload, agent_id FROM run_events WHERE run_id=%s AND event_type='tool_call'", (run_id,)
     )
     assert tool_events, "agent never called a tool"
-    assert any(e["payload"]["tool"] == "search_libraries" for e in tool_events)
+    assert any(e["payload"]["tool"] == "search_libraries" and e["agent_id"] == "Q1" for e in tool_events)
     # Sources are numbered across the run's searches; each names its library and version.
     assert result["sources"], "searches returned nothing to cite"
     assert [s["marker"] for s in result["sources"]] == [str(n) for n in range(1, len(result["sources"]) + 1)]
     assert all(s["corpus"] in ("test", "test-regs") and s["version"] for s in result["sources"])
+    stored = await experiments.get_run(run_id)
+    assert stored["inputs"]["brief"] == brief                  # the run keeps the brief it researched
 
 
 async def test_roleplay_agents_keep_separate_memory():
@@ -220,29 +239,31 @@ async def test_roleplay_case_files_stay_private_until_cited():
 
 
 async def test_agent_reads_online_and_cites_a_saved_copy():
+    brief = ("Find the eCFR section on how a federal agency must publish a notice of proposed "
+             "rulemaking (1 CFR), read it, and answer in two sentences.")
     exp = await experiments.create_experiment(
-        "Online research (test)", "agentic_workflow",
-        config={"libraries": [], "max_iterations": 6, "allow_network": True,
-                "fetch_library": "test-fetched"},
+        "Online research (test)", "agentic_workflow", brief,
+        config={"libraries": [], "use_databases": True, "fetch_library": "test-fetched",
+                "time_limit_minutes": 5},
     )
     run = await experiments.create_run(str(exp["id"]), inputs={
-        "task": "Use search_online to find the eCFR section on how a federal agency must "
-                "post a notice of proposed rulemaking (5 CFR or 1 CFR), read the best result "
-                "with read_online, and answer in two sentences, citing the passage you read."})
+        "plan": _plan(brief, [], databases=True)})
     run_id = str(run["id"])
     result = await experiments.execute_run(run_id)
 
     tools = [e["payload"]["tool"] for e in await fetch_all(
         "SELECT payload FROM run_events WHERE run_id=%s AND event_type='tool_call' ORDER BY seq", (run_id,))]
-    assert "search_online" in tools, f"agent never searched online: {tools}"
-    if "read_online" in tools and result["fetched"]:
+    assert "search_databases" in tools, f"agent never searched the databases: {tools}"
+    assert "search_web" not in tools                              # not allowed in this run
+    assert result["searches"] and result["searches"][0]["kind"] == "databases"
+    if "read" in tools and result["fetched"]:
         f = result["fetched"][0]
         doc = await fetch_one("SELECT corpus, metadata FROM documents WHERE id=%s", (f["document_id"],))
         # A document read before (by this test's earlier runs) is reused, not saved twice.
         assert doc["corpus"] == "test-fetched" and doc["metadata"]["fetched_by_run"]
         pinned = await fetch_one("SELECT version FROM run_libraries WHERE run_id=%s AND corpus=%s",
                                  (run_id, "test-fetched"))
-        assert pinned and pinned["version"] == f["version"]
+        assert pinned and pinned["version"] >= f["version"]
         assert all(s["corpus"] == "test-fetched" for s in result["sources"])
 
 

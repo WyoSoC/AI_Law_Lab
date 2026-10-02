@@ -84,35 +84,20 @@ def test_document_and_agentic_experiment_views():
     doc = experiment_view({"mode": "document_analysis", "config": {"corpus": "test"}}, [],
                           library_documents={"test": 1}, now=NOW)
     assert doc["facts"] == [{"label": "Library", "value": "“test”", "note": "1 document in it"}]
-    agent = experiment_view({"mode": "agentic_workflow", "config": {"max_iterations": "4"}}, [], now=NOW)
-    assert [f["value"] for f in agent["facts"]] == ["“default”", "not allowed"]
-    both = experiment_view({"mode": "agentic_workflow", "config": {"libraries": ["cases", "regs"]}}, [],
-                           library_documents={"cases": 3, "regs": 2}, now=NOW)
+    # An agentic study from before the planner keeps to the libraries it named.
+    both = experiment_view({"mode": "agentic_workflow", "name": "Treaties",
+                            "config": {"libraries": ["cases", "regs"], "allow_network": True,
+                                       "fetch_library": "  jurisprudence "}}, [], now=NOW)
     assert both["facts"][0] == {"label": "Libraries", "value": "“cases”, “regs”",
-                                "note": "5 documents across 2 libraries"}
-    assert both["launch_defaults"] == {"libraries": ["cases", "regs"], "allow_network": False,
-                                       "network_sources": 5, "web_pages": [], "fetch_library": "",
-                                       "own_library": "Fetched:"}
-    # The launch form starts from the experiment's network settings, so a rerun can change them.
-    online = experiment_view({"name": "Treaties", "mode": "agentic_workflow",
-                              "config": {"allow_network": True, "network_sources": 8,
-                                         "fetch_library": "  jurisprudence "}}, [], now=NOW)
-    assert online["launch_defaults"] == {"libraries": ["default"], "allow_network": True, "network_sources": 8,
-                                         "web_pages": [],
-                                         "fetch_library": "jurisprudence",
-                                         "own_library": "Fetched: Treaties"}
-    given = experiment_view({"name": "Treaties", "mode": "agentic_workflow",
-                             "config": {"allow_network": True, "libraries": [],
-                                        "web_pages": ["https://a.gov/x", "https://a.gov/y"]}}, [], now=NOW)
-    assert given["launch_defaults"]["web_pages"] == ["https://a.gov/x", "https://a.gov/y"]
-    [pages] = [f for f in given["facts"] if f["label"] == "Web pages to read"]
-    assert pages["value"] == "2" and pages["note"].endswith(": a.gov")
-    assert given["facts"][0]["value"] == "None: works from what it reads online"
-    # Without network tools, pages stored with the experiment are not read and not shown.
-    off = experiment_view({"mode": "agentic_workflow",
-                           "config": {"web_pages": ["https://a.gov/x"]}}, [], now=NOW)
-    assert "Web pages to read" not in [f["label"] for f in off["facts"]]
-    assert off["facts"][-1]["note"] == "works from its libraries only"
+                                "note": "only these may be searched"}
+    assert both["launch_defaults"] == {"choose_libraries": False, "libraries": ["cases", "regs"],
+                                       "use_databases": True, "use_web": False,
+                                       "time_limit_minutes": 120, "fetch_library": "jurisprudence",
+                                       "own_library": "Fetched: Treaties"}
+    new = experiment_view({"mode": "agentic_workflow", "name": "S", "config": {"choose_libraries": True}},
+                          [], now=NOW)
+    assert [f["value"] for f in new["facts"]] == ["the planner chooses", "not allowed", "not allowed",
+                                                   "120 minutes"]
     doc_only = experiment_view({"mode": "document_analysis", "config": {}}, [], now=NOW)
     assert "allow_network" not in doc_only["launch_defaults"]
     none = experiment_view({"mode": "document_analysis", "config": {"libraries": []}}, [], now=NOW)

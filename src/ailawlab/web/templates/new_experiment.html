@@ -3,7 +3,7 @@
 {% block title %}New experiment · AI Law Lab{% endblock %}
 {% block content %}
 {% from "_library_picker.html" import library_picker %}
-{% from "_network_opts.html" import network_opts %}
+{% from "_research_opts.html" import research_opts %}
 {% set preset = ['default'] if libraries|selectattr('name', 'equalto', 'default')|list else [] %}
 
 <h1>New experiment</h1>
@@ -29,9 +29,12 @@ past results. Fill in the fields below.</p>
       </div>
     </div>
 
-    <label for="description">Description</label>
-    <input type="text" id="description" name="description"
-           placeholder="What question is this experiment asking?">
+    <label for="description" id="description-label">Description</label>
+    <textarea id="description" name="description" class="short"
+              placeholder="What question is this experiment asking?"></textarea>
+    <p class="hint" id="description-hint" hidden>For an agentic study this is the research brief: what to
+       find out, and anything that matters (jurisdictions, period, kinds of authority, what to compare,
+       web addresses to start from). Each run drafts a plan from it for you to review.</p>
   </div>
 
   <!-- ───────────── document_analysis ───────────── -->
@@ -48,16 +51,12 @@ past results. Fill in the fields below.</p>
 
   <!-- ───────────── agentic_workflow ───────────── -->
   <div class="panel mode-panel" data-mode="agentic_workflow">
-    <h2>Agentic workflow setup</h2>
-    <p class="hint">Each run gives the agent a task, and optionally a document. Configure its sources and tools here.</p>
-    <label>Libraries the agent can search</label>
-    {{ library_picker('aw_libs', libraries, preset, 'syncJSON()') }}
-    <p class="hint">The agent's search covers every library ticked, and it can confine a search
-       to one of them. Passages keep one number across all its searches, so each [n] in its
-       answer traces to one passage, document and library version.</p>
-    <p class="hint">The agent decides for itself how many steps to take: it searches and reads
-       until it has enough to answer, and each run records the steps it took.</p>
-    {{ network_opts("aw", libraries, "syncJSON()") }}
+    <h2>Agentic research setup</h2>
+    <p class="hint">The description above is the research brief. Each run starts with a plan drafted from
+       it (the question, its sub-questions, where to look, what would be enough), which you review and
+       may edit before running. One research agent per sub-question then works in parallel, and a lead
+       agent writes the answer, every claim cited to a passage, document and library version.</p>
+    {{ research_opts("aw", libraries, "syncJSON()", aw_defaults, web_ready=web_ready) }}
   </div>
 
   <!-- ───────────── roleplay ───────────── -->
@@ -191,7 +190,7 @@ past results. Fill in the fields below.</p>
 {% endblock %}
 {% block scripts %}
 <script src="{{ prefix }}/static/cast_builder.js?v={{ asset_version }}"></script>
-<script src="{{ prefix }}/static/network_opts.js?v={{ asset_version }}"></script>
+<script src="{{ prefix }}/static/research_opts.js?v={{ asset_version }}"></script>
 <script>
 const PREFIX = "{{ prefix }}";
 const LIBRARY_CHOICES = {{ libraries|tojson }};   // for each agent's case files
@@ -240,15 +239,11 @@ function buildConfig() {
     return {libraries: checkedLibraries('da_libs')};
   }
   if (mode === 'agentic_workflow') {
-    const config = {libraries: checkedLibraries('aw_libs'),
-                    allow_network: false};
-    const net = netValues('aw');
-    if (net.allow_network) {
-      config.allow_network = true;
-      config.network_sources = net.network_sources;
-      if (net.web_pages.length) config.web_pages = net.web_pages;
-      if (net.fetch_library) config.fetch_library = net.fetch_library;
-    }
+    const r = resValues('aw');
+    const config = {choose_libraries: r.choose_libraries, use_databases: r.use_databases,
+                    use_web: r.use_web, time_limit_minutes: r.time_limit_minutes};
+    if (!r.choose_libraries) config.libraries = r.libraries;
+    if ((r.use_databases || r.use_web) && r.fetch_library) config.fetch_library = r.fetch_library;
     return config;
   }
   if (mode === 'roleplay') {
@@ -271,6 +266,12 @@ function syncJSON() {
 
 function showMode() {
   const mode = document.getElementById('mode').value;
+  const brief = mode === 'agentic_workflow';
+  document.getElementById('description-label').textContent = brief ? 'Research brief' : 'Description';
+  document.getElementById('description-hint').hidden = !brief;
+  document.getElementById('description').placeholder = brief
+    ? 'e.g. Find systematic differences in the philosophy of law that affect how cases are judged in the West and the East.'
+    : 'What question is this experiment asking?';
   document.querySelectorAll('.mode-panel').forEach(p =>
     p.style.display = p.dataset.mode === mode ? '' : 'none');
   if (mode === 'roleplay' && !document.querySelector('.agent-card')) {
@@ -283,6 +284,15 @@ function showMode() {
 function finalize() {
   const ta = document.getElementById('config_json');
   if (!rawEdited) {
+    if (document.getElementById('mode').value === 'agentic_workflow'
+        && !document.getElementById('description').value.trim()) {
+      const d = document.getElementById('description');
+      d.focus();
+      d.setCustomValidity('Write the research brief: the study plans its research from it.');
+      d.reportValidity();
+      d.addEventListener('input', () => d.setCustomValidity(''), {once: true});
+      return false;
+    }
     if (document.getElementById('mode').value === 'roleplay') {
       const errors = castErrors();
       if (errors.length) {
@@ -307,6 +317,6 @@ function finalize() {
 
 enableDropZone();
 showMode();
-netStatus("aw");
+resShow("aw");
 </script>
 {% endblock %}

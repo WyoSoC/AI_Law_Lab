@@ -167,50 +167,70 @@ def calculator_tool() -> Tool:
 
 
 def online_tools(reader: OnlineReader) -> list[Tool]:
-    """Search public legal databases and read what is found, saving it to a library. Both
-    need the network, so a registry offers them only when the experiment allows it."""
-    dbs = reader.databases()
+    """Outside sources, as the run allows: the legal databases, the open web, and reading
+    what either finds. Everything read is saved to a library first (network_tools)."""
+    tools: list[Tool] = []
+    if reader.allow_databases:
+        dbs = reader.databases()
 
-    async def search_online(query: str, database: str = "") -> str:
-        return await reader.search(query, database)
+        async def search_databases(query: str, database: str = "") -> str:
+            return await reader.search(query, database)
 
-    async def read_online(source: str, look_for: str = "") -> str:
-        return await reader.read(source, look_for)
+        tools.append(Tool(
+            name="search_databases",
+            description=("Search public legal databases for documents not in the libraries: "
+                         + "; ".join(f"{k} ({v})" for k, v in dbs.items())
+                         + ". Returns numbered results [W1], [W2] with snippets. Results are "
+                         "leads, not sources: read one before relying on it."),
+            parameters={"type": "object", "properties": {
+                "query": {"type": "string", "description": "What to search for."},
+                "database": {"type": "string", "enum": list(dbs),
+                             "description": "Search only this database. Leave it out to search all."}},
+                "required": ["query"]},
+            fn=search_databases, requires_network=True))
+    if reader.allow_web:
+        async def search_web(query: str) -> str:
+            return await reader.search_web(query)
 
-    return [
-        Tool(name="search_online",
-             description=("Search public legal databases online for documents not in the "
-                          "libraries: " + "; ".join(f"{k} ({v})" for k, v in dbs.items())
-                          + ". Returns numbered results [W1], [W2] with snippets. Results are "
-                          "leads, not sources: read one with read_online before relying on it."),
-             parameters={"type": "object", "properties": {
-                 "query": {"type": "string", "description": "What to search for."},
-                 "database": {"type": "string", "enum": list(dbs),
-                              "description": "Search only this database. Leave it out to search all."}},
-                 "required": ["query"]},
-             fn=search_online, requires_network=True),
-        Tool(name="read_online",
-             description=(f"Read search results (by number: W2, or several at once: W1, W3, W4) "
-                          f"or a public web address. Each document is saved to the library "
-                          f"“{reader.library}” and the passages most relevant to `look_for` come "
-                          "back numbered, to cite as [n] like any library passage (never cite a "
-                          f"W number). Up to {reader.PER_CALL} per call, {reader.max_reads} per task."),
-             parameters={"type": "object", "properties": {
-                 "source": {"type": "string",
-                            "description": "Result numbers such as W2 or W1, W3, W4, or one https:// address."},
-                 "look_for": {"type": "string",
-                              "description": "What to find in it; picks which passages come back."}},
-                 "required": ["source"]},
-             fn=read_online, requires_network=True),
-    ]
+        tools.append(Tool(
+            name="search_web",
+            description=("Search the open web (a general search engine) for pages: agency "
+                         "guidance, court and legislature sites, law reviews and scholarship, "
+                         "news, foreign and international law. Returns numbered results [W1], "
+                         "[W2] with addresses and snippets. Results are leads, not sources: "
+                         "read one before relying on it; prefer primary and official sources."),
+            parameters={"type": "object", "properties": {
+                "query": {"type": "string", "description": "What to search for, as you would type it."}},
+                "required": ["query"]},
+            fn=search_web, requires_network=True))
+    if tools:
+        async def read(source: str, look_for: str = "") -> str:
+            return await reader.read(source, look_for)
+
+        where = ("a search result (by number: W2, or several at once: W1, W3, W4)"
+                 + (" or a public web address" if reader.allow_web else ""))
+        tools.append(Tool(
+            name="read",
+            description=(f"Read {where}. Each document is saved to the library “{reader.library}” "
+                         "and the passages most relevant to `look_for` come back numbered, to "
+                         f"cite as [n] (never cite a W number). Up to {reader.PER_CALL} per call."),
+            parameters={"type": "object", "properties": {
+                "source": {"type": "string",
+                           "description": "Result numbers such as W2 or W1, W3, W4"
+                           + (", or one https:// address." if reader.allow_web else ".")},
+                "look_for": {"type": "string",
+                             "description": "What you want from it, to pick the passages handed back."}},
+                "required": ["source"]},
+            fn=read, requires_network=True))
+    return tools
 
 
 def default_registry(libraries: Libraries, ledger: SourceLedger,
-                     allow_network: bool = False, reader: OnlineReader | None = None) -> ToolRegistry:
+                     reader: OnlineReader | None = None) -> ToolRegistry:
     """Library search (when the run has a library with anything in it, or may fill one by
-    reading online), arithmetic, and with `reader` the network tools."""
+    reading), arithmetic, and with `reader` the outside sources it allows."""
     extra = [reader.library] if reader else []
     tools = [library_search_tool(libraries, ledger, extra)] if libraries or reader else []
     if reader:
         tools += online_tools(reader)
-    return ToolRegistry([*tools, calculator_tool()], allow_network=allow_network)
+    return ToolRegistry([*tools, calculator_tool()], allow_network=reader is not None)

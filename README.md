@@ -105,24 +105,21 @@ letter format, no persona and no placeholders, and a header or sign-off that sli
 anyway ("To: / From: / Date:", "[Your Name]") is removed from the stored answer, with a note
 in the trace, which keeps the reply as written.
 
-**`agentic_workflow`** — a ReAct loop over gemma4's native function calling, given a task and
-optionally a document (put in its first message, up to 200,000 characters). Tools arrive
-as structured `message.tool_calls`, not scraped JSON. Built-in tools are corpus search and
-a safe arithmetic evaluator. With `allow_network` the agent also gets two network tools
-(`network_tools.py`): `search_online` searches CourtListener, the Federal Register, the eCFR,
-govinfo and SEC EDGAR and lists results as [W1], [W2] (leads, not citable), and `read_online`
-reads a result or a public web page. Reading is ingesting: the document is saved to a library
-(`fetch_library`, by default "Fetched: <experiment name>"), which records a new version, and
-the passages come back numbered like any other, so a citation to something read online names
-a document, library and version and survives the page changing. A run reads at most
-the number of sources the experiment sets (`network_sources`, 1–20, default 5) plus two, up to
-five per `read_online` call ("W1, W3, W4"), and is asked to read that many of the most relevant
-results before answering. An answer given sooner is held back (at most twice) with the list
-of results not yet read, so the number is kept to rather than suggested. The library it saves
-into can be an existing one, chosen in the builder. If an answer cites a search result ([W2])
-rather than the passages read from it, the marker is turned into those passages' numbers; a
-result cited but never read is recorded as unsupported. Addresses must be public, as for every
-outbound fetch.
+**`agentic_workflow`** — planned research from a brief (the experiment's description). Before
+each run a planner (`research.py`, qwen3.6) profiles every library it may use (what it holds, and a
+trial search against the brief) and drafts a plan: the research question, sub-questions, which
+libraries to search, where each sub-question should start, and what would be enough. The
+researcher reviews and edits the plan on the launch form; the run then gives each sub-question its
+own research agent, several working in parallel, and a lead agent writes the answer from their
+findings. Agents have no budget on sources or steps: older tool results shrink in their context
+while their own notes stay whole, so they can keep reading. The run's time limit (default 2 hours,
+set per run) and a Stop button end research early; the answer is still written from what was
+found. Two permissions, both off by default: **legal databases** (CourtListener, Federal Register,
+eCFR, govinfo, EDGAR) and **the open web** (Brave Search, and any public page; set
+`AILAWLAB_BRAVE_API_KEY`). Everything read is saved into a library first, recording a version, so a
+citation names a fixed copy; every search is stored with the results it returned. Passages are
+numbered once per run (`SourceLedger`), whichever agent found them, so each [n] traces to one
+passage, document and library version.
 
 **`roleplay`** — several agents with distinct roles, goals, and **private memory scoped to
 `(run_id, agent_id)`**. A moderator picks the next speaker or ends the scene; an evaluator

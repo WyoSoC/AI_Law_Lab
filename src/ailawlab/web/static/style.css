@@ -707,3 +707,19 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .activity-reasoning > summary { cursor: pointer; color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .activity-more { white-space: pre-wrap; font-size: .85rem; max-height: 22rem; overflow: auto;
   padding: .5rem; margin-top: .3rem; border: 1px solid var(--line); border-radius: 6px; }
+
+.inline-field { display: flex; align-items: baseline; gap: .5rem; }
+
+/* ---------------------------------------------------------------- research plan */
+.plan-head { margin-top: 1.2rem; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; }
+.plan-subs { padding-left: 1.4rem; display: grid; gap: .5rem; }
+.plan-sub textarea { min-height: 3.2rem; }
+.plan-sub-foot { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.plan-libs { display: grid; gap: .2rem; }
+.plan-panel > summary { cursor: pointer; }
+.plan-list { padding-left: 1.4rem; }
+.finding > summary { cursor: pointer; }
+.finding { margin-bottom: .5rem; }
+.stop-form { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; margin: .6rem 0; }
+.danger-btn { background: var(--bad); color: #fff; border: 0; border-radius: 6px; padding: .45rem .9rem; font-weight: 600; cursor: pointer; }

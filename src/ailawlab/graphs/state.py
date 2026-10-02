@@ -49,22 +49,21 @@ class DocState(TypedDict, total=False):
 
 
 class AgenticState(TypedDict, total=False):
-    """Agentic workflow (tool-using ReAct loop) state."""
-    task: str
-    document_title: str         # an optional document given with the task
+    """Agentic workflow state: a planned study, researched by one agent per sub-question
+    and written up by a lead agent."""
+    brief: str                  # the experiment's description: what the study asks
+    plan: dict                  # the reviewed plan (research.normalize_plan)
+    document_title: str         # an optional document given with the run
     document_text: str
-    scratchpad: Annotated[list[dict], operator.add]
-    tool_results: Annotated[list[dict], operator.add]
-    iterations: int
-    max_iterations: int
+    given_pages: str            # pages the brief names, read before research starts
+    findings: list[dict]        # per sub-question: what its agent found, with [n] citations
     answer: str
     citations: list[dict]
     sources: list[dict]         # every passage any search returned, by its run-wide number
     fetched: list[dict]         # documents read online and saved to a library
-    nudges: int                 # answers held back for reading too few sources (at most two)
-    given_pages: str            # the web pages the run was given, as read before the first step
-    wrap_up: bool               # the context is nearly full: the next step must answer
-    done: bool
+    searches: list[dict]        # every outside search, with the results it returned
+    steps: int                  # model steps taken by all research agents
+    stopped: str                # why research ended early ("time limit", "stopped"), if it did
     error: str
 
 

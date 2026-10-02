@@ -1,7 +1,7 @@
 """Answers read as answers: no memo dressing. Pure."""
 from __future__ import annotations
 
-from ailawlab.graphs.agentic_workflow import DOCUMENT_CHARS, _task_message
+from ailawlab.graphs.agentic_workflow import DOCUMENT_CHARS, _brief_message
 from ailawlab.graphs.answer_style import ANSWER_STYLE, strip_letter_format
 
 # What a run produced on 2026-10-01, header and all.
@@ -45,10 +45,16 @@ def test_the_prompts_ask_for_the_answer_itself():
     assert "[Your Name]" in ANSWER_STYLE                      # named, so the model avoids it
 
 
-def test_an_agent_is_given_its_document_with_the_task():
-    assert _task_message({"task": "Find the notice period."}) == "Find the notice period."
-    msg = _task_message({"task": "Find the notice period.", "document_title": "MSA",
-                         "document_text": "Notice: 30 days."})
-    assert msg.startswith("Find the notice period.") and "“MSA”" in msg and "Notice: 30 days." in msg
-    long = _task_message({"task": "t", "document_text": "x" * (DOCUMENT_CHARS + 10)})
-    assert f"only its first {DOCUMENT_CHARS:,} characters" in long
+def test_a_research_agent_is_given_its_sub_question_the_study_and_the_document():
+    plan = {"question": "How long is notice?", "approach": "Read the contract.",
+            "sub_questions": [{"id": "Q1", "question": "Notice period?"},
+                              {"id": "Q2", "question": "Cure period?"}],
+            "enough_when": "The clause is quoted."}
+    sub = plan["sub_questions"][0]
+    msg = _brief_message({"plan": plan}, sub)
+    assert "THE STUDY\nHow long is notice?" in msg and "YOUR SUB-QUESTION (Q1)\nNotice period?" in msg
+    assert "- Cure period?" in msg and "Notice period?\n\nENOUGH WHEN" in msg     # the others, not its own
+    msg = _brief_message({"plan": plan, "document_title": "MSA", "document_text": "Notice: 30 days."}, sub)
+    assert "“MSA”" in msg and "Notice: 30 days." in msg
+    long = _brief_message({"plan": plan, "document_text": "x" * (DOCUMENT_CHARS + 10)}, sub)
+    assert f"its first {DOCUMENT_CHARS:,} characters" in long

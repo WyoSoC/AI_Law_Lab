@@ -10,14 +10,14 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from ..agent_spec import SECTIONS, check_cast, normalize_agent
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
-from ..network_tools import fetch_library_name, given_pages, sources_wanted
+from ..network_tools import fetch_library_name
 from ..rag import case_files, library_names, run_library_names
+from ..research import research_settings
 
 MODE_LABELS = {
     "document_analysis": "Document analysis",
@@ -32,9 +32,10 @@ MODE_BLURBS = {
         "that are checked afterwards. Give a run a document and the question is answered from "
         "the document instead, with the libraries as supporting authority."),
     "agentic_workflow": (
-        "Each run gives an agent one task, and optionally a document. It works in a "
-        "think-then-act loop, calling tools such as library search, until it can answer, "
-        "citing the passages it found."),
+        "Each run researches the brief. A planner drafts the plan (sub-questions, libraries, "
+        "where to look) for you to review; one research agent per sub-question then searches "
+        "and reads in parallel for as long as the question needs, and a lead agent writes the "
+        "answer, every claim cited to the passage it rests on."),
     "roleplay": (
         "Each run plays out the scenario between the cast. A moderator decides who speaks, "
         "steps in when talks stall, and ends the scene; an evaluator then assesses the "
@@ -257,34 +258,27 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         )
         return view
 
-    pages = given_pages(config) if mode == "agentic_workflow" and config.get("allow_network") else []
-    facts = [libraries_fact(libraries, library_documents,
-                            none="None: works from what it reads online" if config.get("allow_network")
-                            and mode == "agentic_workflow" else "None: answers without retrieved authority")]
     if mode == "agentic_workflow":
-        saved_to = fetch_library_name(config, str(exp.get("name") or ""))
-        facts += [
-            *([_fact("Web pages to read", str(len(pages)),
-                     f"read first and added to “{saved_to}”: "
-                     + ", ".join(dict.fromkeys(urlparse(u).netloc for u in pages)))]
-              if pages else []),
-            *([_fact("Sources to read online", str(sources_wanted(config)),
-                     "the most relevant results, read before answering")]
-              if config.get("allow_network") else []),
-            _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
-                  (f"searches online databases and reads several sources; adds what it reads "
-                   f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")
-                  if config.get("allow_network")
-                  else "works from its libraries only"),
+        d = research_defaults(config, str(exp.get("name") or ""))
+        facts = [
+            _fact("Libraries", "the planner chooses" if d["choose_libraries"] else _quoted(d["libraries"])
+                  if d["libraries"] else "none",
+                  "from every library, by what each holds and how well it matches the brief"
+                  if d["choose_libraries"] else "only these may be searched"),
+            _fact("Legal databases", "allowed" if d["use_databases"] else "not allowed",
+                  "CourtListener, the Federal Register, the eCFR, govinfo, SEC EDGAR"),
+            _fact("Open web", "allowed" if d["use_web"] else "not allowed",
+                  "a search engine (Brave) and any public page"),
+            _fact("Time limit", f"{d['time_limit_minutes']} minutes", "no limit on sources or steps"),
         ]
+        if d["use_databases"] or d["use_web"]:
+            facts.append(_fact("Saves what it reads to", f"“{d['fetch_library'] or d['own_library']}”",
+                               "each document read becomes a new version of that library"))
+        view.update(facts=facts, libraries=libraries, launch_defaults={**d, "libraries": d["libraries"]})
+        return view
+    facts = [libraries_fact(libraries, library_documents,
+                            none="None: answers without retrieved authority")]
     defaults: dict[str, Any] = {"libraries": libraries}
-    if mode == "agentic_workflow":
-        chosen = config.get("fetch_library")
-        defaults.update(allow_network=bool(config.get("allow_network")),
-                        network_sources=sources_wanted(config),
-                        web_pages=given_pages(config),
-                        fetch_library=" ".join(chosen.split()) if isinstance(chosen, str) else "",
-                        own_library=fetch_library_name({}, str(exp.get("name") or "")))
     view.update(facts=facts, libraries=libraries, launch_defaults=defaults)
     return view
 
@@ -480,6 +474,19 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
             interventions=sum(1 for e in entries if e["moderator"]),
             cast=[{**agent_view(a), "id": a.get("id")} for a in agents],
         )
+    if mode == "agentic_workflow":
+        plan = (run.get("inputs") or {}).get("plan") or result.get("plan") or {}
+        findings = [f for f in result.get("findings") or [] if isinstance(f, dict)]
+        view.update(
+            brief=str((run.get("inputs") or {}).get("brief") or ""),
+            plan=plan if isinstance(plan, dict) else {},
+            findings=[{**f, "html": _link_sources(to_html(f.get("text") or ""), view["sources"], prefix)}
+                      for f in findings],
+            steps=result.get("steps") or 0,
+            stopped=result.get("stopped") or "",
+            searches=[s for s in result.get("searches") or [] if isinstance(s, dict)],
+            time_limit=research_settings(config)["time_limit_minutes"],
+        )
     return view
 
 
@@ -488,7 +495,7 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
 # The run page follows an agentic run step by step (static/agent_activity.js). It gets the
 # events already written here and the rest from the trace stream, in the same shape.
 
-_ACTIVITY_FIELDS = ("seq", "event_type", "node", "queue_wait_ms", "eval_ms", "output_tokens",
+_ACTIVITY_FIELDS = ("seq", "event_type", "node", "agent_id", "queue_wait_ms", "eval_ms", "output_tokens",
                     "prompt_tokens", "thinking", "payload")
 
 
@@ -501,3 +508,12 @@ def activity_events(events: list[dict]) -> list[dict]:
         row["created_at"] = created.isoformat() if hasattr(created, "isoformat") else created
         out.append(row)
     return out
+
+
+def research_defaults(config: dict[str, Any], experiment_name: str) -> dict[str, Any]:
+    """What an agentic experiment's runs start from, for the builder and the launch form. Pure."""
+    rs = research_settings(config)
+    chosen = config.get("fetch_library")
+    return {**rs,
+            "fetch_library": " ".join(chosen.split()) if isinstance(chosen, str) else "",
+            "own_library": fetch_library_name({}, experiment_name) if experiment_name else ""}

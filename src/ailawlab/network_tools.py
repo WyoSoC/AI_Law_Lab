@@ -16,10 +16,16 @@ source_material.fetch_url, which refuses anything that is not a public http(s) h
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
+import html
 import logging
 import re
+import time
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from . import source_material, sources
 from .config import settings
@@ -30,30 +36,45 @@ from .router import LLMRouter
 
 log = logging.getLogger(__name__)
 
+# Which research agent is reading, so the trace says who read what (agents share a reader).
+current_agent: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_agent", default=None)
+
 _HIT = re.compile(r"^\s*\[?W(\d+)\]?\s*$", re.IGNORECASE)
 
 
-def sources_wanted(config: dict[str, Any]) -> int:
-    """How many sources an agent should read online: the experiment's (or run's)
-    `network_sources`, within 1 and settings.network_sources_max. Pure."""
-    try:
-        n = int(config.get("network_sources") or settings.network_sources_default)
-    except (TypeError, ValueError):
-        n = settings.network_sources_default
-    return max(1, min(n, settings.network_sources_max))
+def permissions(config: dict[str, Any]) -> tuple[bool, bool]:
+    """What a run may reach outside its libraries: (legal databases, open web). Experiments
+    from before the two were separate say `allow_network`, which meant the databases (and
+    pages given by address). Pure."""
+    legacy = bool(config.get("allow_network"))
+    databases = config.get("use_databases")
+    web = config.get("use_web")
+    return (legacy if databases is None else bool(databases),
+            bool(web) if web is not None else False)
 
 
-def given_pages(config: dict[str, Any]) -> list[str]:
-    """The web pages a run was given to read: `web_pages` as a list or one address per line,
-    only http(s) addresses, each once, at most settings.web_pages_max. Pure."""
-    raw = config.get("web_pages") or []
-    items = raw.splitlines() if isinstance(raw, str) else [str(x) for x in raw if x]
+_URL = re.compile(r"https?://[^\s<>\"'()\[\]]+", re.IGNORECASE)
+
+
+def urls_in(text: str, limit: int = 10) -> list[str]:
+    """Web addresses written in a text (a brief), each once, without trailing punctuation. Pure."""
+    out: list[str] = []
+    for m in _URL.finditer(text or ""):
+        url = m.group(0).rstrip(".,;:!?")
+        if url not in out:
+            out.append(url)
+    return out[:limit]
+
+
+def clean_urls(raw: Any, limit: int = 10) -> list[str]:
+    """http(s) addresses from a list or one-per-line text, each once. Pure."""
+    items = raw.splitlines() if isinstance(raw, str) else [str(x) for x in raw or [] if x]
     out: list[str] = []
     for item in items:
         url = item.strip()
         if url.lower().startswith(("http://", "https://")) and url not in out:
             out.append(url)
-    return out[:settings.web_pages_max]
+    return out[:limit]
 
 
 def fetch_library_name(config: dict[str, Any], experiment_name: str) -> str:
@@ -85,43 +106,87 @@ def resolve_result_markers(text: str, numbers_for) -> tuple[str, list[int]]:
     return _W_MARK.sub(swap, text), unread
 
 
-class OnlineReader:
-    """One run's searches and reads of public sources, and the library it saves them into.
+class WebSearchUnavailable(RuntimeError):
+    """Open-web search is not configured (no Brave key)."""
 
-    `libraries` is the run's own set: once something is saved, the fetch library is pinned
-    to its new version there, so the agent's later library searches cover it too.
+
+def web_search_ready() -> bool:
+    return bool(settings.brave_api_key.strip())
+
+
+_brave_lock = asyncio.Lock()
+_brave_last = 0.0
+
+
+async def brave_search(query: str, count: int | None = None) -> list[dict[str, Any]]:
+    """Open-web results from the Brave Search API: [{title, url, snippet, age}]. Requests are
+    spaced at least a second apart (the API's per-second limit), and one 429 is retried."""
+    global _brave_last
+    if not web_search_ready():
+        raise WebSearchUnavailable("open-web search needs AILAWLAB_BRAVE_API_KEY")
+    params = {"q": query[:400], "count": max(1, min(count or settings.web_hits, 20))}
+    headers = {"Accept": "application/json", "X-Subscription-Token": settings.brave_api_key.strip()}
+    async with _brave_lock, httpx.AsyncClient(timeout=settings.source_timeout_s) as client:
+        for attempt in range(2):
+            wait = 1.1 - (time.monotonic() - _brave_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            r = await client.get(BRAVE_URL, params=params, headers=headers)
+            _brave_last = time.monotonic()
+            if r.status_code == 429 and attempt == 0:
+                await asyncio.sleep(2.0)
+                continue
+            r.raise_for_status()
+            break
+    data = r.json()
+    return [{"title": strip_tags(x.get("title") or x.get("url") or ""), "url": x.get("url") or "",
+             "snippet": strip_tags(x.get("description") or ""), "age": x.get("age") or "",
+             "site": (x.get("profile") or {}).get("name") or ""}
+            for x in (data.get("web") or {}).get("results") or [] if x.get("url")]
+
+
+BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+_TAG = re.compile(r"<[^>]+>")
+
+
+def strip_tags(text: str) -> str:
+    """Brave marks matched words with <strong>; plain text is wanted. Pure."""
+    return html.unescape(_TAG.sub("", text or "")).strip()
+
+
+class OnlineReader:
+    """One run's searches and reads of outside sources, and the library it saves them into.
+
+    Two permissions, each the researcher's to grant: `databases` (the public legal databases
+    with their own APIs) and `web` (open-web search, and reading any public page). Reading is
+    not budgeted: an agent reads what the question needs. `libraries` is the run's own set:
+    once something is saved, the fetch library is pinned to its new version there, so later
+    library searches by any of the run's agents cover it too. Agents work in parallel, so
+    saving (which records a library version) is serialized.
     """
 
     def __init__(self, router: LLMRouter, libraries: Libraries, ledger: SourceLedger, tracer,
                  run_id: str, library: str, added_by: Any = None,
-                 max_reads: int | None = None, wanted: int | None = None):
+                 databases: bool = True, web: bool = False):
         self.router, self.libraries, self.ledger, self.tracer = router, libraries, ledger, tracer
         self.run_id, self.library, self.added_by = run_id, library, added_by
-        # The agent is asked for `wanted` sources; its budget leaves room for two that turn out
-        # to be unreadable or empty.
-        self.wanted = wanted or settings.network_sources_default
-        self.max_reads = max_reads or (self.wanted + 2 if wanted else settings.network_max_reads)
-        self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id, hit)
+        self.allow_databases, self.allow_web = databases, web
+        self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id or "web", hit)
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
         self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
-        # Pages the run was given are read first and never count against the agent's sources.
-        self.given_read = 0
-
-    @property
-    def agent_reads(self) -> int:
-        """Documents the agent read itself (not the pages it was given)."""
-        return len(self.fetched) - self.given_read
+        self.searches: list[dict[str, Any]] = []              # every search, with what it returned
+        self._save_lock = asyncio.Lock()
+        self._read_urls: dict[str, int] = {}                  # address -> its index in fetched
 
     async def read_given(self, urls: list[str], look_for: str = "") -> str:
-        """Read the pages the run was given, before the agent starts, and say what came of
-        each: its passages to cite, or why it could not be read."""
+        """Read pages named in the brief, before the agents start, and say what came of each:
+        its passages to cite, or why it could not be read."""
         out = []
         for url in urls:
             before = len(self.fetched)
-            out.append(await self._read_one(url, look_for, budget=False))
+            out.append(await self._read_one(url, look_for))
             if len(self.fetched) > before:
                 self.fetched[-1]["given"] = True
-                self.given_read += 1
         return "\n\n".join(out)
 
     @staticmethod
@@ -129,9 +194,19 @@ class OnlineReader:
         """Databases that can be searched now (those needing a key report themselves off)."""
         return {pid: p.name for pid, p in sources.PROVIDERS.items() if p.status()[0]}
 
+    def _record_search(self, kind: str, query: str, where: str, numbers: list[int]) -> None:
+        self.searches.append({"kind": kind, "query": query, "where": where,
+                              "results": [{"n": n, "title": self.hits[n - 1][1].get("title"),
+                                           "url": self.hits[n - 1][1].get("url")
+                                           or self.hits[n - 1][1].get("source_uri")}
+                                          for n in numbers]})
+
     # ------------------------------------------------------------------ searching
 
     async def search(self, query: str, database: str = "") -> str:
+        """Search the public legal databases."""
+        if not self.allow_databases:
+            return "ERROR: searching the legal databases is not allowed in this run."
         dbs = self.databases()
         database = (database or "").strip()
         if database and database not in dbs:
@@ -145,6 +220,7 @@ class OnlineReader:
                 return pid, f"{type(e).__name__}: {e}"
 
         lines: list[str] = []
+        numbers: list[int] = []
         for pid, found in await asyncio.gather(*(one(p) for p in targets)):
             if isinstance(found, str):
                 lines.append(f"({dbs[pid]} could not be searched: {found})")
@@ -152,20 +228,47 @@ class OnlineReader:
             for hit in found:
                 self.hits.append((pid, hit.as_dict()))
                 n = len(self.hits)
+                numbers.append(n)
                 meta = ", ".join(x for x in (hit.badge, hit.date) if x)
                 lines.append(f"[W{n}] {hit.title} ({dbs[pid]}{', ' + meta if meta else ''})"
                              + ("" if hit.full_text else " -- only its snippet can be read")
                              + (f"\n{hit.snippet[:300]}" if hit.snippet else ""))
+        self._record_search("databases", query, database or "all databases", numbers)
+        return self._results_text(lines)
+
+    async def search_web(self, query: str) -> str:
+        """Search the open web (Brave)."""
+        if not self.allow_web:
+            return "ERROR: searching the open web is not allowed in this run."
+        try:
+            found = await brave_search(query)
+        except Exception as e:  # noqa: BLE001 - a failed search is information for the agent
+            log.warning("run %s web search failed: %s", self.run_id, e)
+            return f"ERROR: the web search failed ({type(e).__name__}). Try again or another wording."
+        lines: list[str] = []
+        numbers: list[int] = []
+        for hit in found:
+            self.hits.append(("web", hit))
+            n = len(self.hits)
+            numbers.append(n)
+            meta = ", ".join(x for x in (hit["site"] or urlparse(hit["url"]).netloc, hit["age"]) if x)
+            lines.append(f"[W{n}] {hit['title']} ({meta})\n{hit['url']}"
+                         + (f"\n{hit['snippet'][:300]}" if hit["snippet"] else ""))
+        self._record_search("web", query, "the open web", numbers)
+        return self._results_text(lines)
+
+    @staticmethod
+    def _results_text(lines: list[str]) -> str:
         if not any(line.startswith("[W") for line in lines):
             lines.insert(0, "No results.")
         return ("\n\n".join(lines) + "\n\nThese are search results, not sources: do not cite "
-                "them. To use one, call read_online with its [W] number; what you read is saved "
-                "and handed back as numbered passages you can cite.")
+                "them. To use one, call read with its [W] number (several at once: W1, W3, W4); "
+                "what you read is saved and handed back as numbered passages you can cite.")
 
     # ------------------------------------------------------------------ reading
 
-    # Results one read_online call may take: enough to read the best few of a search at once.
-    PER_CALL = 5
+    # Results one read call may take: enough to read the best few of a search at once.
+    PER_CALL = 6
 
     async def read(self, source: str, look_for: str = "") -> str:
         """Read one or several sources: "W2", "W1, W3, W4", or a single address."""
@@ -174,7 +277,8 @@ class OnlineReader:
                 else [r for r in re.split(r"[\s,;]+", source) if r])
         if not refs:
             return "ERROR: give a search result's number, like W2, or a web address."
-        out = [await self._read_one(ref, look_for) for ref in refs[:self.PER_CALL]]
+        out = await asyncio.gather(*(self._read_one(ref, look_for) for ref in refs[:self.PER_CALL]))
+        out = list(out)
         if len(refs) > self.PER_CALL:
             out.append(f"(Only the first {self.PER_CALL} were read; ask again for the rest.)")
         return "\n\n".join(out)
@@ -183,10 +287,29 @@ class OnlineReader:
         """The passage numbers handed back when search result W<n> was read ([] if never read)."""
         return self.read_hits.get(n, [])
 
-    async def _read_one(self, source: str, look_for: str = "", budget: bool = True) -> str:
-        if budget and self.agent_reads >= self.max_reads:
-            return (f"ERROR: this run has already read {self.max_reads} documents online, the "
-                    "most it may. Work with what you have, or search the libraries.")
+    def _key(self, source: str) -> str:
+        """What a source is, whichever way it is named: a result's address, or the address."""
+        if m := _HIT.match(source):
+            n = int(m.group(1))
+            if 1 <= n <= len(self.hits):
+                pid, hit = self.hits[n - 1]
+                return hit.get("url") or hit.get("source_uri") or f"{pid}:{hit.get('ref')}"
+        return source.strip()
+
+    async def _read_one(self, source: str, look_for: str = "") -> str:
+        # Several agents may want the same document: it is read and saved once, and each gets
+        # the passages that fit what it is looking for.
+        key = self._key(source)
+        if key in self._read_urls:
+            record = self.fetched[self._read_urls[key]]
+            passages = await self._passages(record["document_id"], record["version"],
+                                            look_for or record["title"])
+            numbers = self.ledger.number(passages)
+            if m := _HIT.match(source):
+                self.read_hits[int(m.group(1))] = numbers
+            return (f"“{record['title']}” was already read in this run (library “{self.library}” "
+                    f"v{record['version']}). The passages most relevant to “{look_for or record['title']}”:"
+                    "\n\n" + format_passages(passages, numbers))
         try:
             doc = await self._fetch(source)
         except LookupError as e:
@@ -207,13 +330,15 @@ class OnlineReader:
                   "provider": doc["metadata"].get("provider") or "web", "document_id": doc_id,
                   "corpus": self.library, "version": version}
         self.fetched.append(record)
+        self._read_urls[key] = len(self.fetched) - 1
         numbers = self.ledger.number(passages)
         if m := _HIT.match(source):
             self.read_hits[int(m.group(1))] = numbers
         await self.tracer.note(f"read “{doc['title']}” online; "
                                + (f"the same text was already in “{self.library}”, so that copy "
                                   f"is used (v{version})" if reused
-                                  else f"saved it to “{self.library}” v{version}"), node="act")
+                                  else f"saved it to “{self.library}” v{version}"), node="act",
+                               agent_id=current_agent.get())
         return (f"Read “{doc['title']}” and saved it to the library “{self.library}” "
                 f"(version {version}). The passages most relevant to "
                 f"“{look_for or doc['title']}”, which you can cite by number:\n\n"
@@ -226,12 +351,19 @@ class OnlineReader:
             if not 1 <= n <= len(self.hits):
                 raise LookupError(f"there is no search result W{n} in this run.")
             pid, hit = self.hits[n - 1]
+            if pid == "web":
+                return await self._fetch(hit["url"])
+            if not self.allow_databases:
+                raise LookupError("reading the legal databases is not allowed in this run.")
             fetched = await sources.get_provider(pid).fetch(hit["ref"], hit)
             return {"title": fetched.title, "text": fetched.text, "source_uri": fetched.source_uri,
                     "doc_type": fetched.doc_type, "metadata": dict(fetched.metadata)}
         if not source.lower().startswith(("http://", "https://")):
             raise LookupError("give a search result's number, like W2, or a web address "
                               "starting with https://.")
+        if not self.allow_web:
+            raise LookupError("reading web pages is not allowed in this run (the researcher did "
+                              "not allow the open web).")
         page = await source_material.fetch_url(source, max_words=settings.web_link_max_words)
         return {"title": page.title, "text": page.text, "source_uri": page.url or source,
                 "doc_type": page.kind, "page_map": page.page_map or None,
@@ -243,6 +375,10 @@ class OnlineReader:
         """Add the document to the fetch library (once: the same text is reused) and record
         the library's new version, pinned for the rest of this run. Returns the document id,
         the version, and whether an earlier copy was reused."""
+        async with self._save_lock:
+            return await self._save_locked(doc)
+
+    async def _save_locked(self, doc: dict[str, Any]) -> tuple[int, int, bool]:
         meta = {**doc["metadata"], "fetched_by_run": self.run_id}
         doc_id = await Corpus(self.router, name=self.library, added_by=self.added_by).add_document(
             doc["title"], doc["text"], source_uri=doc["source_uri"], doc_type=doc["doc_type"],

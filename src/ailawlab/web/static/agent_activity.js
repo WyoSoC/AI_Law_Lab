@@ -16,10 +16,12 @@
   };
   let live = root.dataset.live === "1";
   let steps = 0, started = null, lastAt = null, last = null, wrote = false;
+  const agentSteps = {};          // research agent (Q1, Q2, … or lead) -> its steps
   const seen = new Set();
 
   const TOOL_NAMES = {search_libraries: "searched the libraries", search_online: "searched online",
-                      read_online: "read online", calculate: "calculated"};
+                      read_online: "read online", search_databases: "searched the legal databases",
+                      search_web: "searched the web", read: "read", calculate: "calculated"};
   let DATABASES = {};
   try { DATABASES = JSON.parse(root.dataset.databases || "{}"); } catch (e) { DATABASES = {}; }
 
@@ -38,8 +40,12 @@
     switch (fn.name) {
       case "search_libraries":
         return `search ${a.library ? `the library ${quote(a.library)}` : "its libraries"} for ${quote(a.query || "")}`;
+      case "search_web":
+        return `search the web for ${quote(a.query || "")}`;
+      case "search_databases":
       case "search_online":
         return `search ${DATABASES[a.database] || a.database || "online"} for ${quote(a.query || "")}`;
+      case "read":
       case "read_online":
         return `read ${a.source || "a source"}` + (a.look_for ? `, looking for ${quote(a.look_for)}` : "");
       case "calculate":
@@ -54,7 +60,7 @@
   function outcome(tool, result) {
     const text = String(result || "");
     const firsts = re => [...text.matchAll(re)].map(m => m[1].trim());
-    if (tool === "search_online") {
+    if (tool === "search_online" || tool === "search_databases" || tool === "search_web") {
       const hits = firsts(/^\[W\d+\]\s*(.+)$/gm);
       return {line: hits.length ? `${hits.length} result${hits.length === 1 ? "" : "s"}` : text.split("\n")[0],
               items: hits};
@@ -64,7 +70,7 @@
       return {line: hits.length ? `${hits.length} passage${hits.length === 1 ? "" : "s"}` : text.split("\n")[0],
               items: [...new Set(hits.map(h => h.replace(/\s*\(library .*$/, "")))]};
     }
-    if (tool === "read_online") {
+    if (tool === "read_online" || tool === "read") {
       const read = firsts(/Read (“[^”]+”)/g);
       return {line: read.length ? `read ${read.length} document${read.length === 1 ? "" : "s"} and saved ${read.length === 1 ? "it" : "them"}`
                                 : text.split("\n")[0].slice(0, 200), items: read};
@@ -91,10 +97,12 @@
 
     if (e.event_type === "llm_call") {
       steps += 1;
+      const who = e.agent_id || "";
+      if (who) agentSteps[who] = (agentSteps[who] || 0) + 1;
       const took = (e.eval_ms || 0) + (e.queue_wait_ms || 0);
       item = el("li", "activity-step");
       const head = el("div", "activity-head-line");
-      head.appendChild(el("span", "activity-num", `Step ${steps}`));
+      head.appendChild(el("span", "activity-num", who ? `${who === "lead" ? "Lead" : who} · step ${agentSteps[who]}` : `Step ${steps}`));
       const calls = p.tool_calls || [];
       const what = calls.length ? "Decided to " + calls.map(intent).join("; then ")
                  : p.response ? `Wrote the answer (${p.response.length.toLocaleString()} characters)`
@@ -111,7 +119,7 @@
       const o = outcome(p.tool, p.result);
       item = el("li", "activity-result");
       const head = el("div", "activity-head-line");
-      head.appendChild(el("span", "activity-tool", TOOL_NAMES[p.tool] || p.tool || "tool"));
+      head.appendChild(el("span", "activity-tool", (e.agent_id ? e.agent_id + " · " : "") + (TOOL_NAMES[p.tool] || p.tool || "tool")));
       head.appendChild(el("span", "activity-what", o.line));
       if (e.eval_ms) head.appendChild(el("span", "activity-meta", secs(e.eval_ms)));
       item.appendChild(head);
@@ -125,7 +133,8 @@
     } else if (e.event_type === "error") {
       item = el("li", "activity-note bad", p.message || "error");
     } else if (p.message && !/^run (started|completed)/.test(p.message)) {
-      item = el("li", "activity-note", p.message);
+      const who = e.agent_id && !p.message.startsWith(e.agent_id) ? `${e.agent_id}: ` : "";
+      item = el("li", "activity-note", who + p.message);
     }
     if (item) list.appendChild(item);
     refresh();
@@ -147,7 +156,10 @@
   }
 
   function refresh() {
-    els.step.textContent = steps ? `Step ${steps}` : "No steps yet";
+    const lanes = Object.entries(agentSteps).filter(([k]) => k !== "lead");
+    els.step.textContent = !steps ? "No steps yet"
+      : lanes.length ? `${steps} steps · ` + lanes.map(([k, n]) => `${k}: ${n}`).join(" · ")
+      : `Step ${steps}`;
     const now = live ? new Date() : lastAt;
     if (started && now) els.elapsed.textContent = clock(now - started);
     if (live) els.status.textContent = lastAt ? `${waiting()}… ${secs(Date.now() - lastAt)}` : waiting() + "…";

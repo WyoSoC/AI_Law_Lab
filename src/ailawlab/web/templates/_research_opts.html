@@ -1,0 +1,55 @@
+{#- What an agentic study may use, shared by the builder (prefix "aw") and the launch form
+    (prefix "net", run_only): which libraries the planner may choose from, the two outside
+    permissions, the library what is read gets saved to, and the time limit. `d` holds the
+    starting values (views.experiment_view's launch_defaults). -#}
+{% from "_library_picker.html" import library_picker %}
+{% macro research_opts(p, libraries, on_change, d, run_only=False, web_ready=True) %}
+<label>Libraries</label>
+<label class="check"><input type="radio" name="{{ p }}_libmode" value="choose" {% if d.choose_libraries %}checked{% endif %}
+       onchange="resShow('{{ p }}'); {{ on_change }}">
+  Let the planner choose from all libraries <span class="hint-inline">(recommended)</span></label>
+<label class="check"><input type="radio" name="{{ p }}_libmode" value="only" {% if not d.choose_libraries %}checked{% endif %}
+       onchange="resShow('{{ p }}'); {{ on_change }}">
+  Only these libraries</label>
+<div id="{{ p }}_libs_box" {% if d.choose_libraries %}hidden{% endif %}>
+  {{ library_picker(p ~ '_libs', libraries, d.libraries, on_change) }}
+</div>
+<p class="hint">The planner profiles each library (what it holds, and how closely its passages match the
+   brief) and picks the ones worth searching; the plan shows its choice and why, and you can change it
+   before the run.{% if run_only %} Starts as the experiment's setting; changes apply to this run only.{% endif %}</p>
+
+<label>Outside the libraries</label>
+<label class="check"><input type="checkbox" id="{{ p }}_db" {% if d.use_databases %}checked{% endif %}
+       onchange="resShow('{{ p }}'); {{ on_change }}">
+  Search legal databases <span class="hint-inline">CourtListener, the Federal Register, the eCFR, govinfo, SEC EDGAR</span></label>
+<label class="check"><input type="checkbox" id="{{ p }}_web" {% if d.use_web %}checked{% endif %} {% if not web_ready %}disabled{% endif %}
+       onchange="resShow('{{ p }}'); {{ on_change }}">
+  Search the open web <span class="hint-inline">a search engine (Brave), and any public page</span></label>
+<p class="hint">{% if not web_ready %}Open-web search is not set up on this server (it needs a search key).
+   {% endif %}Off by default: a study of model reasoning shouldn't silently reach outside sources. The
+   legal databases are official sources with their own interfaces. The open web reaches much more
+   (agency guidance, scholarship, foreign law, news) and its search queries go to an outside search
+   service. Everything read is saved to a library first, so what is cited stays traceable to a document
+   and version after the page changes. Web addresses written in the brief are read before research starts.</p>
+
+<div id="{{ p }}_save" {% if not (d.use_databases or d.use_web) %}hidden{% endif %}>
+  <label for="{{ p }}_fetch">Library to save what it reads</label>
+  <input type="text" id="{{ p }}_fetch" list="{{ p }}_fetch_list" value="{{ d.fetch_library }}" autocomplete="off"
+         data-own="{{ d.own_library }}" placeholder="Type to find a library, or name a new one"
+         oninput="netStatus('{{ p }}'); {{ on_change }}">
+  <datalist id="{{ p }}_fetch_list">
+    {% for lib in libraries|rejectattr('hidden') %}<option value="{{ lib.name }}">{{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</option>{% endfor %}
+    {% for lib in libraries|selectattr('hidden') %}<option value="{{ lib.name }}">hidden &middot; {{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }}</option>{% endfor %}
+  </datalist>
+  <p class="hint" id="{{ p }}_fetch_status" aria-live="polite"></p>
+</div>
+
+<label for="{{ p }}_minutes">Time limit</label>
+<div class="inline-field"><input type="number" id="{{ p }}_minutes" value="{{ d.time_limit_minutes }}" min="5" max="1440"
+       oninput="{{ on_change }}" style="max-width:8rem"> <span class="hint-inline">minutes</span></div>
+<p class="hint">Research has no limit on sources or steps: each agent reads what its sub-question needs. The
+   time limit is the safety net: when it is reached, or when you press Stop on the run page, the agents
+   report what they have found and the answer is written from that.</p>
+{% set docs = {} %}{% for lib in libraries %}{% set _ = docs.update({lib.name: lib.documents}) %}{% endfor %}
+<script>window.NET_LIBS = Object.assign(window.NET_LIBS || {}, {{ docs|tojson }});</script>
+{% endmacro %}

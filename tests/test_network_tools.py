@@ -29,14 +29,58 @@ def test_the_fetch_library_is_named_for_the_experiment_unless_chosen():
     assert fetch_library_name({"fetch_library": ""}, "x") == "Fetched: x"
 
 
-def test_network_tools_are_offered_only_when_allowed():
-    r = reader()
-    off = default_registry(Libraries(None, []), SourceLedger(), allow_network=False, reader=r)
-    on = default_registry(Libraries(None, []), SourceLedger(), allow_network=True, reader=r)
-    assert "search_online" not in off.names() and "read_online" not in off.names()
-    assert {"search_online", "read_online", "search_libraries"} <= set(on.names())
-    refused, _ = asyncio.run(off.call("read_online", {"source": "W1"}))
-    assert refused.startswith("ERROR: tool 'read_online' needs network access")
+def test_outside_tools_are_offered_as_the_run_allows():
+    def names(r):
+        return set(default_registry(Libraries(None, []), SourceLedger(), reader=r).names())
+
+    assert names(None) == {"calculate"}
+    assert names(reader(databases=True, web=False)) >= {"search_databases", "read", "search_libraries"}
+    assert "search_web" not in names(reader(databases=True, web=False))
+    assert names(reader(databases=False, web=True)) >= {"search_web", "read"}
+    assert "search_databases" not in names(reader(databases=False, web=True))
+    # Reading is held to the permissions too, whichever way a source is named.
+    db_only = reader(databases=True, web=False)
+    assert "not allowed" in asyncio.run(db_only.read("https://example.org/page"))
+    assert "not allowed" in asyncio.run(db_only.search_web("anything"))
+    web_only = reader(databases=False, web=True)
+    web_only.hits = [("federal_register", {"ref": "2026-1", "title": "Rule"})]
+    assert "not allowed" in asyncio.run(web_only.read("W1"))
+    assert "not allowed" in asyncio.run(web_only.search("anything"))
+
+
+def test_permissions_read_the_two_boxes_and_the_old_single_one():
+    from ailawlab.network_tools import permissions
+
+    assert permissions({}) == (False, False)
+    assert permissions({"use_databases": True, "use_web": True}) == (True, True)
+    assert permissions({"allow_network": True}) == (True, False)        # before the boxes split
+    assert permissions({"allow_network": True, "use_databases": False}) == (False, False)
+
+
+def test_web_addresses_are_found_in_a_brief_and_cleaned():
+    from ailawlab.network_tools import clean_urls, urls_in
+
+    brief = ("Compare https://www.dol.gov/fact-sheets/21. and (see https://a.org/x?y=1), "
+             "plus https://www.dol.gov/fact-sheets/21 again.")
+    assert urls_in(brief) == ["https://www.dol.gov/fact-sheets/21", "https://a.org/x?y=1"]
+    assert clean_urls("https://a.gov/x\n https://a.gov/x \nftp://b.org\nhttp://c.org/") == \
+        ["https://a.gov/x", "http://c.org/"]
+
+
+def test_web_search_results_are_numbered_leads_with_addresses(monkeypatch):
+    from ailawlab import network_tools
+
+    async def fake_brave(query, count=None):
+        return [{"title": "Fact Sheet #21", "url": "https://www.dol.gov/fs21", "snippet": "Records.",
+                 "age": "2025", "site": "U.S. Department of Labor"}]
+
+    monkeypatch.setattr(network_tools, "brave_search", fake_brave)
+    r = reader(databases=False, web=True)
+    out = asyncio.run(r.search_web("FLSA records"))
+    assert out.startswith("[W1] Fact Sheet #21 (U.S. Department of Labor, 2025)\nhttps://www.dol.gov/fs21\nRecords.")
+    assert r.searches == [{"kind": "web", "query": "FLSA records", "where": "the open web",
+                           "results": [{"n": 1, "title": "Fact Sheet #21", "url": "https://www.dol.gov/fs21"}]}]
+    assert network_tools.strip_tags("<strong>FLSA</strong> &amp; records") == "FLSA & records"
 
 
 def test_search_lists_leads_numbered_across_searches(monkeypatch):
@@ -100,12 +144,14 @@ def test_reading_saves_first_and_hands_back_citable_passages(monkeypatch):
                           "corpus": "Fetched: Test", "version": 3}]
     assert asyncio.run(r.read("W9")).startswith("ERROR: there is no search result W9")
     assert asyncio.run(r.read("file:///etc/passwd")).startswith("ERROR: give a search result")
-    r.max_reads = 1
-    assert "the most it may" in asyncio.run(r.read("W1"))
+    # Read again (by another agent, say), the same document is not fetched or saved twice.
+    saved.clear()
+    again = asyncio.run(r.read("W1", "cure period"))
+    assert not saved and "was already read in this run" in again and len(r.fetched) == 1
 
 
 def test_a_private_address_is_refused():
-    out = asyncio.run(reader().read("http://127.0.0.1:5433/"))
+    out = asyncio.run(reader(web=True).read("http://127.0.0.1:5433/"))
     assert out.startswith("ERROR: could not read")
 
 
@@ -153,8 +199,8 @@ def test_several_results_are_read_in_one_call(monkeypatch):
     r = reader()
     assert asyncio.run(r.read("W1, W3 W4")) == "read W1\n\nread W3\n\nread W4"
     assert calls == ["W1", "W3", "W4"]
-    out = asyncio.run(r.read(", ".join(f"W{i}" for i in range(1, 8))))
-    assert out.count("read W") == OnlineReader.PER_CALL and "Only the first 5" in out
+    out = asyncio.run(r.read(", ".join(f"W{i}" for i in range(1, OnlineReader.PER_CALL + 3))))
+    assert out.count("read W") == OnlineReader.PER_CALL and f"Only the first {OnlineReader.PER_CALL}" in out
     calls.clear()
     asyncio.run(r.read("https://example.org/a, b"))           # one address, not split
     assert calls == ["https://example.org/a, b"]
@@ -167,108 +213,104 @@ def test_the_agent_is_asked_for_several_sources_and_never_a_w_number():
     assert "W1, W3, W4" in read_tool.description and "never cite a W number" in read_tool.description
 
 
-def test_the_number_of_sources_is_chosen_and_bounded():
-    from ailawlab.graphs.agentic_workflow import _sources_goal
-    from ailawlab.network_tools import sources_wanted
-
-    assert sources_wanted({}) == 5 and sources_wanted({"network_sources": "12"}) == 12
-    assert sources_wanted({"network_sources": 0}) == 5           # unset reads as the default
-    assert sources_wanted({"network_sources": 99}) == 20 and sources_wanted({"network_sources": "x"}) == 5
-    r = OnlineReader(None, Libraries(None, []), SourceLedger(), Notes(), "run-1", "lib", wanted=12)
-    assert r.wanted == 12 and r.max_reads == 14                  # room for two unreadable ones
-    assert reader().max_reads == 8                                # no number set: the old budget
-    assert "read the 12 most relevant results" in _sources_goal(12)
-    assert "single most relevant result" in _sources_goal(1)
-
-
-def test_the_experiment_page_shows_the_number_of_sources():
+def test_the_experiment_page_shows_what_a_study_may_use():
     from ailawlab.web.views import experiment_view
 
     v = experiment_view({"mode": "agentic_workflow", "name": "Study",
-                         "config": {"allow_network": True, "network_sources": 7}}, [])
-    assert {"label": "Sources to read online", "value": "7",
-            "note": "the most relevant results, read before answering"} in v["facts"]
+                         "config": {"use_databases": True, "use_web": False, "time_limit_minutes": 45}}, [])
+    facts = {f["label"]: f["value"] for f in v["facts"]}
+    assert facts == {"Libraries": "the planner chooses", "Legal databases": "allowed",
+                     "Open web": "not allowed", "Time limit": "45 minutes",
+                     "Saves what it reads to": "“Fetched: Study”"}
+    assert v["launch_defaults"]["choose_libraries"] and v["launch_defaults"]["own_library"] == "Fetched: Study"
+    old = experiment_view({"mode": "agentic_workflow", "name": "Old",
+                           "config": {"libraries": ["case_law"], "allow_network": True}}, [])
+    facts = {f["label"]: f["value"] for f in old["facts"]}
+    assert facts["Libraries"] == "“case_law”" and facts["Legal databases"] == "allowed"
 
 
-def test_an_answer_with_too_few_sources_is_sent_back_for_more():
-    from langgraph.graph import END
+def test_older_tool_results_shrink_and_the_agents_notes_stay():
+    from ailawlab.graphs.agentic_workflow import compact
 
-    from ailawlab.graphs.agentic_workflow import more_sources_note, should_continue
-
-    r = reader(wanted=8)
-    r.hits = [("ecfr", {}), ("ecfr", {}), ("ecfr", {}), ("ecfr", {})]
-    r.read_hits = {1: [1], 2: [2]}
-    r.fetched = [{}, {}]
-    note = more_sources_note(r)
-    assert "read 2 of the 8 sources" in note and "W3, W4" in note and "search again" in note
-    held = {"iterations": 3, "max_iterations": 12, "scratchpad": [
-        {"role": "assistant", "content": "early answer"}, {"role": "user", "content": note}]}
-    assert should_continue(held) == "reason"
-    assert should_continue({**held, "scratchpad": [{"role": "assistant", "content": "final"}]}) == END
-    assert should_continue({**held, "iterations": 12}) == END                # never past the limit
+    long = "Read “A”.\n" + "passage text " * 50
+    convo = [{"role": "user", "content": "brief"},
+             {"role": "assistant", "content": "note one [1]", "tool_calls": [{}]},
+             {"role": "tool", "content": long},
+             {"role": "assistant", "content": "note two [2]", "tool_calls": [{}]},
+             {"role": "tool", "content": long},
+             {"role": "tool", "content": "short"}]
+    out = compact(convo, keep=1)
+    assert out[2]["content"].startswith("Read “A”. … (shortened") and out[4]["content"].startswith("Read “A”. … (shortened")
+    assert out[1]["content"] == "note one [1]" and out[5]["content"] == "short"
+    assert compact(convo, keep=3)[2]["content"] == long and convo[2]["content"] == long   # not changed in place
 
 
-def test_the_last_step_has_no_tools_and_always_answers():
-    import asyncio
+def test_a_research_agent_reports_findings_on_its_last_step_and_when_stopped():
     from types import SimpleNamespace
 
-    from ailawlab.graphs.agentic_workflow import FINAL_STEP, reason_node
-    from ailawlab.grounding import SourceLedger
-    from ailawlab.rag import Libraries
+    from ailawlab.graphs.agentic_workflow import FINAL_STEP, investigate
     from ailawlab.router import LLMResult
 
     offered: list = []
-    notes: list[str] = []
+    stop = {"why": ""}
 
     class Router:
         async def chat(self, messages, tools=None, **kw):
-            offered.append(tools)
-            calls = [{"function": {"name": "search_libraries", "arguments": {"query": "q"}}}]
-            return LLMResult(text="" if tools else "The answer.", thinking=None, host="h",
-                             queue_wait_ms=0, eval_ms=1, prompt_tokens=120_000 if tools else 10,
-                             output_tokens=1, tool_calls=calls if tools else [])
-
-    async def note(message, **kw):
-        notes.append(message)
-        return 0
+            offered.append((tools, messages[-1]["content"]))
+            calls = [{"function": {"name": "calculate", "arguments": {"expression": "1+1"}}}]
+            return LLMResult(text="" if tools else "Findings [1].", thinking=None, host="h",
+                             queue_wait_ms=0, eval_ms=1, prompt_tokens=100, output_tokens=1,
+                             tool_calls=calls if tools else [])
 
     async def nothing(*a, **k):
         return 0
 
-    tracer = SimpleNamespace(note=note, error=nothing, llm_call=nothing, record_citations=nothing)
-    registry = SimpleNamespace(schemas=lambda: [{"name": "search_libraries"}])
+    calls_made = []
+
+    class Registry:
+        def schemas(self):
+            return [{"name": "calculate"}]
+
+        def names(self):
+            return ["calculate"]
+
+        async def call(self, name, args):
+            calls_made.append(name)
+            if len(calls_made) == 3:
+                stop["why"] = "time limit"
+            return "2", 1
+
+    tracer = SimpleNamespace(note=nothing, error=nothing, llm_call=nothing, tool_call=nothing)
+    opts = {"registry": Registry(), "should_stop": lambda: stop["why"], "reader": None}
     ctx = SimpleNamespace(router=Router(), tracer=tracer, libraries=Libraries(None, []),
-                          opt=lambda k, d=None: {"registry": registry, "ledger": SourceLedger()}.get(k, d))
-    config = {"configurable": {"ctx": ctx}}
-    state = {"task": "t", "scratchpad": [], "iterations": 0, "max_iterations": 400}
-
-    # An ordinary step offers tools; a prompt past the share of the context asks it to wrap up.
-    out = asyncio.run(reason_node(state, config))
-    assert offered[-1] and not out["done"] and out["wrap_up"]
-    # The next step offers none and is told to answer, so the run ends with an answer.
-    out = asyncio.run(reason_node({**state, **out, "scratchpad": []}, config))
-    assert offered[-1] is None and out["done"] and out["answer"] == "The answer."
-    assert any("context is nearly full" in n for n in notes)
-    # So does the step the limit falls on.
-    out = asyncio.run(reason_node({**state, "iterations": 399}, config))
-    assert offered[-1] is None and out["answer"] == "The answer." and "last step" in FINAL_STEP
+                          opt=lambda k, d=None: opts.get(k, d))
+    sub = {"id": "Q1", "question": "What is 1+1?", "look_in": []}
+    found = asyncio.run(investigate(ctx, {"plan": {"question": "Sums", "sub_questions": [sub]}}, sub))
+    # Three steps with tools; then the clock ran out, so the next step had none and reported.
+    assert [t is not None for t, _ in offered] == [True, True, True, False]
+    assert offered[-1][1] == FINAL_STEP
+    assert found == {"id": "Q1", "question": "What is 1+1?", "text": "Findings [1].",
+                     "steps": 4, "ended": "time limit"}
 
 
-def test_given_pages_are_clean_addresses_each_once_and_capped():
-    from ailawlab.network_tools import given_pages
+def test_the_clock_says_when_and_why_research_must_end(monkeypatch):
+    from ailawlab.graphs import agentic_workflow
 
-    text = "https://a.gov/x\n  https://a.gov/x \nnot a link\nftp://b.org/f\nhttp://c.org/\n"
-    assert given_pages({"web_pages": text}) == ["https://a.gov/x", "http://c.org/"]
-    assert given_pages({"web_pages": [f"https://a.gov/{i}" for i in range(30)]})[-1] == "https://a.gov/9"
-    assert given_pages({}) == [] and given_pages({"web_pages": None}) == []
+    now = {"t": 1000.0}
+    monkeypatch.setattr(agentic_workflow.time, "monotonic", lambda: now["t"])
+    pressed = {"stop": False}
+    check = agentic_workflow.deadline_check(1000.0, 10, lambda: pressed["stop"])
+    assert check() == ""
+    now["t"] += 10 * 60
+    assert check() == "time limit"
+    pressed["stop"] = True
+    assert check() == "stopped"
 
 
-def test_pages_given_are_read_first_and_never_count_against_the_agent():
-    import asyncio
+def test_pages_named_in_the_brief_are_read_first_and_marked():
+    r = reader(web=True)
 
-    r = reader(wanted=2)
-
-    async def fake_read(source, look_for="", budget=True):
+    async def fake_read(source, look_for=""):
         if "broken" in source:
             return f"ERROR: could not read {source}"
         r.fetched.append({"source": source})
@@ -277,5 +319,4 @@ def test_pages_given_are_read_first_and_never_count_against_the_agent():
     r._read_one = fake_read
     text = asyncio.run(r.read_given(["https://a.gov/x", "https://broken.example/", "https://a.gov/y"], "q"))
     assert "ERROR: could not read https://broken.example/" in text and text.count("Read “") == 2
-    assert r.given_read == 2 and r.agent_reads == 0
-    assert all(f.get("given") for f in r.fetched)
+    assert all(f.get("given") for f in r.fetched) and len(r.fetched) == 2
