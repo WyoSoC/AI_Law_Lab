@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     crawl_user_agent: str = ("AILawLab-crawler/1.0 (+https://datahive.uwyo.edu/ai_law_lab/; "
                              "University of Wyoming legal research; gojian@uwyo.edu)")
 
+    # --- agentic workflow --------------------------------------------------
+    # An agent decides for itself when it has enough to answer; this is only a safety net.
+    # Its last step (or the step after its context fills) gets no tools, so it must answer.
+    agent_max_steps: int = 400
+    agent_context_tokens: int = 131072
+    agent_wrap_up_share: float = 0.85    # past this share of the context, the next step answers
+
     # --- network tools for agents -----------------------------------------
     # With "Allow network tools" an agent may search the online databases and read a result
     # or a public web page. Each read is saved into a library and embedded, so it occupies

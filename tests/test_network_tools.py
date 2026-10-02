@@ -206,3 +206,49 @@ def test_an_answer_with_too_few_sources_is_sent_back_for_more():
     assert should_continue(held) == "reason"
     assert should_continue({**held, "scratchpad": [{"role": "assistant", "content": "final"}]}) == END
     assert should_continue({**held, "iterations": 12}) == END                # never past the limit
+
+
+def test_the_last_step_has_no_tools_and_always_answers():
+    import asyncio
+    from types import SimpleNamespace
+
+    from ailawlab.graphs.agentic_workflow import FINAL_STEP, reason_node
+    from ailawlab.grounding import SourceLedger
+    from ailawlab.rag import Libraries
+    from ailawlab.router import LLMResult
+
+    offered: list = []
+    notes: list[str] = []
+
+    class Router:
+        async def chat(self, messages, tools=None, **kw):
+            offered.append(tools)
+            calls = [{"function": {"name": "search_libraries", "arguments": {"query": "q"}}}]
+            return LLMResult(text="" if tools else "The answer.", thinking=None, host="h",
+                             queue_wait_ms=0, eval_ms=1, prompt_tokens=120_000 if tools else 10,
+                             output_tokens=1, tool_calls=calls if tools else [])
+
+    async def note(message, **kw):
+        notes.append(message)
+        return 0
+
+    async def nothing(*a, **k):
+        return 0
+
+    tracer = SimpleNamespace(note=note, error=nothing, llm_call=nothing, record_citations=nothing)
+    registry = SimpleNamespace(schemas=lambda: [{"name": "search_libraries"}])
+    ctx = SimpleNamespace(router=Router(), tracer=tracer, libraries=Libraries(None, []),
+                          opt=lambda k, d=None: {"registry": registry, "ledger": SourceLedger()}.get(k, d))
+    config = {"configurable": {"ctx": ctx}}
+    state = {"task": "t", "scratchpad": [], "iterations": 0, "max_iterations": 400}
+
+    # An ordinary step offers tools; a prompt past the share of the context asks it to wrap up.
+    out = asyncio.run(reason_node(state, config))
+    assert offered[-1] and not out["done"] and out["wrap_up"]
+    # The next step offers none and is told to answer, so the run ends with an answer.
+    out = asyncio.run(reason_node({**state, **out, "scratchpad": []}, config))
+    assert offered[-1] is None and out["done"] and out["answer"] == "The answer."
+    assert any("context is nearly full" in n for n in notes)
+    # So does the step the limit falls on.
+    out = asyncio.run(reason_node({**state, "iterations": 399}, config))
+    assert offered[-1] is None and out["answer"] == "The answer." and "last step" in FINAL_STEP

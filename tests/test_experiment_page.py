@@ -85,7 +85,7 @@ def test_document_and_agentic_experiment_views():
                           library_documents={"test": 1}, now=NOW)
     assert doc["facts"] == [{"label": "Library", "value": "“test”", "note": "1 document in it"}]
     agent = experiment_view({"mode": "agentic_workflow", "config": {"max_iterations": "4"}}, [], now=NOW)
-    assert [f["value"] for f in agent["facts"]] == ["“default”", "4", "not allowed"]
+    assert [f["value"] for f in agent["facts"]] == ["“default”", "not allowed"]
     both = experiment_view({"mode": "agentic_workflow", "config": {"libraries": ["cases", "regs"]}}, [],
                            library_documents={"cases": 3, "regs": 2}, now=NOW)
     assert both["facts"][0] == {"label": "Libraries", "value": "“cases”, “regs”",

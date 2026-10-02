@@ -55,9 +55,8 @@ past results. Fill in the fields below.</p>
     <p class="hint">The agent's search covers every library ticked, and it can confine a search
        to one of them. Passages keep one number across all its searches, so each [n] in its
        answer traces to one passage, document and library version.</p>
-    <label for="aw_max_iter">Max tool iterations</label>
-    <input type="number" id="aw_max_iter" value="8" min="1" max="40" oninput="syncJSON()">
-    <p class="hint">How many think→act cycles before the agent must answer.</p>
+    <p class="hint">The agent decides for itself how many steps to take: it searches and reads
+       until it has enough to answer, and each run records the steps it took.</p>
     {{ network_opts("aw", libraries, "syncJSON()") }}
   </div>
 
@@ -242,7 +241,6 @@ function buildConfig() {
   }
   if (mode === 'agentic_workflow') {
     const config = {libraries: checkedLibraries('aw_libs'),
-                    max_iterations: int('aw_max_iter', 8),
                     allow_network: false};
     const net = netValues('aw');
     if (net.allow_network) {

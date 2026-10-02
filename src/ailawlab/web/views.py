@@ -260,8 +260,6 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
                             none="None: answers without retrieved authority")]
     if mode == "agentic_workflow":
         facts += [
-            _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
-                  "think-then-act cycles before it must answer"),
             *([_fact("Sources to read online", str(sources_wanted(config)),
                      "the most relevant results, read before answering")]
               if config.get("allow_network") else []),

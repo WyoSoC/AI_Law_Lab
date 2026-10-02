@@ -62,6 +62,7 @@ class AgenticState(TypedDict, total=False):
     sources: list[dict]         # every passage any search returned, by its run-wide number
     fetched: list[dict]         # documents read online and saved to a library
     nudges: int                 # answers held back for reading too few sources (at most two)
+    wrap_up: bool               # the context is nearly full: the next step must answer
     done: bool
     error: str
 

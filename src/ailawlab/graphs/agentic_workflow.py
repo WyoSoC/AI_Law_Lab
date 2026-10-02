@@ -14,6 +14,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from ..config import settings
 from ..grounding import cited_numbers, link_citations
 from ..network_tools import resolve_result_markers
 from .answer_style import ANSWER_STYLE, strip_letter_format
@@ -59,6 +60,10 @@ def _sources_line(names: list[str]) -> str:
 # characters (about 50k tokens), leaving the rest of the 128K window for the work.
 DOCUMENT_CHARS = 200_000
 
+FINAL_STEP = ("This is your last step: no more tools. Write your answer now from what you have "
+              "found, citing passages by number as before. Say plainly what you could not "
+              "establish.")
+
 
 def _task_message(state: AgenticState) -> str:
     """The task, with the document the run was given, if any."""
@@ -92,26 +97,36 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
                 {"role": "user", "content": _task_message(state)}]
     messages.extend(state.get("scratchpad", []))
 
+    max_iter = state.get("max_iterations", settings.agent_max_steps)
+    # The last step gets no tools, so the run always ends with an answer.
+    last_step = state.get("iterations", 0) + 1 >= max_iter or bool(state.get("wrap_up"))
+    if last_step:
+        messages.append({"role": "user", "content": FINAL_STEP})
+        await ctx.tracer.note(
+            "last step: " + ("the agent's context is nearly full" if state.get("wrap_up")
+                             else f"the {max_iter}-step limit is reached")
+            + "; it answers now from what it has found", node="reason")
+
     res = await ctx.router.chat(
         messages,
-        tools=registry.schemas(),
+        tools=None if last_step else registry.schemas(),
         think=True,
-        num_ctx=131072,
+        num_ctx=settings.agent_context_tokens,
         temperature=0.2,
         options={"num_predict": 1500},
     )
     event_id = await ctx.tracer.llm_call(res, node="reason", prompt_preview=state["task"])
 
     iterations = state.get("iterations", 0) + 1
-    max_iter = state.get("max_iterations", 8)
 
-    if res.tool_calls:
+    if res.tool_calls and not last_step:
         # Record the assistant's tool request verbatim so the model sees its own
         # call alongside the result on the next turn.
         return {
             "scratchpad": [{"role": "assistant", "content": res.text or "",
                             "tool_calls": res.tool_calls}],
             "iterations": iterations,
+            "wrap_up": res.prompt_tokens > settings.agent_context_tokens * settings.agent_wrap_up_share,
             "done": False,
         }
 
@@ -123,7 +138,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     # told what it has not read yet. At most twice, and never on the last step, so it cannot
     # loop; it may still answer with fewer if it says the rest are not relevant.
     nudges = state.get("nudges", 0)
-    if (answer and reader and len(reader.fetched) < reader.wanted and nudges < 2
+    if (answer and reader and len(reader.fetched) < reader.wanted and nudges < 2 and not last_step
             and iterations < max_iter - 1 and len(reader.fetched) < reader.max_reads):
         note = more_sources_note(reader)
         await ctx.tracer.note(f"answer held back: {len(reader.fetched)} of {reader.wanted} sources "
@@ -140,12 +155,15 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
         # Reasoning consumed the whole budget. Don't silently return "".
         await ctx.tracer.error("reason node truncated before producing an answer", node="reason")
         answer = "(no answer produced: token budget exhausted during reasoning)"
+    elif not answer and last_step:
+        await ctx.tracer.error("the last step produced no answer", node="reason")
+        answer = "(no answer produced on the last step)"
 
     out = {
         "scratchpad": [{"role": "assistant", "content": answer}],
         "answer": answer,
         "iterations": iterations,
-        "done": True if answer else iterations >= max_iter,
+        "done": True if answer else iterations >= max_iter or last_step,
     }
     if answer:
         ledger = ctx.opt("ledger")
@@ -200,7 +218,7 @@ async def act_node(state: AgenticState, config: RunnableConfig) -> dict:
 def should_continue(state: AgenticState) -> str:
     if state.get("done"):
         return END
-    if state.get("iterations", 0) >= state.get("max_iterations", 8):
+    if state.get("iterations", 0) >= state.get("max_iterations", settings.agent_max_steps):
         return END
     last = state["scratchpad"][-1] if state.get("scratchpad") else {}
     if last.get("tool_calls"):

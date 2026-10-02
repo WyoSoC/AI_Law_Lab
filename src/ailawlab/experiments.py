@@ -236,7 +236,9 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
             "scratchpad": [],
             "tool_results": [],
             "iterations": 0,
-            "max_iterations": int(merged.get("max_iterations", 8)),
+            # Not the experiment's: older experiments set a small number, and the agent
+            # is no longer limited by one. It stops when it has an answer.
+            "max_iterations": settings.agent_max_steps,
             "done": False,
         }
     if mode == "roleplay":
@@ -315,6 +317,8 @@ async def execute_run(run_id: str) -> dict:
         # recursion_limit must exceed 2x max_turns for roleplay's moderator/speak cycle. Read
         # it from the built state, since run inputs may override the experiment's max_turns.
         limit = int(state.get("max_turns", settings.default_max_turns)) * 3 + 20
+        if mode == "agentic_workflow":      # each step is a think node and an act node
+            limit = 2 * int(state["max_iterations"]) + 10
         final = await graph.ainvoke(
             state,
             config={"configurable": {"ctx": ctx}, "recursion_limit": limit},
