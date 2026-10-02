@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -74,9 +75,9 @@ PASSAGES CITED IN THE FINDINGS (cite them by these numbers)
 
 Write the answer to the research question:
 - Start with a direct answer in a few sentences.
-- Then a section per sub-question (a short heading in your own words), synthesizing rather than repeating the findings, and comparing where the brief asks for a comparison.
+- Then a section per sub-question, each under a short Markdown heading in your own words ("### ..."), synthesizing rather than repeating the findings, and comparing where the brief asks for a comparison.
 - Cite each claim with the passage numbers [n] above; cite only those numbers, and only for what the passage supports.
-- End with a section "What could not be established" listing the gaps honestly.
+- End with a section "### What could not be established" listing the gaps honestly.
 
 """ + ANSWER_STYLE
 
@@ -126,17 +127,30 @@ def _brief_message(state: AgenticState, sub: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
+# A passage's heading in a tool result: "[12] Title (library “x” v3), p. 4".
+_PASSAGE_HEAD = re.compile(r"^\[(\d+)\] (.+)$", re.MULTILINE)
+
+
+def passages_seen(text: str) -> dict[int, str]:
+    """The passages a tool result handed out, by number, with their headings. Pure."""
+    return {int(m.group(1)): m.group(2).strip()[:200] for m in _PASSAGE_HEAD.finditer(text or "")}
+
+
 def compact(messages: list[dict[str, Any]], keep: int) -> list[dict[str, Any]]:
     """The agent's conversation with all but the last `keep` tool results shortened to their
-    first line. The agent's own notes are kept whole. Pure."""
+    first line and the headings of the passages they gave (so their numbers stay citable).
+    The agent's own notes are kept whole. Pure."""
     tool_at = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
     shorten = set(tool_at[:-keep] if keep else tool_at)
     out = []
     for i, m in enumerate(messages):
         if i in shorten and len(m.get("content") or "") > 300:
             first = (m["content"].strip().splitlines() or [""])[0][:240]
-            m = {**m, "content": f"{first} … (shortened to save room; the passages keep their "
-                                 "numbers, and your notes say what they showed)"}
+            heads = [f"[{n}] {h}" for n, h in passages_seen(m["content"]).items()]
+            m = {**m, "content": f"{first} … (shortened to save room; your notes say what it showed"
+                                 + ("; its passages, still citable by number:\n" + "\n".join(heads)
+                                    if heads else ")")
+                                 + (")" if heads else "")}
         out.append(m)
     return out
 
@@ -160,7 +174,9 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
     current_agent.set(agent)        # this task's own copy: reads are traced to this agent
     system = RESEARCH_PROMPT.format(places=_places(ctx, sub, registry))
     convo: list[dict[str, Any]] = [{"role": "user", "content": _brief_message(state, sub)}]
-    steps, wrap_up, ended, nudged = 0, False, "finished", False
+    steps, wrap_up, ended, nudged, think = 0, False, "finished", False, True
+    seen: dict[int, str] = {}           # passages this agent was handed, by number
+    asked_to_cite = False
     await tracer.note(f"{agent} started: {sub['question']}", agent_id=agent, node="research")
     while True:
         steps += 1
@@ -174,9 +190,9 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
             messages.append({"role": "user", "content": FINAL_STEP})
         res = await ctx.router.chat(
             messages, model=settings.agent_model,
-            tools=None if last else registry.schemas(), think=True,
+            tools=None if last else registry.schemas(), think=think,
             num_ctx=settings.agent_context_tokens, temperature=0.2,
-            options={"num_predict": 4000}, timeout=900)
+            options={"num_predict": 8000 if last else 4000}, timeout=900)
         await tracer.llm_call(res, node="research", agent_id=agent, prompt_preview=sub["question"])
 
         if res.tool_calls and not last:
@@ -187,14 +203,29 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
                 await tracer.tool_call(name, args, output, node="act", agent_id=agent,
                                        eval_ms=elapsed_ms)
                 convo.append({"role": "tool", "content": output, "tool_name": name})
+                seen.update(passages_seen(output))
             wrap_up = res.prompt_tokens > settings.agent_context_tokens * settings.agent_wrap_up_share
             continue
 
         text, _ = strip_letter_format(res.text)
-        if not text.strip() and not last and not nudged:
-            # Thinking used the step without a reply: ask once for the findings.
+        if not text.strip() and not nudged:
+            # Thinking used the step without a reply: ask once more for the findings, and on
+            # the last step without thinking, so the reply is the findings themselves.
             nudged = True
-            convo.append({"role": "user", "content": "Report your findings now, with [n] citations."})
+            if last:
+                think = False
+            else:
+                convo.append({"role": "user", "content": "Report your findings now, with [n] citations."})
+            continue
+        if text.strip() and seen and not cited_numbers(text) and not asked_to_cite:
+            # A reply that cites nothing is either a plan said aloud ("let me search ...") or
+            # findings without their sources. Either way it goes back once, with the passages
+            # this agent has seen, so it continues or reports with citations.
+            asked_to_cite = True
+            convo.append({"role": "assistant", "content": text})
+            convo.append({"role": "user", "content": cite_note(seen, still_researching=not last)})
+            await tracer.note(f"{agent}: its report cited no passages; asked again", agent_id=agent,
+                              node="research")
             continue
         if not text.strip():
             text = "(no findings were reported)"
@@ -204,6 +235,15 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
                           node="research")
         return {"id": agent, "question": sub["question"], "text": text.strip(),
                 "steps": steps, "ended": ended}
+
+
+def cite_note(seen: dict[int, str], still_researching: bool) -> str:
+    """What an agent whose report cites no passages is told. Pure."""
+    index = "\n".join(f"[{n}] {h}" for n, h in list(seen.items())[:80])
+    return (("If you are still researching, continue with the tools. If you are done, give "
+             if still_researching else "Give ")
+            + "your findings again, citing the passage numbers [n] that support each claim. "
+            "Passages you have been given:\n" + index)
 
 
 async def research_node(state: AgenticState, config: RunnableConfig) -> dict:

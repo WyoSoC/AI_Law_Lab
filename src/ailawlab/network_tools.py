@@ -1,17 +1,19 @@
-"""Network tools for the agentic workflow: search public legal databases, read what is found.
+"""Outside sources for research agents: the legal databases, the open web, and reading.
 
-An agent that reads the web mid-run would normally leave nothing to check: the page can
-change or vanish, and a citation to it points nowhere fixed. So reading here is ingesting.
+Two permissions, each the researcher's to grant: the public legal databases (CourtListener,
+the Federal Register, the eCFR, govinfo, SEC EDGAR, through their own interfaces) and the open
+web (Brave Search, and reading any public page). An agent that reads the web mid-run would
+normally leave nothing to check: the page can change or vanish. So reading here is ingesting.
 Every document an agent reads is saved into a library (by default "Fetched: <experiment>"),
 which records a new version, and the passages handed back are that library's passages,
 numbered in the run's ledger like any other. A citation to something read online therefore
-names a document, a library and a version, exactly as a citation to a curated library does,
-and the document stays readable after the page changes.
+names a document, a library and a version, and the document stays readable after the page
+changes. A document is read once per run, however many agents ask for it.
 
 Searching is not reading: a search returns candidates ([W1], [W2], ...) with snippets, which
-are leads, not sources, and cannot be cited. Both tools need the network and are offered
-only to experiments that allow it (tools.ToolRegistry). Fetches of a bare address go through
-source_material.fetch_url, which refuses anything that is not a public http(s) host.
+are leads, not sources, and cannot be cited. Every search is kept with the results it gave.
+Fetches of a bare address go through source_material.fetch_url, which refuses anything that is
+not a public http(s) host.
 """
 from __future__ import annotations
 

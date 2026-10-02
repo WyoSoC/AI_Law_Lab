@@ -229,20 +229,60 @@ def test_the_experiment_page_shows_what_a_study_may_use():
     assert facts["Libraries"] == "“case_law”" and facts["Legal databases"] == "allowed"
 
 
-def test_older_tool_results_shrink_and_the_agents_notes_stay():
+def test_older_tool_results_shrink_but_keep_their_passage_numbers():
     from ailawlab.graphs.agentic_workflow import compact
 
-    long = "Read “A”.\n" + "passage text " * 50
+    long = ("Read “A” and saved it.\n\n[7] A v. B (library “x” v2), p. 3\n" + "passage text " * 30
+            + "\n\n[8] A v. B (library “x” v2), p. 4\nmore text")
     convo = [{"role": "user", "content": "brief"},
-             {"role": "assistant", "content": "note one [1]", "tool_calls": [{}]},
+             {"role": "assistant", "content": "note one [7]", "tool_calls": [{}]},
              {"role": "tool", "content": long},
-             {"role": "assistant", "content": "note two [2]", "tool_calls": [{}]},
-             {"role": "tool", "content": long},
+             {"role": "assistant", "content": "note two", "tool_calls": [{}]},
+             {"role": "tool", "content": "No results." + " " * 400},
              {"role": "tool", "content": "short"}]
     out = compact(convo, keep=1)
-    assert out[2]["content"].startswith("Read “A”. … (shortened") and out[4]["content"].startswith("Read “A”. … (shortened")
-    assert out[1]["content"] == "note one [1]" and out[5]["content"] == "short"
+    assert out[2]["content"] == ("Read “A” and saved it. … (shortened to save room; your notes say what it "
+                                 "showed; its passages, still citable by number:\n"
+                                 "[7] A v. B (library “x” v2), p. 3\n[8] A v. B (library “x” v2), p. 4)")
+    assert out[4]["content"].endswith("your notes say what it showed)")
+    assert out[1]["content"] == "note one [7]" and out[5]["content"] == "short"
     assert compact(convo, keep=3)[2]["content"] == long and convo[2]["content"] == long   # not changed in place
+
+
+def test_a_report_citing_nothing_goes_back_once_with_the_passages_seen():
+    from types import SimpleNamespace
+
+    from ailawlab.graphs.agentic_workflow import investigate
+    from ailawlab.router import LLMResult
+
+    replies = iter([
+        LLMResult(text="", thinking=None, host="h", queue_wait_ms=0, eval_ms=1, prompt_tokens=10,
+                  output_tokens=1, tool_calls=[{"function": {"name": "search_libraries", "arguments": {"query": "q"}}}]),
+        LLMResult(text="Let me search for circuit cases next.", thinking=None, host="h",
+                  queue_wait_ms=0, eval_ms=1, prompt_tokens=10, output_tokens=1),
+        LLMResult(text="The test has two parts [3].", thinking=None, host="h",
+                  queue_wait_ms=0, eval_ms=1, prompt_tokens=10, output_tokens=1)])
+    told: list[str] = []
+
+    class Router:
+        async def chat(self, messages, **kw):
+            told.append(messages[-1]["content"])
+            return next(replies)
+
+    async def nothing(*a, **k):
+        return 0
+
+    async def search(name, args):
+        return "[3] Smith v. Jones (library “cases” v1)\nTwo parts.", 1
+
+    registry = SimpleNamespace(schemas=lambda: [{}], names=lambda: ["search_libraries"], call=search)
+    opts = {"registry": registry, "should_stop": lambda: "", "reader": None}
+    ctx = SimpleNamespace(router=Router(), libraries=Libraries(None, []), opt=lambda k, d=None: opts.get(k, d),
+                          tracer=SimpleNamespace(note=nothing, error=nothing, llm_call=nothing, tool_call=nothing))
+    sub = {"id": "Q1", "question": "q", "look_in": []}
+    found = asyncio.run(investigate(ctx, {"plan": {"question": "s", "sub_questions": [sub]}}, sub))
+    assert "If you are still researching, continue" in told[-1] and "[3] Smith v. Jones" in told[-1]
+    assert found["text"] == "The test has two parts [3]." and found["steps"] == 3
 
 
 def test_a_research_agent_reports_findings_on_its_last_step_and_when_stopped():
@@ -291,6 +331,32 @@ def test_a_research_agent_reports_findings_on_its_last_step_and_when_stopped():
     assert offered[-1][1] == FINAL_STEP
     assert found == {"id": "Q1", "question": "What is 1+1?", "text": "Findings [1].",
                      "steps": 4, "ended": "time limit"}
+
+
+def test_an_empty_last_report_is_asked_for_again_without_thinking():
+    from types import SimpleNamespace
+
+    from ailawlab.graphs.agentic_workflow import investigate
+    from ailawlab.router import LLMResult
+
+    thought: list = []
+
+    class Router:
+        async def chat(self, messages, tools=None, think=None, **kw):
+            thought.append(think)
+            return LLMResult(text="" if think else "Findings [2].", thinking=None, host="h",
+                             queue_wait_ms=0, eval_ms=1, prompt_tokens=10, output_tokens=1)
+
+    async def nothing(*a, **k):
+        return 0
+
+    registry = SimpleNamespace(schemas=list, names=list)
+    opts = {"registry": registry, "should_stop": lambda: "stopped", "reader": None}
+    ctx = SimpleNamespace(router=Router(), tracer=SimpleNamespace(note=nothing, error=nothing, llm_call=nothing),
+                          libraries=Libraries(None, []), opt=lambda k, d=None: opts.get(k, d))
+    sub = {"id": "Q2", "question": "q", "look_in": []}
+    found = asyncio.run(investigate(ctx, {"plan": {"question": "s", "sub_questions": [sub]}}, sub))
+    assert thought == [True, False] and found["text"] == "Findings [2]." and found["ended"] == "stopped"
 
 
 def test_the_clock_says_when_and_why_research_must_end(monkeypatch):

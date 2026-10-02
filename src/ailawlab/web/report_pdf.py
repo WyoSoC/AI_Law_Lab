@@ -204,6 +204,36 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
         story.append(Paragraph(_plain(view.get("summary_title", "Summary")), st["h1"]))
         story += _blocks(parse(view["summary_md"]), st)
 
+    if view.get("plan"):
+        plan = view["plan"]
+        story.append(CondPageBreak(2 * inch))
+        story.append(Paragraph("Plan", st["h1"]))
+        if view.get("stopped"):
+            story.append(Paragraph(_plain("Research ended early ("
+                                          + ("stopped by the researcher" if view["stopped"] == "stopped"
+                                             else "time limit reached")
+                                          + "); the answer was written from what had been found."), st["small"]))
+        if view.get("brief"):
+            story.append(Paragraph("<b>Brief:</b> " + _plain(view["brief"]), st["body"]))
+        story.append(Paragraph("<b>Question:</b> " + _plain(plan.get("question", "")), st["body"]))
+        if plan.get("approach"):
+            story.append(Paragraph("<b>Approach:</b> " + _plain(plan["approach"]), st["body"]))
+        for sub in plan.get("sub_questions") or []:
+            story.append(Paragraph(f"<b>{_plain(sub.get('id', ''))}</b> " + _plain(sub.get("question", "")), st["body"]))
+        story.append(Paragraph(_plain(
+            "Libraries: " + (", ".join(plan.get("libraries") or []) or "none")
+            + " · legal databases " + ("allowed" if plan.get("use_databases") else "not allowed")
+            + " · open web " + ("allowed" if plan.get("use_web") else "not allowed")), st["small"]))
+    if view.get("findings"):
+        story.append(CondPageBreak(2 * inch))
+        story.append(Paragraph("Findings by sub-question", st["h1"]))
+        for f in view["findings"]:
+            story.append(Paragraph(f"<b>{_plain(f.get('id', ''))}</b> " + _plain(f.get("question", ""))
+                                   + f'<font color="{MUTED}" size="8">  {f.get("steps", 0)} steps'
+                                   + ("" if f.get("ended") == "finished" else f" · {_plain(f.get('ended', ''))}")
+                                   + "</font>", st["speaker"]))
+            story += _blocks(parse(f.get("text") or ""), st)
+
     if view.get("transcript") is not None and "transcript" in view:
         story.append(CondPageBreak(2.5 * inch))
         story.append(Paragraph("Scenario and cast", st["h1"]))
