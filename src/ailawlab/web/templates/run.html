@@ -31,6 +31,7 @@
 <nav class="jump" aria-label="On this page">
   {% if v.summary_html %}<a href="#summary">{{ v.summary_title }}</a>{% endif %}
   {% if v.transcript %}<a href="#transcript">Transcript</a>{% endif %}
+  {% if activity is not none %}<a href="#activity-head">Agent activity</a>{% endif %}
   {% if v.exhibits %}<a href="#exhibits">Exhibits</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
   {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
@@ -52,6 +53,27 @@
   <strong style="color:var(--bad)">Run failed</strong>
   <pre>{{ run.error }}</pre>
 </div>
+{% endif %}
+
+{% if activity is not none %}
+{% set live = run.status in ('running', 'pending') %}
+<h2 id="activity-head">Agent activity {% if live %}<span class="hint" style="font-weight:400">(live)</span>{% endif %}</h2>
+<details class="activity-wrap" {% if live or not run.result %}open{% endif %}>
+  <summary>How the agent worked: each step it took, what it decided and what came back</summary>
+  <div class="panel activity" id="activity" data-live="{{ 1 if live else 0 }}"
+       data-context="{{ context_tokens }}" data-wrap="{{ wrap_up_share }}" data-databases="{{ databases|tojson|forceescape }}">
+    <div class="activity-bar">
+      <strong data-step>No steps yet</strong>
+      <span class="activity-meta" data-elapsed></span>
+      <span class="activity-status" data-status></span>
+    </div>
+    <div class="ctx-meter" title="How full the agent's context is"><div class="ctx-fill"></div>
+      <div class="ctx-mark" style="left: {{ (wrap_up_share * 100)|round(1) }}%"></div></div>
+    <p class="hint" data-ctx>Context use appears after the first step. Past {{ (wrap_up_share * 100)|round|int }}%, the agent's next step answers.</p>
+    <ol class="activity-list"></ol>
+  </div>
+</details>
+<script type="application/json" id="activity-data">{{ activity|tojson }}</script>
 {% endif %}
 
 {% if v.summary_html %}
@@ -304,7 +326,7 @@
       {% if e.output_tokens %}<span>{{ e.output_tokens }} tok</span>{% endif %}
     </div>
     {% if e.payload.get('response') %}<div class="body">{{ e.payload['response'] }}</div>{% endif %}
-    {% if e.payload.get('tool') %}<div class="body"><strong>{{ e.payload['tool'] }}</strong>({{ e.payload.get('args') }}) → {{ e.payload.get('result','') }}</div>{% endif %}
+    {% if e.payload.get('tool') %}<div class="body"><strong>{{ e.payload['tool'] }}</strong>({{ e.payload.get('args') }}) → {% set r = e.payload.get('result','') %}{{ r[:1500] }}{% if r|length > 1500 %} … ({{ '{:,}'.format(r|length) }} characters in all{% if activity is not none %}: see Agent activity{% endif %}){% endif %}</div>{% endif %}
     {% if e.payload.get('query') %}<div class="body">query: {{ e.payload['query'] }}<br>{{ e.payload.get('hits')|length }} hits</div>{% endif %}
     {% if e.payload.get('message') %}<div class="body">{{ e.payload['message'] }}</div>{% endif %}
     {% if e.thinking %}<details><summary>reasoning</summary><div class="thinking">{{ e.thinking }}</div></details>{% endif %}
@@ -319,6 +341,7 @@
 
 {% endblock %}
 {% block scripts %}
+{% if activity is not none %}<script src="{{ prefix }}/static/agent_activity.js?v={{ asset_version }}"></script>{% endif %}
 <script>
   // Transcript: show or hide a speaker by clicking their chip; show private notes on demand.
   document.querySelectorAll('.speaker-chip').forEach(chip => chip.addEventListener('click', () => {
@@ -343,6 +366,7 @@
 
     es.addEventListener('trace', ev => {
       const e = JSON.parse(ev.data);
+      if (window.agentActivity) window.agentActivity.add(e);
       if (seen.has('#' + e.seq)) return;
       seen.add('#' + e.seq);
 
@@ -358,7 +382,7 @@
       let body = '';
       const p = e.payload || {};
       if (p.response) body = p.response;
-      else if (p.tool) body = `${p.tool} → ${(p.result || '')}`;
+      else if (p.tool) { const r = p.result || ''; body = `${p.tool} → ${r.slice(0, 1500)}${r.length > 1500 ? ` … (${r.length.toLocaleString()} characters in all)` : ''}`; }
       else if (p.query) body = `query: ${p.query}`;
       else if (p.message) body = p.message;
 
@@ -370,6 +394,7 @@
 
     es.addEventListener('done', ev => {
       es.close();
+      if (window.agentActivity) window.agentActivity.finish();
       // Reload once finished so metrics, citations, and the result render server-side.
       setTimeout(() => location.reload(), 400);
     });

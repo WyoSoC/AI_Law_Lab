@@ -683,3 +683,27 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .static-field { margin: .35rem 0 0; padding: .5rem 0; font-weight: 600; }
 .inline-form { display: inline-flex; gap: .35rem; align-items: center; margin: 0; }
 .inline-form select { width: auto; padding: .25rem .4rem; }
+
+/* ---------------------------------------------------------------- agent activity (run page) */
+.activity-wrap > summary { cursor: pointer; color: var(--muted); margin-bottom: .5rem; }
+.activity-bar { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; margin-bottom: .5rem; }
+.activity-status { color: var(--accent); font-weight: 550; }
+.activity-meta { color: var(--muted); font-size: .85rem; }
+.ctx-meter { position: relative; height: 8px; border-radius: 4px; background: var(--line); overflow: visible; }
+.ctx-fill { height: 100%; width: 0; border-radius: 4px; background: var(--accent); transition: width .4s; }
+.ctx-fill.near { background: var(--bad); }
+.ctx-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--bad); }
+.activity-list { list-style: none; padding: 0; margin: .8rem 0 0; display: grid; gap: .45rem; }
+.activity-list > li { padding: .45rem .65rem; border-radius: 6px; border-left: 3px solid var(--line); }
+.activity-step { background: var(--accent-soft); border-left-color: var(--accent) !important; }
+.activity-result { margin-left: 1.2rem; }
+.activity-note { margin-left: 1.2rem; color: var(--muted); font-size: .9rem; }
+.activity-note.bad { color: var(--bad); border-left-color: var(--bad) !important; }
+.activity-head-line { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; }
+.activity-num, .activity-tool { font-weight: 650; white-space: nowrap; }
+.activity-what { flex: 1 1 18rem; overflow-wrap: anywhere; }
+.activity-items { margin: .3rem 0 0 1.1rem; padding: 0; font-size: .88rem; }
+.activity-items .muted { color: var(--muted); list-style: none; }
+.activity-reasoning > summary { cursor: pointer; color: var(--muted); font-size: .85rem; margin-top: .25rem; }
+.activity-more { white-space: pre-wrap; font-size: .85rem; max-height: 22rem; overflow: auto;
+  padding: .5rem; margin-top: .3rem; border: 1px solid var(--line); border-radius: 6px; }

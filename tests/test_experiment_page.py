@@ -146,3 +146,16 @@ def test_the_pdf_report_builds_with_and_without_private_notes():
                                       "thinking": "hmm"}]}}
     plain, full = run_report(run, run_view(run)), run_report(run, run_view(run), True)
     assert plain.startswith(b"%PDF") and len(full) > len(plain)
+
+
+def test_activity_events_are_json_safe_and_keep_what_the_panel_reads():
+    import json
+
+    from ailawlab.web.views import activity_events
+
+    rows = [{"seq": 4, "event_type": "llm_call", "node": "reason", "eval_ms": 3138, "queue_wait_ms": 0,
+             "output_tokens": 120, "prompt_tokens": 1552, "thinking": "Read W1-W4.", "host": "spark3",
+             "payload": {"tool_calls": [{"function": {"name": "read_online"}}]}, "created_at": NOW}]
+    [e] = activity_events(rows)
+    assert e["created_at"] == NOW.isoformat() and e["prompt_tokens"] == 1552 and "host" not in e
+    assert json.loads(json.dumps(activity_events(rows)))[0]["thinking"] == "Read W1-W4."

@@ -382,6 +382,10 @@ async def run_detail(request: Request, run_id: str):
         "result_pretty": json.dumps(run["result"], indent=2) if run.get("result") else None,
         "citations": cites,
         "refs": await _references(cites),
+        "activity": views.activity_events(events) if run["mode"] == "agentic_workflow" else None,
+        "context_tokens": settings.agent_context_tokens,
+        "wrap_up_share": settings.agent_wrap_up_share,
+        "databases": {pid: p.name for pid, p in sources.PROVIDERS.items()},
     })
 
 
@@ -1102,7 +1106,7 @@ async def stream_run(run_id: str, request: Request):
                 break
             rows = await fetch_all(
                 "SELECT seq, event_type, node, agent_id, host, queue_wait_ms, eval_ms, "
-                "       output_tokens, payload FROM run_events "
+                "       output_tokens, prompt_tokens, thinking, created_at, payload FROM run_events "
                 "WHERE run_id=%s AND seq>%s ORDER BY seq",
                 (run_id, last_seq),
             )

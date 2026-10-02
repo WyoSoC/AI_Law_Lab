@@ -471,3 +471,23 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
             cast=[{**agent_view(a), "id": a.get("id")} for a in agents],
         )
     return view
+
+
+# ---------------------------------------------------------------- agent activity
+#
+# The run page follows an agentic run step by step (static/agent_activity.js). It gets the
+# events already written here and the rest from the trace stream, in the same shape.
+
+_ACTIVITY_FIELDS = ("seq", "event_type", "node", "queue_wait_ms", "eval_ms", "output_tokens",
+                    "prompt_tokens", "thinking", "payload")
+
+
+def activity_events(events: list[dict]) -> list[dict]:
+    """A run's trace events as the activity panel reads them: JSON-safe, nothing else. Pure."""
+    out = []
+    for e in events:
+        row = {k: e.get(k) for k in _ACTIVITY_FIELDS}
+        created = e.get("created_at")
+        row["created_at"] = created.isoformat() if hasattr(created, "isoformat") else created
+        out.append(row)
+    return out

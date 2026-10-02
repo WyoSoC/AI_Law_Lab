@@ -16,6 +16,8 @@ from .router import LLMResult
 
 log = logging.getLogger(__name__)
 
+TOOL_RESULT_CHARS = 50_000
+
 
 class Tracer:
     """Sequenced event writer for one run."""
@@ -102,7 +104,9 @@ class Tracer:
             node=node,
             agent_id=agent_id,
             eval_ms=eval_ms,
-            payload={"tool": name, "args": args, "result": str(result)[:4000]},
+            # What the agent was shown, kept whole for audit (several documents read at
+            # once run to tens of thousands of characters); only a runaway result is cut.
+            payload={"tool": name, "args": args, "result": str(result)[:TOOL_RESULT_CHARS]},
         )
 
     async def error(self, message: str, *, node: str | None = None,
