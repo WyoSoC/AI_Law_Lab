@@ -7,7 +7,7 @@
 
 <h1>New experiment</h1>
 <p class="sub">Configuration is snapshotted into every run, so later edits never rewrite
-past results. Fill in the fields below &mdash; no JSON required.</p>
+past results. Fill in the fields below.</p>
 
 <form method="post" action="{{ prefix }}/experiments" id="exp-form" onsubmit="return finalize()">
   <div class="panel">
@@ -65,11 +65,21 @@ past results. Fill in the fields below &mdash; no JSON required.</p>
        Everything it reads is saved to a library, so what it cites stays traceable to a
        document and version after the page changes.</p>
     <div id="aw_network_opts" hidden>
-      <label for="aw_fetch_library">Library to save what it reads</label>
-      <input type="text" id="aw_fetch_library" oninput="syncJSON()"
-             placeholder="Fetched: (this experiment's name)">
-      <p class="hint">Left empty, each experiment gets its own, named after it. Its documents are
-         searchable by the agent for the rest of the run, and by later runs.</p>
+      <label for="aw_fetch_pick">Library to save what it reads</label>
+      <div class="cast-toolbar">
+        <select id="aw_fetch_pick" onchange="showFetchNew(); syncJSON()">
+          <option value="">A library of its own: “Fetched: (this experiment's name)”</option>
+          {% for lib in libraries|rejectattr('hidden') %}<option value="{{ lib.name }}">{{ lib.name }} ({{ lib.documents }} document{{ '' if lib.documents == 1 else 's' }})</option>{% endfor %}
+          {% set tucked = libraries|selectattr('hidden')|list %}
+          {% if tucked %}<optgroup label="Hidden libraries">{% for lib in tucked %}<option value="{{ lib.name }}">{{ lib.name }}</option>{% endfor %}</optgroup>{% endif %}
+          <option value="__new__">+ New library…</option>
+        </select>
+        <input type="text" id="aw_fetch_new" placeholder="Name the new library" hidden oninput="syncJSON()">
+      </div>
+      <p class="hint">Choose an existing library to add what the agent reads to it, or keep a library
+         of its own. Each document read is added as a new version of that library, with its source
+         and the date it was read, and the agent can search it for the rest of the run. Tick the
+         same library above as well if the agent should also search what is already in it.</p>
     </div>
   </div>
 
@@ -241,6 +251,12 @@ function checkedLibraries(id) {
 }
 function int(id, d){ const n = parseInt(document.getElementById(id).value, 10); return isNaN(n) ? d : n; }
 
+function showFetchNew() {
+  const box = document.getElementById('aw_fetch_new');
+  box.hidden = val('aw_fetch_pick') !== '__new__';
+  if (!box.hidden) box.focus();
+}
+
 function showNetwork() {
   document.getElementById('aw_network_opts').hidden = !document.getElementById('aw_network').checked;
 }
@@ -259,8 +275,9 @@ function buildConfig() {
     const config = {libraries: checkedLibraries('aw_libs'),
                     max_iterations: int('aw_max_iter', 8),
                     allow_network: document.getElementById('aw_network').checked};
-    if (config.allow_network && val('aw_fetch_library').trim())
-      config.fetch_library = val('aw_fetch_library').trim();
+    const pick = val('aw_fetch_pick');
+    const fetchLib = pick === '__new__' ? val('aw_fetch_new').trim() : pick;
+    if (config.allow_network && fetchLib) config.fetch_library = fetchLib;
     return config;
   }
   if (mode === 'roleplay') {

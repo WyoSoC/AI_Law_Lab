@@ -41,6 +41,27 @@ def fetch_library_name(config: dict[str, Any], experiment_name: str) -> str:
     return " ".join(name.split())[:120]
 
 
+_W_MARK = re.compile(r"\[(W\d{1,3}(?:\s*,\s*W?\d{1,3})*)\]")
+
+
+def resolve_result_markers(text: str, numbers_for) -> tuple[str, list[int]]:
+    """An answer with search-result markers ([W2], [W1, W3]) turned into the passage numbers
+    of the documents read from them, which are what can be cited. Returns the text and the
+    result numbers cited that were never read (left as they are, to be recorded unsupported).
+    `numbers_for(n)` gives result n's passage numbers, or [] if it was not read. Pure."""
+    unread: list[int] = []
+
+    def swap(m: re.Match) -> str:
+        ns = [int(x.strip().lstrip("W")) for x in m.group(1).split(",")]
+        passages = [numbers_for(n)[0] for n in ns if numbers_for(n)]
+        unread.extend(n for n in ns if not numbers_for(n))
+        if not passages or len(passages) < len(ns):
+            return m.group(0)
+        return "[" + ", ".join(str(p) for p in dict.fromkeys(passages)) + "]"
+
+    return _W_MARK.sub(swap, text), unread
+
+
 class OnlineReader:
     """One run's searches and reads of public sources, and the library it saves them into.
 
@@ -56,6 +77,7 @@ class OnlineReader:
         self.max_reads = max_reads or settings.network_max_reads
         self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id, hit)
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
+        self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
 
     @staticmethod
     def databases() -> dict[str, str]:
@@ -97,11 +119,29 @@ class OnlineReader:
 
     # ------------------------------------------------------------------ reading
 
+    # Results one read_online call may take: enough to read the best few of a search at once.
+    PER_CALL = 5
+
     async def read(self, source: str, look_for: str = "") -> str:
+        """Read one or several sources: "W2", "W1, W3, W4", or a single address."""
+        source = (source or "").strip()
+        refs = ([source] if source.lower().startswith(("http://", "https://"))
+                else [r for r in re.split(r"[\s,;]+", source) if r])
+        if not refs:
+            return "ERROR: give a search result's number, like W2, or a web address."
+        out = [await self._read_one(ref, look_for) for ref in refs[:self.PER_CALL]]
+        if len(refs) > self.PER_CALL:
+            out.append(f"(Only the first {self.PER_CALL} were read; ask again for the rest.)")
+        return "\n\n".join(out)
+
+    def cite_numbers(self, n: int) -> list[int]:
+        """The passage numbers handed back when search result W<n> was read ([] if never read)."""
+        return self.read_hits.get(n, [])
+
+    async def _read_one(self, source: str, look_for: str = "") -> str:
         if len(self.fetched) >= self.max_reads:
             return (f"ERROR: this run has already read {self.max_reads} documents online, the "
                     "most it may. Work with what you have, or search the libraries.")
-        source = (source or "").strip()
         try:
             doc = await self._fetch(source)
         except LookupError as e:
@@ -118,6 +158,9 @@ class OnlineReader:
                   "provider": doc["metadata"].get("provider") or "web", "document_id": doc_id,
                   "corpus": self.library, "version": version}
         self.fetched.append(record)
+        numbers = self.ledger.number(passages)
+        if m := _HIT.match(source):
+            self.read_hits[int(m.group(1))] = numbers
         await self.tracer.note(f"read “{doc['title']}” online; "
                                + (f"the same text was already in “{self.library}”, so that copy "
                                   f"is used (v{version})" if reused
@@ -125,7 +168,7 @@ class OnlineReader:
         return (f"Read “{doc['title']}” and saved it to the library “{self.library}” "
                 f"(version {version}). The passages most relevant to "
                 f"“{look_for or doc['title']}”, which you can cite by number:\n\n"
-                + format_passages(passages, self.ledger.number(passages)))
+                + format_passages(passages, numbers))
 
     async def _fetch(self, source: str) -> dict[str, Any]:
         """The document behind a [W] search result or a public address."""

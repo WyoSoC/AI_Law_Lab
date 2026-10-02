@@ -128,3 +128,40 @@ def test_pickers_fold_hidden_libraries_away_unless_chosen():
     assert "case_law" in folded[0] and "test-regs" in folded[0]     # chosen stays in view
     assert 'value="test"' in folded[1] and "Hidden libraries (1)" in folded[1]
     assert "<details" not in str(macro("p", libs[:1], []))
+
+
+def test_search_result_markers_become_the_passages_read_from_them():
+    from ailawlab.network_tools import resolve_result_markers
+
+    read = {2: [5, 6], 4: [9]}
+    text, unread = resolve_result_markers(
+        "The best-interests standard governs [W2]. Abandonment is analyzed too [W2, W4]. "
+        "A third case agrees [W7]. Ordinary [3] stays.", lambda n: read.get(n, []))
+    assert text == ("The best-interests standard governs [5]. Abandonment is analyzed too [5, 9]. "
+                    "A third case agrees [W7]. Ordinary [3] stays.")
+    assert unread == [7]                                     # cited, never read: unsupported
+
+
+def test_several_results_are_read_in_one_call(monkeypatch):
+    calls = []
+
+    async def fake_one(self, ref, look_for=""):
+        calls.append(ref)
+        return f"read {ref}"
+
+    monkeypatch.setattr(OnlineReader, "_read_one", fake_one)
+    r = reader()
+    assert asyncio.run(r.read("W1, W3 W4")) == "read W1\n\nread W3\n\nread W4"
+    assert calls == ["W1", "W3", "W4"]
+    out = asyncio.run(r.read(", ".join(f"W{i}" for i in range(1, 8))))
+    assert out.count("read W") == OnlineReader.PER_CALL and "Only the first 5" in out
+    calls.clear()
+    asyncio.run(r.read("https://example.org/a, b"))           # one address, not split
+    assert calls == ["https://example.org/a, b"]
+
+
+def test_the_agent_is_asked_for_several_sources_and_never_a_w_number():
+    from ailawlab.tools import online_tools
+
+    [_, read_tool] = online_tools(reader())
+    assert "W1, W3, W4" in read_tool.description and "never cite a W number" in read_tool.description

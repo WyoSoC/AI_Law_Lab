@@ -263,8 +263,8 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
                   "think-then-act cycles before it must answer"),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
-                  (f"searches online databases and reads pages; saves what it reads to "
-                   f"“{fetch_library_name(config, str(exp.get('name') or ''))}”")
+                  (f"searches online databases and reads several sources; adds what it reads "
+                   f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")
                   if config.get("allow_network") else "works from its libraries only"),
         ]
     view.update(facts=facts, libraries=libraries, launch_defaults={"libraries": libraries})

@@ -15,6 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from ..grounding import cited_numbers, link_citations
+from ..network_tools import resolve_result_markers
 from .answer_style import ANSWER_STYLE, strip_letter_format
 from .state import AgenticState, ctx_from
 
@@ -73,9 +74,13 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
                else "You have no library of legal sources yet.")
     if reader:
         sources += (" You may also search public legal databases online (search_online) and "
-                    "read a result or a public web page (read_online). What you read is saved "
+                    "read results or a public web page (read_online). What you read is saved "
                     f"to the library “{reader.library}” and comes back as numbered passages "
-                    "you cite like any other; search results themselves are not sources.")
+                    "you cite like any other. Search results themselves are not sources: never "
+                    "cite a [W] number. For a research question, draw on several independent "
+                    "sources: after searching, read the three to five most relevant results "
+                    "(read_online takes several at once, e.g. W1, W3, W4) before answering, "
+                    "unless fewer are relevant.")
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(sources=sources)},
                 {"role": "user", "content": _task_message(state)}]
     messages.extend(state.get("scratchpad", []))
@@ -119,9 +124,24 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
         "done": True if answer else iterations >= max_iter,
     }
     if answer:
-        # [n] markers resolve through the run-wide numbering the search tool handed out.
         ledger = ctx.opt("ledger")
-        citations = link_citations(answer, ledger.get, context="Answer")
+        unread_cited: list[int] = []
+        if reader:
+            # A model may cite a search result ([W2]) instead of the passages it read from it;
+            # those become the read document's passage numbers, and a result it never read
+            # is recorded as unsupported.
+            resolved, unread_cited = resolve_result_markers(answer, reader.cite_numbers)
+            if resolved != answer:
+                await ctx.tracer.note("search-result markers in the answer ([W…]) were turned into "
+                                      "the passage numbers of the documents read from them", node="reason")
+                answer = resolved
+                out["answer"] = answer
+                out["scratchpad"] = [{"role": "assistant", "content": answer}]
+        # [n] markers resolve through the run-wide numbering the search tool handed out.
+        citations = link_citations(answer, ledger.get, context="Answer") + [
+            {"quoted_text": f"[W{n}]", "source_label": None, "chunk_id": None, "document_id": None,
+             "corpus": None, "corpus_version": None, "similarity": None, "verdict": "unsupported",
+             "context": "Answer (a search result that was never read)"} for n in dict.fromkeys(unread_cited)]
         await ctx.tracer.record_citations(event_id, citations)
         out.update(citations=citations, sources=ledger.sources(cited_numbers(answer)),
                    fetched=list(ctx.opt("reader").fetched) if ctx.opt("reader") else [])

@@ -190,14 +190,14 @@ def online_tools(reader: OnlineReader) -> list[Tool]:
                  "required": ["query"]},
              fn=search_online, requires_network=True),
         Tool(name="read_online",
-             description=(f"Read a search result (by its number, e.g. W2) or a public web "
-                          f"address. The document is saved to the library “{reader.library}” "
-                          "and the passages most relevant to `look_for` come back numbered, to "
-                          "cite as [n] like any library passage. At most "
-                          f"{reader.max_reads} reads per task."),
+             description=(f"Read search results (by number: W2, or several at once: W1, W3, W4) "
+                          f"or a public web address. Each document is saved to the library "
+                          f"“{reader.library}” and the passages most relevant to `look_for` come "
+                          "back numbered, to cite as [n] like any library passage (never cite a "
+                          f"W number). Up to {reader.PER_CALL} per call, {reader.max_reads} per task."),
              parameters={"type": "object", "properties": {
                  "source": {"type": "string",
-                            "description": "A result number such as W2, or an https:// address."},
+                            "description": "Result numbers such as W2 or W1, W3, W4, or one https:// address."},
                  "look_for": {"type": "string",
                               "description": "What to find in it; picks which passages come back."}},
                  "required": ["source"]},
