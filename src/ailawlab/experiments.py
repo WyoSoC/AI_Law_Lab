@@ -292,21 +292,21 @@ async def execute_run(run_id: str) -> dict:
             ledger = SourceLedger()
             settings_ = {**config, **inputs}     # a run's own choices win over the experiment's
             allow = bool(settings_.get("allow_network", False))
-            pages = given_pages(settings_)
+            # Web pages given to read are part of the network tools: off, none are read.
+            pages = given_pages(settings_) if allow else []
             reader = None
-            if allow or pages:
+            if allow:
                 save_to = fetch_library_name(settings_, run["experiment_name"])
                 reader = OnlineReader(router, libraries, ledger, tracer, run_id, save_to,
                                       added_by=run.get("launched_by"),
-                                      wanted=sources_wanted(settings_), online=allow)
+                                      wanted=sources_wanted(settings_))
                 row = await fetch_one("SELECT count(*) AS n FROM documents "
                                       "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
                 held = int(row["n"]) if row else 0
                 where = (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
                          else f"a new library, “{save_to}”, created with the first document read")
                 await tracer.note(
-                    (f"network tools on: reads up to {reader.wanted} sources online" if allow
-                     else "network tools off: the agent cannot search or read online itself")
+                    f"network tools on: reads up to {reader.wanted} sources online"
                     + (f"; {len(pages)} web page{'' if len(pages) == 1 else 's'} given to read first"
                        if pages else "") + f". What is read is added to {where}")
             ctx.config = {**config, "ledger": ledger, "reader": reader, "registry": default_registry(

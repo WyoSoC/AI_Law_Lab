@@ -267,7 +267,6 @@ def test_pages_given_are_read_first_and_never_count_against_the_agent():
     import asyncio
 
     r = reader(wanted=2)
-    r.online = False
 
     async def fake_read(source, look_for="", budget=True):
         if "broken" in source:

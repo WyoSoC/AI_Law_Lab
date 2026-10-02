@@ -102,11 +102,17 @@ def test_document_and_agentic_experiment_views():
                                          "fetch_library": "jurisprudence",
                                          "own_library": "Fetched: Treaties"}
     given = experiment_view({"name": "Treaties", "mode": "agentic_workflow",
-                             "config": {"web_pages": ["https://a.gov/x", "https://a.gov/y"]}}, [], now=NOW)
+                             "config": {"allow_network": True, "libraries": [],
+                                        "web_pages": ["https://a.gov/x", "https://a.gov/y"]}}, [], now=NOW)
     assert given["launch_defaults"]["web_pages"] == ["https://a.gov/x", "https://a.gov/y"]
     [pages] = [f for f in given["facts"] if f["label"] == "Web pages to read"]
     assert pages["value"] == "2" and pages["note"].endswith(": a.gov")
-    assert given["facts"][-1]["note"] == "works from its libraries and the pages given"
+    assert given["facts"][0]["value"] == "None: works from what it reads online"
+    # Without network tools, pages stored with the experiment are not read and not shown.
+    off = experiment_view({"mode": "agentic_workflow",
+                           "config": {"web_pages": ["https://a.gov/x"]}}, [], now=NOW)
+    assert "Web pages to read" not in [f["label"] for f in off["facts"]]
+    assert off["facts"][-1]["note"] == "works from its libraries only"
     doc_only = experiment_view({"mode": "document_analysis", "config": {}}, [], now=NOW)
     assert "allow_network" not in doc_only["launch_defaults"]
     none = experiment_view({"mode": "document_analysis", "config": {"libraries": []}}, [], now=NOW)

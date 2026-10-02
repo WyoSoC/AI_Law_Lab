@@ -91,10 +91,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     names = ctx.libraries.searchable()
     sources = (_sources_line(names) if names or not reader
                else "You have no library of legal sources yet.")
-    if reader and reader.given_read and not reader.online:
-        sources += (f" The web pages the researcher gave you were read and saved to the library "
-                    f"“{reader.library}”; their passages are with your task, cited by number.")
-    if reader and reader.online:
+    if reader:
         sources += (" You may also search public legal databases online (search_online) and "
                     "read results or a public web page (read_online). What you read is saved "
                     f"to the library “{reader.library}” and comes back as numbered passages "
@@ -145,7 +142,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     # told what it has not read yet. At most twice, and never on the last step, so it cannot
     # loop; it may still answer with fewer if it says the rest are not relevant.
     nudges = state.get("nudges", 0)
-    if (answer and reader and reader.online and reader.agent_reads < reader.wanted and nudges < 2
+    if (answer and reader and reader.agent_reads < reader.wanted and nudges < 2
             and not last_step and iterations < max_iter - 1 and reader.agent_reads < reader.max_reads):
         note = more_sources_note(reader)
         await ctx.tracer.note(f"answer held back: {reader.agent_reads} of {reader.wanted} sources "

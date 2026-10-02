@@ -94,7 +94,7 @@ class OnlineReader:
 
     def __init__(self, router: LLMRouter, libraries: Libraries, ledger: SourceLedger, tracer,
                  run_id: str, library: str, added_by: Any = None,
-                 max_reads: int | None = None, wanted: int | None = None, online: bool = True):
+                 max_reads: int | None = None, wanted: int | None = None):
         self.router, self.libraries, self.ledger, self.tracer = router, libraries, ledger, tracer
         self.run_id, self.library, self.added_by = run_id, library, added_by
         # The agent is asked for `wanted` sources; its budget leaves room for two that turn out
@@ -104,9 +104,7 @@ class OnlineReader:
         self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id, hit)
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
         self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
-        # Whether the agent may search and read online itself; without, the reader only
-        # reads the pages the run was given, which never count against the agent's sources.
-        self.online = online
+        # Pages the run was given are read first and never count against the agent's sources.
         self.given_read = 0
 
     @property

@@ -1,6 +1,7 @@
 {#- What an agentic run may read online, shared by the builder (prefix "aw") and the launch
-    form (prefix "net"): network tools, web pages given to read first, and the library what
-    is read is saved to (shown when either will read anything). The save library is typed into one box that looks up existing
+    form (prefix "net"): network tools and, only when they are allowed, the number of sources,
+    web pages given to read first, and the library what is read is saved to. The save
+    library is typed into one box that looks up existing
     libraries as you type; a name that matches none starts a new library. -#}
 {% macro network_opts(p, libraries, on_change, allowed=False, sources=5, fetch="", own_name="", run_only=False, pages=[]) %}
 <label class="check"><input type="checkbox" id="{{ p }}_network" {% if allowed %}checked{% endif %}
@@ -18,15 +19,13 @@
   <p class="hint">How many of the most relevant results the agent reads before answering (1 to 20).
      It reads fewer only if fewer are relevant, and may read two more to replace any that turn out
      to be unreadable. Each takes a few seconds to read and add.</p>
-</div>
-<label for="{{ p }}_pages">Web pages to read</label>
-<textarea id="{{ p }}_pages" class="short" spellcheck="false" oninput="netShow('{{ p }}'); {{ on_change }}"
-          placeholder="https://… (one address per line)">{{ pages|join('\n') }}</textarea>
-<p class="hint">Public pages the agent should work from: one address per line, up to 10. They are
-   read and saved before its first step, with or without network tools, so it has them whatever
-   it decides and cites them like any other source.{% if run_only %} Starts as the experiment's
-   pages; changes apply to this run only.{% endif %}</p>
-<div id="{{ p }}_save" {% if not (allowed or pages) %}hidden{% endif %}>
+  <label for="{{ p }}_pages">Web pages to read</label>
+  <textarea id="{{ p }}_pages" class="short" spellcheck="false" oninput="{{ on_change }}"
+            placeholder="https://… (one address per line)">{{ pages|join('\n') }}</textarea>
+  <p class="hint">Public pages the agent should work from: one address per line, up to 10. They are
+   read and saved before its first step, so it has them whatever
+   it decides and cites them like any other source. They do not count toward the sources above.{% if run_only %}
+   Starts as the experiment's pages; changes apply to this run only.{% endif %}</p>
   <label for="{{ p }}_fetch">Library to save what it reads</label>
   <input type="text" id="{{ p }}_fetch" list="{{ p }}_fetch_list" value="{{ fetch }}" autocomplete="off"
          data-own="{{ own_name }}" placeholder="Type to find a library, or name a new one"

@@ -3,7 +3,6 @@
 function netShow(p) {
   const allowed = document.getElementById(`${p}_network`).checked;
   document.getElementById(`${p}_network_opts`).hidden = !allowed;
-  document.getElementById(`${p}_save`).hidden = !(allowed || netPages(p).length);
   netStatus(p);
 }
 
@@ -40,6 +39,6 @@ function netValues(p) {
   const n = parseInt(document.getElementById(`${p}_sources`).value, 10);
   return {allow_network: allowed,
           network_sources: Math.max(1, Math.min(20, isNaN(n) ? 5 : n)),
-          web_pages: netPages(p),
+          web_pages: allowed ? netPages(p) : [],
           fetch_library: netFetchName(p)};
 }

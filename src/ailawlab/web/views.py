@@ -257,10 +257,10 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         )
         return view
 
-    pages = given_pages(config) if mode == "agentic_workflow" else []
+    pages = given_pages(config) if mode == "agentic_workflow" and config.get("allow_network") else []
     facts = [libraries_fact(libraries, library_documents,
-                            none="None: works from the web pages given" if pages
-                            else "None: answers without retrieved authority")]
+                            none="None: works from what it reads online" if config.get("allow_network")
+                            and mode == "agentic_workflow" else "None: answers without retrieved authority")]
     if mode == "agentic_workflow":
         saved_to = fetch_library_name(config, str(exp.get("name") or ""))
         facts += [
@@ -275,7 +275,7 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
                   (f"searches online databases and reads several sources; adds what it reads "
                    f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")
                   if config.get("allow_network")
-                  else "works from its libraries" + (" and the pages given" if pages else " only")),
+                  else "works from its libraries only"),
         ]
     defaults: dict[str, Any] = {"libraries": libraries}
     if mode == "agentic_workflow":
