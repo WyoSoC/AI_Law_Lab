@@ -174,9 +174,11 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
     current_agent.set(agent)        # this task's own copy: reads are traced to this agent
     system = RESEARCH_PROMPT.format(places=_places(ctx, sub, registry))
     convo: list[dict[str, Any]] = [{"role": "user", "content": _brief_message(state, sub)}]
-    steps, wrap_up, ended, nudged, think = 0, False, "finished", False, True
+    steps, wrap_up, ended, nudged = 0, False, "finished", False
+    write_now = False                   # the next reply is writing, not research: no thinking
     seen: dict[int, str] = {}           # passages this agent was handed, by number
     asked_to_cite = False
+    earlier = ""                        # findings it gave before being asked to cite them
     await tracer.note(f"{agent} started: {sub['question']}", agent_id=agent, node="research")
     while True:
         steps += 1
@@ -190,10 +192,11 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
             messages.append({"role": "user", "content": FINAL_STEP})
         res = await ctx.router.chat(
             messages, model=settings.agent_model,
-            tools=None if last else registry.schemas(), think=think,
+            tools=None if last else registry.schemas(), think=not write_now,
             num_ctx=settings.agent_context_tokens, temperature=0.2,
             options={"num_predict": 8000 if last else 4000}, timeout=900)
         await tracer.llm_call(res, node="research", agent_id=agent, prompt_preview=sub["question"])
+        write_now = False
 
         if res.tool_calls and not last:
             convo.append({"role": "assistant", "content": res.text or "", "tool_calls": res.tool_calls})
@@ -209,12 +212,11 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
 
         text, _ = strip_letter_format(res.text)
         if not text.strip() and not nudged:
-            # Thinking used the step without a reply: ask once more for the findings, and on
-            # the last step without thinking, so the reply is the findings themselves.
+            # Thinking used the step without a reply: ask once more for the findings, without
+            # thinking, so the reply is the findings themselves.
             nudged = True
-            if last:
-                think = False
-            else:
+            write_now = True
+            if not last:
                 convo.append({"role": "user", "content": "Report your findings now, with [n] citations."})
             continue
         if text.strip() and seen and not cited_numbers(text) and not asked_to_cite:
@@ -222,11 +224,17 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
             # findings without their sources. Either way it goes back once, with the passages
             # this agent has seen, so it continues or reports with citations.
             asked_to_cite = True
+            write_now = True
+            earlier = text
             convo.append({"role": "assistant", "content": text})
             convo.append({"role": "user", "content": cite_note(seen, still_researching=not last)})
             await tracer.note(f"{agent}: its report cited no passages; asked again", agent_id=agent,
                               node="research")
             continue
+        if not text.strip() and earlier:
+            text = earlier
+            await tracer.note(f"{agent}: kept its earlier findings (the rewrite came back empty)",
+                              agent_id=agent, node="research")
         if not text.strip():
             text = "(no findings were reported)"
             await tracer.error(f"{agent} reported no findings", agent_id=agent, node="research")

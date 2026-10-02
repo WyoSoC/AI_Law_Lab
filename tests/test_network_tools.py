@@ -359,6 +359,42 @@ def test_an_empty_last_report_is_asked_for_again_without_thinking():
     assert thought == [True, False] and found["text"] == "Findings [2]." and found["ended"] == "stopped"
 
 
+def test_findings_are_kept_when_their_rewrite_comes_back_empty():
+    from types import SimpleNamespace
+
+    from ailawlab.graphs.agentic_workflow import investigate
+    from ailawlab.router import LLMResult
+
+    def reply(text="", calls=None):
+        return LLMResult(text=text, thinking=None, host="h", queue_wait_ms=0, eval_ms=1,
+                         prompt_tokens=10, output_tokens=1, tool_calls=calls or [])
+
+    replies = iter([reply(calls=[{"function": {"name": "search_libraries", "arguments": {}}}]),
+                    reply("Smith v. Jones sets a two-part test."), reply(""), reply("")])
+    thought: list = []
+
+    class Router:
+        async def chat(self, messages, think=None, **kw):
+            thought.append(think)
+            return next(replies)
+
+    async def nothing(*a, **k):
+        return 0
+
+    async def search(name, args):
+        return "[3] Smith v. Jones (library “cases” v1)\nTwo parts.", 1
+
+    registry = SimpleNamespace(schemas=lambda: [{}], names=lambda: ["search_libraries"], call=search)
+    opts = {"registry": registry, "should_stop": lambda: "", "reader": None}
+    ctx = SimpleNamespace(router=Router(), libraries=Libraries(None, []), opt=lambda k, d=None: opts.get(k, d),
+                          tracer=SimpleNamespace(note=nothing, error=nothing, llm_call=nothing, tool_call=nothing))
+    sub = {"id": "Q1", "question": "q", "look_in": []}
+    found = asyncio.run(investigate(ctx, {"plan": {"question": "s", "sub_questions": [sub]}}, sub))
+    # Asked to cite, it is not left thinking until the reply runs out; and nothing is lost.
+    assert thought == [True, True, False, False]
+    assert found["text"] == "Smith v. Jones sets a two-part test."
+
+
 def test_the_clock_says_when_and_why_research_must_end(monkeypatch):
     from ailawlab.graphs import agentic_workflow
 
@@ -386,3 +422,25 @@ def test_pages_named_in_the_brief_are_read_first_and_marked():
     text = asyncio.run(r.read_given(["https://a.gov/x", "https://broken.example/", "https://a.gov/y"], "q"))
     assert "ERROR: could not read https://broken.example/" in text and text.count("Read “") == 2
     assert all(f.get("given") for f in r.fetched) and len(r.fetched) == 2
+
+
+def test_a_database_that_limits_requests_is_left_alone_for_a_while(monkeypatch):
+    from ailawlab import network_tools
+
+    monkeypatch.setattr(network_tools, "DATABASE_SPACING_S", 0.0)
+    monkeypatch.setattr(network_tools, "_db_cooling", {})
+    calls = []
+
+    async def fake_search(pid, query, limit):
+        calls.append(pid)
+        raise RuntimeError("CourtListener returned HTTP 429")
+
+    monkeypatch.setattr(OnlineReader, "databases", staticmethod(lambda: {"courtlistener": "CourtListener"}))
+    monkeypatch.setattr(sources, "search", fake_search)
+    r = reader()
+    first = asyncio.run(r.search("arbitration"))
+    assert "CourtListener could not be searched: it is limiting requests" in first
+    again = asyncio.run(r.search("arbitration"))
+    assert calls == ["courtlistener"] and "not used for another" in again       # not asked again
+    r.hits = [("courtlistener", {"ref": "1", "title": "Case"})]
+    assert "is limiting requests; try W1 again" in asyncio.run(r.read("W1"))

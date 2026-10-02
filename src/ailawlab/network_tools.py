@@ -156,6 +156,42 @@ def strip_tags(text: str) -> str:
     return html.unescape(_TAG.sub("", text or "")).strip()
 
 
+# Research agents call the databases far more often than a person on the Legal Sources page,
+# and several agents at once. Each database's requests from agents are spaced out, and one
+# that answers "too many requests" (429) is left alone for a while, across all runs.
+DATABASE_SPACING_S = 1.0
+DATABASE_COOLDOWN_S = 180.0
+_db_locks: dict[str, asyncio.Lock] = {}
+_db_last: dict[str, float] = {}
+_db_cooling: dict[str, float] = {}
+
+
+def cooling_for(pid: str) -> float:
+    """Seconds left before database `pid` is used again (0 if it can be used now)."""
+    return max(0.0, _db_cooling.get(pid, 0.0) - time.monotonic())
+
+
+def _rate_limited(error: BaseException) -> bool:
+    return "429" in str(error) or "Too Many Requests" in str(error)
+
+
+async def paced(pid: str, call):
+    """Run one request to database `pid`, spaced from the last and noting a 429."""
+    lock = _db_locks.setdefault(pid, asyncio.Lock())
+    async with lock:
+        wait = DATABASE_SPACING_S - (time.monotonic() - _db_last.get(pid, 0.0))
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _db_last[pid] = time.monotonic()
+    try:
+        return await call()
+    except Exception as e:
+        if _rate_limited(e):
+            _db_cooling[pid] = time.monotonic() + DATABASE_COOLDOWN_S
+            log.warning("%s is limiting requests; agents leave it alone for %.0f s", pid, DATABASE_COOLDOWN_S)
+        raise
+
+
 class OnlineReader:
     """One run's searches and reads of outside sources, and the library it saves them into.
 
@@ -216,9 +252,15 @@ class OnlineReader:
         targets = [database] if database else list(dbs)
 
         async def one(pid: str) -> tuple[str, list | str]:
+            if (wait := cooling_for(pid)):
+                return pid, (f"it is limiting requests, so it is not used for another {wait:.0f} s; "
+                             "search the other databases or the web meanwhile")
             try:
-                return pid, await sources.search(pid, query, settings.network_hits_per_source)
+                return pid, await paced(pid, lambda: sources.search(pid, query, settings.network_hits_per_source))
             except Exception as e:  # noqa: BLE001 - one database down must not sink the rest
+                if _rate_limited(e):
+                    return pid, ("it is limiting requests, so it is not used for the next few "
+                                 "minutes; search the other databases or the web meanwhile")
                 return pid, f"{type(e).__name__}: {e}"
 
         lines: list[str] = []
@@ -357,7 +399,10 @@ class OnlineReader:
                 return await self._fetch(hit["url"])
             if not self.allow_databases:
                 raise LookupError("reading the legal databases is not allowed in this run.")
-            fetched = await sources.get_provider(pid).fetch(hit["ref"], hit)
+            if (wait := cooling_for(pid)):
+                raise LookupError(f"{self.databases().get(pid, pid)} is limiting requests; try W{n} "
+                                  f"again in {wait:.0f} s, or read another result meanwhile.")
+            fetched = await paced(pid, lambda: sources.get_provider(pid).fetch(hit["ref"], hit))
             return {"title": fetched.title, "text": fetched.text, "source_uri": fetched.source_uri,
                     "doc_type": fetched.doc_type, "metadata": dict(fetched.metadata)}
         if not source.lower().startswith(("http://", "https://")):
