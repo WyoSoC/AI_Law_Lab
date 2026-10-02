@@ -205,3 +205,19 @@ def test_the_pdf_report_lists_references():
     without = run_report(run, run_view(run))
     with_refs = run_report(run, {**run_view(run), "refs": refs})
     assert with_refs.startswith(b"%PDF") and len(with_refs) > len(without)
+
+
+def test_renaming_a_library_updates_every_place_an_experiment_names_it():
+    from ailawlab.rag import rename_in_config
+
+    config = {"libraries": ["cases", "old lib"], "corpus": "old lib", "fetch_library": "old lib",
+              "agents": [{"id": "a", "libraries": ["old lib", "mine"]}, {"id": "b"}], "x": 1}
+    new, changed = rename_in_config(config, "old lib", "New Lib")
+    assert changed and new == {"libraries": ["cases", "New Lib"], "corpus": "New Lib",
+                               "fetch_library": "New Lib",
+                               "agents": [{"id": "a", "libraries": ["New Lib", "mine"]}, {"id": "b"}],
+                               "x": 1}
+    assert config["libraries"] == ["cases", "old lib"]                     # the original is untouched
+    assert rename_in_config({"libraries": ["cases"]}, "old lib", "n") == ({"libraries": ["cases"]}, False)
+    # Renaming into a name the experiment already lists leaves it once.
+    assert rename_in_config({"libraries": ["a", "b"]}, "a", "b")[0] == {"libraries": ["b"]}

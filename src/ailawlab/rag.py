@@ -506,12 +506,112 @@ async def document_chunks(document_id: int) -> list[dict]:
 
 
 async def check_idle(name: str) -> None:
+    """Refuse to change a library while a run searches it or a crawl is adding to it."""
     row = await fetch_one(
         "SELECT COUNT(*) AS n FROM run_libraries rl JOIN runs r ON r.id = rl.run_id "
         "WHERE r.status IN ('pending', 'running') AND rl.corpus = %s", (name,))
     if row and row["n"]:
         raise CorpusBusy(f"A run that retrieves from “{name}” is in progress. "
                          "Wait for it to finish first.")
+    row = await fetch_one("SELECT COUNT(*) AS n FROM crawls WHERE corpus=%s "
+                          "AND status IN ('running', 'stopping')", (name,))
+    if row and row["n"]:
+        raise CorpusBusy(f"A crawl is adding documents to “{name}”. Wait for it to finish, "
+                         "or stop it, first.")
+
+
+def rename_in_config(config: dict[str, Any], old: str, new: str) -> tuple[dict[str, Any], bool]:
+    """An experiment's settings with library `old` called `new` wherever it is named: its
+    libraries, the older single `corpus`, the network tools' fetch library, and role-play
+    agents' case files. Returns the new settings and whether anything changed. Pure."""
+    changed = False
+
+    def swap(names: Any) -> Any:
+        nonlocal changed
+        if not isinstance(names, list):
+            return names
+        out = []
+        for n in names:
+            if isinstance(n, str) and " ".join(n.split()) == old:
+                changed = True
+                n = new
+            if n not in out:
+                out.append(n)
+        return out
+
+    c = dict(config)
+    if "libraries" in c:
+        c["libraries"] = swap(c["libraries"])
+    for key in ("corpus", "fetch_library"):
+        if isinstance(c.get(key), str) and " ".join(c[key].split()) == old:
+            c[key], changed = new, True
+    if isinstance(c.get("agents"), list):
+        c["agents"] = [{**a, "libraries": swap(a["libraries"])} if isinstance(a, dict) and "libraries" in a
+                       else a for a in c["agents"]]
+    return c, changed
+
+
+# Tables that refer to a library by name (documents.corpus is the library itself).
+_NAMED = ("documents", "corpus_versions", "run_libraries", "library_settings", "crawls",
+          "citations", "runs")
+
+
+async def rename_library(old: str, new: str, by: Any = None) -> dict[str, int]:
+    """Rename a library everywhere it is referred to, in one transaction.
+
+    A library's name is a label: its documents, versions and the runs that searched it stay
+    exactly as they were, under the new name. Experiments that use it are updated to the new
+    name. Runs keep the settings they were launched with, as a record; library_renames maps
+    the names in them to the current one. Refused while the library is in use, or if the new
+    name is already a library's. Returns how many rows of each kind changed.
+    """
+    new = " ".join(new.split())[:120]
+    if not new:
+        raise ValueError("Give the library a name.")
+    if new == old:
+        raise ValueError("That is already its name.")
+    if not await fetch_one("SELECT 1 AS x FROM corpus_versions WHERE corpus=%s UNION "
+                           "SELECT 1 FROM documents WHERE corpus=%s LIMIT 1", (old, old)):
+        raise ValueError(f"There is no library named “{old}”.")
+    if await fetch_one("SELECT 1 AS x FROM corpus_versions WHERE corpus=%s UNION "
+                       "SELECT 1 FROM documents WHERE corpus=%s LIMIT 1", (new, new)):
+        raise ValueError(f"There is already a library named “{new}”. Choose another name.")
+    await check_idle(old)
+    counts: dict[str, int] = {}
+    pool = await get_pool()
+    async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        for name in sorted((old, new)):     # same order in every rename, so no deadlock
+            await cur.execute("SELECT pg_advisory_xact_lock(hashtext('corpus_version:' || %s))", (name,))
+        for table in _NAMED:
+            await cur.execute(f"UPDATE {table} SET corpus=%s WHERE corpus=%s", (new, old))
+            counts[table] = cur.rowcount
+        await cur.execute("SELECT id, config FROM experiments WHERE config::text LIKE %s",
+                          (f"%{old}%",))
+        n = 0
+        for row in await cur.fetchall():
+            config, changed = rename_in_config(row["config"] or {}, old, new)
+            if changed:
+                await cur.execute("UPDATE experiments SET config=%s WHERE id=%s", (jsonb(config), row["id"]))
+                n += 1
+        counts["experiments"] = n
+        await cur.execute("INSERT INTO library_renames (old_name, new_name, renamed_by) "
+                          "VALUES (%s, %s, %s)", (old, new, by))
+    log.info("renamed library %r to %r: %s", old, new, counts)
+    return counts
+
+
+async def current_names() -> dict[str, str]:
+    """Each former library name and the name it goes by now (renames followed through)."""
+    renames = {r["old_name"]: r["new_name"] for r in await fetch_all(
+        "SELECT old_name, new_name FROM library_renames ORDER BY id")}
+    out = {}
+    for old in renames:
+        name, seen = old, set()
+        while name in renames and name not in seen:
+            seen.add(name)
+            name = renames[name]
+        out[old] = name
+    return out
 
 
 # ---------------------------------------------------------------- versions

@@ -311,3 +311,37 @@ async def test_document_analysis_can_ask_the_libraries_directly():
     assert all(s["corpus"] in ("test", "test-regs") for s in result["sources"])
     cites = await fetch_all("SELECT verdict, corpus FROM citations WHERE run_id=%s", (run_id,))
     assert cites and all(c["corpus"] for c in cites if c["verdict"] == "grounded")
+
+
+async def test_renaming_a_library_everywhere():
+    from ailawlab import rag
+    from ailawlab.db import execute
+
+    old, new = "test-rename-old", "test-rename-new"
+    for n in (old, new):
+        await rag.delete_corpus(n)
+    doc = await Corpus(await get_router(), name=old).add_document("Doc R", "Text for the rename test.")
+    v = await rag.record_version(old)
+    exp = await experiments.create_experiment("Rename (test)", "roleplay", config={
+        "libraries": [old], "agents": [{"id": "a", "name": "A", "libraries": [old]}]})
+    await rag.set_hidden(old, True)
+
+    with pytest.raises(ValueError, match="already a library"):
+        await rag.rename_library(old, "test")                         # taken
+    await execute("INSERT INTO crawls (corpus, start_url, host, max_pages) VALUES (%s, 'https://e.org/', 'e.org', 1)", (old,))
+    with pytest.raises(rag.CorpusBusy, match="crawl"):
+        await rag.rename_library(old, new)                            # a crawl is adding to it
+    await execute("UPDATE crawls SET status='finished' WHERE corpus=%s", (old,))
+
+    counts = await rag.rename_library(old, new)
+    assert counts["documents"] == 1 and counts["corpus_versions"] == 1 and counts["experiments"] == 1
+    assert (await rag.get_document(doc))["corpus"] == new
+    assert (await rag.get_version(new, v["version"]))["document_ids"] == v["document_ids"]
+    assert await rag.get_version(old, v["version"]) is None
+    config = (await experiments.get_experiment(str(exp["id"])))["config"]
+    assert config["libraries"] == [new] and config["agents"][0]["libraries"] == [new]
+    assert await rag.is_hidden(new)                                    # its setting moved with it
+    assert (await rag.current_names())[old] == new
+    await experiments.trash_experiment(str(exp["id"]))
+    await execute("DELETE FROM crawls WHERE corpus=%s", (new,))
+    await rag.delete_corpus(new)

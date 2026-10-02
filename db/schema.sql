@@ -193,6 +193,17 @@ CREATE TABLE IF NOT EXISTS crawls (
 );
 CREATE INDEX IF NOT EXISTS idx_crawls_created ON crawls(created_at DESC);
 
+-- Every renaming of a library: the name is a label, so renaming updates every reference to
+-- it (rag.rename_library) and this log keeps the old name findable. Runs' stored settings
+-- keep the names they ran under; the log maps those to the current name.
+CREATE TABLE IF NOT EXISTS library_renames (
+    id          BIGSERIAL PRIMARY KEY,
+    old_name    TEXT NOT NULL,
+    new_name    TEXT NOT NULL,
+    renamed_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    renamed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id           BIGSERIAL PRIMARY KEY,
     document_id  BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

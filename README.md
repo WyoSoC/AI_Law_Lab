@@ -372,6 +372,13 @@ lot), and a library can be reverted to any earlier version from that version's p
 put back, recorded as a new version, so a revert never loses anything and can itself be
 reverted. The page shows what a revert would put back and take out before it is done.
 
+A library can be renamed from its page (`rag.rename_library`). The name is a label: one
+transaction moves its documents, versions, run records, citations, crawls and hidden setting to
+the new name and updates every experiment that names it (libraries, case files, fetch library),
+while runs keep the settings they ran with as a record; `library_renames` maps old names to
+current ones. A library cannot be renamed, changed or deleted while a run searches it or a crawl
+is adding to it.
+
 A library can be hidden from the lists and pickers (its page has "Hide from lists"); hidden
 ones sit under a "Hidden libraries" drop-down and stay usable. With no choice recorded in
 `library_settings`, a library whose name contains "test" starts hidden.

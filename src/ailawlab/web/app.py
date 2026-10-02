@@ -370,9 +370,13 @@ async def run_detail(request: Request, run_id: str):
         "SELECT * FROM run_events WHERE run_id=%s ORDER BY seq", (run_id,)
     )
     cites = await _run_citations(run_id)
+    view = views.run_view(run, request.scope.get("root_path", ""))
+    # A run's stored settings name libraries as they were then; "run again" needs today's names.
+    renamed = await rag.current_names()
+    view["rerun_shared"] = [renamed.get(n, n) for n in view.get("rerun_shared") or []]
     return templates.TemplateResponse(request, "run.html", {
         "run": run,
-        "view": views.run_view(run, request.scope.get("root_path", "")),
+        "view": view,
         "events": events,
         "metrics": await run_metrics(run_id),
         "result_pretty": json.dumps(run["result"], indent=2) if run.get("result") else None,
@@ -704,6 +708,24 @@ async def document_move(request: Request, document_id: int, corpus: str = Form("
         raise HTTPException(404, "no such document")
     return RedirectResponse(f"{P}/sources/documents/{doc['id']}?msg=" + quote(
         f"Moved to “{doc['corpus']}”."), status_code=303)
+
+
+@app.post("/sources/corpora/{name}/rename")
+async def corpus_rename(request: Request, name: str, new_name: str = Form("")):
+    """Rename a library, and every reference to it."""
+    try:
+        counts = await rag.rename_library(name, new_name, user_id(request))
+    except rag.CorpusBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        return RedirectResponse(_corpus_url(name) + "?msg=" + quote(str(e)), status_code=303)
+    new = " ".join(new_name.split())[:120]
+    await accounts.audit(user_id(request), "library.renamed", name, new_name=new, **counts)
+    n = counts.get("experiments", 0)
+    return RedirectResponse(_corpus_url(new) + "?msg=" + quote(
+        f"Renamed from “{name}”. Its documents, versions and past runs are unchanged"
+        + (f", and {n} experiment{'' if n == 1 else 's'} using it now use the new name." if n else ".")),
+        status_code=303)
 
 
 @app.post("/sources/corpora/{name}/remove")

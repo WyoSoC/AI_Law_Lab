@@ -34,12 +34,28 @@
   <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}&amp;tab=search#add">Search databases</a>
   <a class="btn" href="{{ prefix }}/sources?corpus={{ name|urlencode }}&amp;tab=upload#add">Upload documents</a>
   {% if can_write %}
+  <button type="button" class="btn ghost" onclick="document.getElementById('rename-panel').hidden = false; document.getElementById('new-name').focus()">Rename</button>
   <form method="post" action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/visibility" class="inline-form">
     <input type="hidden" name="hidden" value="{{ '0' if hidden else '1' }}">
     <button type="submit" class="btn ghost" title="{{ 'Show this library in the lists and pickers again' if hidden else 'Keep this library out of the lists and pickers; it stays usable' }}">{{ 'Show in lists' if hidden else 'Hide from lists' }}</button>
   </form>
   {% endif %}
 </div>
+
+{% if can_write %}
+<form class="panel rename-panel" id="rename-panel" method="post" hidden
+      action="{{ prefix }}/sources/corpora/{{ name|urlencode }}/rename">
+  <label for="new-name" style="margin-top:0">New name for “{{ name }}”</label>
+  <div class="cast-toolbar">
+    <input type="text" id="new-name" name="new_name" value="{{ name }}" maxlength="120" required>
+    <button type="submit">Rename</button>
+    <button type="button" class="small-btn quiet" onclick="document.getElementById('rename-panel').hidden = true">Cancel</button>
+  </div>
+  <p class="hint">Renaming changes the label only. The documents, every version and the runs that
+    searched them stay exactly as they are, under the new name, and experiments that use this
+    library are updated to it. Past runs keep the settings they ran with as a record.</p>
+</form>
+{% endif %}
 
 <div class="panel add-links-panel" id="add-links" hidden>
   <label for="links-text" style="margin-top:0">Web links to add to {{ name }} (one per line)</label>
