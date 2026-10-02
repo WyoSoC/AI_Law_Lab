@@ -288,6 +288,14 @@ has a "Try a search" box that shows what retrieval would return for a question, 
 similarity scores. Documents are added from the online databases, from web links, or by
 uploading several files at once, into an existing corpus picked from a drop-down or a new one.
 
+**PDFs** are read by `pdf_text.py`, on PDFium (pypdfium2), text layer only — images are
+never read. On 90 PDFs from one public library it gave readable text for 38 where pypdf, used
+before, managed 15 (pypdf turns custom-encoded fonts into glyph soup); pdfminer.six read as many
+but twenty times slower, and poppler and MuPDF no more. Each page is checked and glyph soup is
+left out rather than stored; a PDF with no readable page says it would need OCR. Pali set in the
+old "Dhamma Palatino" fonts ("Nik›ya") is turned back into Unicode ("Nikāya"), only for
+characters drawn in those fonts. PDF passages from links and crawls carry page numbers.
+
 **Web links** can be pasted in any layout (one per line, or inside a paragraph), up to 20 at a
 time. Each page's main text is kept as a document, up to 100,000 words, fetched with the same
 public-address and redirect checks as cast sources (`web_links.py`). Because pages change, a
@@ -403,6 +411,7 @@ src/ailawlab/
   tools.py             tool registry for agentic workflows
   network_tools.py     online search and reading for agents, saved into a library
   crawler.py           polite one-level crawl of a page's same-site links into a library
+  pdf_text.py          PDF text extraction (PDFium), page checks, Dhamma Palatino Pali repair
   tracing.py           trace writer + run metrics
   experiments.py       experiment/run lifecycle
   graphs/              LangGraph definitions per mode; roleplay_policy.py holds the moderation rules

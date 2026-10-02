@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
     "pypdf>=5.1.0",
+    "pypdfium2>=4.30",
     "tenacity>=9.0.0",
     "reportlab>=4.2",          # run reports as PDF
     "joserfc>=1.0",            # verifying Keycloak sign-in tokens (OIDC)

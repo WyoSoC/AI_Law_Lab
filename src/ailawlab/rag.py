@@ -164,18 +164,14 @@ class Corpus:
         return len(chunks)
 
     async def add_pdf(self, path: Path, **kw) -> int | None:
-        from pypdf import PdfReader
+        import asyncio
 
-        reader = PdfReader(str(path))
-        parts, page_map, offset = [], [], 0
-        for n, page in enumerate(reader.pages, start=1):
-            t = page.extract_text() or ""
-            page_map.append((offset, n))
-            parts.append(t)
-            offset += len(t) + 2
-        text = "\n\n".join(parts)
+        from .pdf_text import extract, unreadable_reason
+
+        pdf = await asyncio.to_thread(extract, path.read_bytes())
+        text, page_map = pdf.text, pdf.page_map
         if not text.strip():
-            log.warning("no extractable text in %s (scanned image?)", path.name)
+            log.warning("no readable text in %s: %s", path.name, unreadable_reason(pdf))
             return None
         kw.setdefault("title", path.stem)
         kw.setdefault("doc_type", "pdf")
@@ -582,8 +578,15 @@ async def rename_library(old: str, new: str, by: Any = None) -> dict[str, int]:
     async with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
         for name in sorted((old, new)):     # same order in every rename, so no deadlock
             await cur.execute("SELECT pg_advisory_xact_lock(hashtext('corpus_version:' || %s))", (name,))
+        # The new name is no library's, so a setting left under it (by a library deleted
+        # since) means nothing; and a run that searched both libraries keeps its row for the
+        # deleted one rather than collide.
+        await cur.execute("DELETE FROM library_settings WHERE corpus=%s", (new,))
         for table in _NAMED:
-            await cur.execute(f"UPDATE {table} SET corpus=%s WHERE corpus=%s", (new, old))
+            extra = (" AND NOT EXISTS (SELECT 1 FROM run_libraries x WHERE x.run_id = run_libraries.run_id "
+                     "AND x.corpus = %s)") if table == "run_libraries" else ""
+            await cur.execute(f"UPDATE {table} SET corpus=%s WHERE corpus=%s{extra}",
+                              (new, old, new) if extra else (new, old))
             counts[table] = cur.rowcount
         await cur.execute("SELECT id, config FROM experiments WHERE config::text LIKE %s",
                           (f"%{old}%",))
@@ -855,5 +858,6 @@ async def delete_corpus(name: str) -> int:
                               "AND removed_at IS NULL", (name,))
     await fetch_all("DELETE FROM documents WHERE corpus=%s RETURNING id", (name,))
     await fetch_all("DELETE FROM corpus_versions WHERE corpus=%s RETURNING version", (name,))
+    await fetch_all("DELETE FROM library_settings WHERE corpus=%s RETURNING corpus", (name,))
     log.info("deleted library %s", name)
     return current["n"] if current else 0

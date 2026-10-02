@@ -142,7 +142,7 @@ class OnlineReader:
                               "starting with https://.")
         page = await source_material.fetch_url(source, max_words=settings.web_link_max_words)
         return {"title": page.title, "text": page.text, "source_uri": page.url or source,
-                "doc_type": page.kind,
+                "doc_type": page.kind, "page_map": page.page_map or None,
                 "metadata": {"link": source, "site": page.site, "published": page.published,
                              "words": page.words, "truncated": page.truncated,
                              "retrieved_at": page.retrieved_at}}
@@ -154,7 +154,7 @@ class OnlineReader:
         meta = {**doc["metadata"], "fetched_by_run": self.run_id}
         doc_id = await Corpus(self.router, name=self.library, added_by=self.added_by).add_document(
             doc["title"], doc["text"], source_uri=doc["source_uri"], doc_type=doc["doc_type"],
-            metadata=meta)
+            metadata=meta, page_map=doc.get("page_map"))
         reused = doc_id is None
         if reused:
             sha = hashlib.sha256(doc["text"].encode()).hexdigest()

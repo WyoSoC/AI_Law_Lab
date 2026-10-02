@@ -132,7 +132,7 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str], by: Any = 
         try:
             doc_id = await store.add_document(
                 title=doc.title, text=doc.text, source_uri=doc.url or item["link"],
-                doc_type=doc.kind, metadata=_meta(doc, item["link"]))
+                doc_type=doc.kind, metadata=_meta(doc, item["link"]), page_map=doc.page_map or None)
         except Exception as e:
             log.exception("adding %s failed", item["link"])
             report.append({"link": item["link"], "status": "error", "title": doc.title,
@@ -146,7 +146,8 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str], by: Any = 
             "version": version["version"] if version else None}
 
 
-async def refresh(router: LLMRouter, document_id: int, by: Any = None) -> dict[str, Any]:
+async def refresh(router: LLMRouter, document_id: int, by: Any = None,
+                  record: bool = True) -> dict[str, Any]:
     """Check a link document for changes. Status: unchanged, updated, error, or not_a_link.
 
     A changed page is stored as a new document that replaces the old one (whose passages
@@ -205,7 +206,7 @@ async def refresh(router: LLMRouter, document_id: int, by: Any = None) -> dict[s
     new_id = await copy_document({**doc, "id": None}, doc["corpus"], by, sha256=sha, metadata=meta,
                                  source_uri=page.url or link, doc_type=page.kind)
     try:
-        n = await Corpus(router, name=doc["corpus"]).store_chunks(new_id, page.text)
+        n = await Corpus(router, name=doc["corpus"]).store_chunks(new_id, page.text, page.page_map or None)
     except Exception:
         await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id", (new_id,))
         raise
@@ -213,18 +214,22 @@ async def refresh(router: LLMRouter, document_id: int, by: Any = None) -> dict[s
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute("UPDATE documents SET removed_at=now(), replaced_by=%s WHERE id=%s",
                           (new_id, document_id))
-    version = await record_version(doc["corpus"], by)
+    # Checking a whole library records one version at the end instead (refresh_corpus).
+    version = await record_version(doc["corpus"], by) if record else None
     return {"document_id": new_id, "replaced": document_id, "title": doc["title"], "link": link,
             "status": "updated", "passages": n, "version": version["version"] if version else None,
             "detail": f"The page had changed; re-read it into {n} passages."}
 
 
 async def refresh_corpus(router: LLMRouter, corpus: str, by: Any = None) -> dict[str, Any]:
-    """Check every link in a corpus, one at a time, and summarize."""
+    """Check every link in a corpus, one at a time, and summarize. Whatever changed is
+    recorded as one new version of the library, not one per document."""
     rows = await fetch_all("SELECT id FROM documents WHERE corpus=%s AND metadata ? 'link' "
                            "AND removed_at IS NULL ORDER BY created_at", (corpus,))
-    results = [await refresh(router, r["id"], by) for r in rows]
+    results = [await refresh(router, r["id"], by, record=False) for r in rows]
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-    return {"corpus": corpus, "results": results, "counts": counts}
+    version = await record_version(corpus, by) if counts.get("updated") else None
+    return {"corpus": corpus, "results": results, "counts": counts,
+            "version": version["version"] if version else None}

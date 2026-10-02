@@ -35,8 +35,10 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 
+from . import pdf_text
 from .config import settings
-from .sources import pdf_title, pdf_to_text, strip_markup
+from .pdf_text import normalize_text
+from .sources import pdf_title, strip_markup
 
 MAX_REDIRECTS = 5
 
@@ -61,6 +63,8 @@ class SourceDoc:
     words: int = 0
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
+    # For a PDF: (char offset, page number) for each page kept, so passages carry page anchors.
+    page_map: list[tuple[int, int]] = field(default_factory=list)
     retrieved_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
@@ -281,9 +285,7 @@ def _first_words(text: str, limit: int) -> str:
 
 
 def _finish(doc: SourceDoc, max_words: int | None = None) -> SourceDoc:
-    text = doc.text.replace("\r\n", "\n").replace("\u200b", "")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n[ \t]*\n\s*", "\n\n", text).strip()
+    text = normalize_text(doc.text)
     total = len(text.split())
     if not total:
         raise SourceError("No readable text was found. If this is a web page that needs a "
@@ -314,14 +316,17 @@ def from_bytes(data: bytes, *, content_type: str = "", filename: str = "",
     fallback_title = PurePosixPath(filename).stem if filename else _title_from_url(url)
 
     if ctype == "application/pdf" or name.endswith(".pdf") or data[:5] == b"%PDF-":
-        text = pdf_to_text(data)
-        if not text.strip():
-            raise SourceError("No text could be read from that PDF. It may be a scanned "
-                              "image; if so, copy the text and paste it instead.")
+        pdf = pdf_text.extract(data)
+        if not pdf.text.strip():
+            raise SourceError(pdf_text.unreadable_reason(pdf))
         # The title the PDF records about itself beats one made from its file name.
         title = usable_title(pdf_title(data)) or fallback_title
-        return _finish(SourceDoc(title=title, text=text, kind="PDF", url=url,
-                                 site=_host(url)), max_words)
+        doc = SourceDoc(title=title, text=pdf.text, kind="PDF", url=url, site=_host(url),
+                        page_map=pdf.page_map)
+        if pdf.pages_unreadable:
+            doc.warnings.append(f"{pdf.pages_unreadable} of {pdf.pages} pages could not be read "
+                                "(their fonts cannot be turned back into letters) and were left out.")
+        return _finish(doc, max_words)
 
     decoded = _decode(data, content_type)
     head = decoded[:1000].lstrip().lower()

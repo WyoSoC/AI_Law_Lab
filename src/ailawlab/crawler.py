@@ -537,7 +537,7 @@ async def _read_one(store: Corpus, link: str, start_url: str, licence: str, corp
     # a PDF's recorded title), else one made from its file name.
     title = listed_as or doc.title
     doc_id = await store.add_document(title, doc.text, source_uri=doc.url or link,
-                                      doc_type=doc.kind, metadata=meta)
+                                      doc_type=doc.kind, metadata=meta, page_map=doc.page_map or None)
     return {"link": link, "status": "added", "document_id": doc_id, "title": title,
             "detail": ""}, True
 

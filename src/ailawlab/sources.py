@@ -109,12 +109,12 @@ def strip_markup(raw: str) -> str:
 
 
 def pdf_to_text(data: bytes) -> str:
-    from pypdf import PdfReader
+    """A PDF's readable text (pdf_text.extract: PDFium, unreadable pages left out)."""
+    from .pdf_text import extract
 
     try:
-        reader = PdfReader(io.BytesIO(data))
-        return "\n\n".join((p.extract_text() or "") for p in reader.pages).strip()
-    except Exception as e:                       # scanned images, malformed xref tables
+        return extract(data).text
+    except Exception as e:                       # a PDF neither engine can open
         log.warning("pdf extraction failed: %s", e)
         return ""
 

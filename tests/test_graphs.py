@@ -320,6 +320,7 @@ async def test_renaming_a_library_everywhere():
     old, new = "test-rename-old", "test-rename-new"
     for n in (old, new):
         await rag.delete_corpus(n)
+    await rag.set_hidden(new, False)       # a setting left by a library of that name, since deleted
     doc = await Corpus(await get_router(), name=old).add_document("Doc R", "Text for the rename test.")
     v = await rag.record_version(old)
     exp = await experiments.create_experiment("Rename (test)", "roleplay", config={
