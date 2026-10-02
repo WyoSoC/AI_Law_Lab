@@ -53,8 +53,8 @@ How to work:
 When you are done, reply without calling a tool: your findings for this sub-question, each claim with its [n] citations, then what you could not establish."""
 
 FINAL_STEP = ("Research time for this sub-question is over: no more tools. Report your findings "
-              "now from what you have found, each claim with its [n] citations, then what you "
-              "could not establish.")
+              "now from what you have found and your notes. Cite every claim with the passage "
+              "numbers [n] that support it, then say what you could not establish.")
 
 WRITE_UP_PROMPT = """You are the lead researcher. Your research agents have finished; write the study's answer from their findings.
 
@@ -189,7 +189,11 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
         messages = [{"role": "system", "content": system},
                     *compact(convo, settings.agent_keep_results)]
         if last:
-            messages.append({"role": "user", "content": FINAL_STEP})
+            # With the passages it has seen listed, so it can cite what it read even where the
+            # text has since been shortened in its context.
+            messages.append({"role": "user", "content": FINAL_STEP + (
+                "\n\nPassages you have been given, to cite by number:\n" + passage_index(seen)
+                if seen else "")})
         res = await ctx.router.chat(
             messages, model=settings.agent_model,
             tools=None if last else registry.schemas(), think=not write_now,
@@ -245,9 +249,15 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
                 "steps": steps, "ended": ended}
 
 
+def passage_index(seen: dict[int, str], limit: int = 120) -> str:
+    """The passages an agent has seen, one line each, newest last. Pure."""
+    items = list(seen.items())[-limit:]
+    return "\n".join(f"[{n}] {h}" for n, h in items)
+
+
 def cite_note(seen: dict[int, str], still_researching: bool) -> str:
     """What an agent whose report cites no passages is told. Pure."""
-    index = "\n".join(f"[{n}] {h}" for n, h in list(seen.items())[:80])
+    index = passage_index(seen)
     return (("If you are still researching, continue with the tools. If you are done, give "
              if still_researching else "Give ")
             + "your findings again, citing the passage numbers [n] that support each claim. "
