@@ -40,3 +40,39 @@ def test_advice_to_paste_text_becomes_advice_to_upload():
         "It may need a login. Save the text as a file and upload it instead."
     assert _for_corpus("Check the link, or paste the text instead.").endswith("upload it instead.")
     assert _for_corpus("copy the text and paste\nit instead").endswith("upload it instead")
+
+
+def test_checking_a_whole_library_records_one_version(monkeypatch):
+    """2026-10-02: re-reading 45 PDFs recorded 44 versions, because the per-document flag
+    was shadowed by a helper of the same name. Now refresh_corpus records exactly one."""
+    import asyncio
+
+    from ailawlab import web_links
+
+    recorded, refreshed = [], []
+
+    async def fake_fetch_all(sql, params=()):
+        return [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    async def fake_refresh(router, document_id, by=None, new_version=True):
+        refreshed.append(new_version)
+        return {"status": "updated", "document_id": document_id}
+
+    async def fake_record(name, by=None, note=""):
+        recorded.append(name)
+        return {"version": 7}
+
+    monkeypatch.setattr(web_links, "fetch_all", fake_fetch_all)
+    monkeypatch.setattr(web_links, "refresh", fake_refresh)
+    monkeypatch.setattr(web_links, "record_version", fake_record)
+    out = asyncio.run(web_links.refresh_corpus(None, "lib"))
+    assert refreshed == [False, False, False] and recorded == ["lib"] and out["version"] == 7
+
+
+def test_the_one_version_flag_is_not_shadowed():
+    import inspect
+
+    from ailawlab import web_links
+
+    src = inspect.getsource(web_links.refresh)
+    assert "if new_version else None" in src and "def record(" in src   # both present, distinct names

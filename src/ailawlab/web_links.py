@@ -147,7 +147,7 @@ async def add_links(router: LLMRouter, corpus: str, links: list[str], by: Any = 
 
 
 async def refresh(router: LLMRouter, document_id: int, by: Any = None,
-                  record: bool = True) -> dict[str, Any]:
+                  new_version: bool = True) -> dict[str, Any]:
     """Check a link document for changes. Status: unchanged, updated, error, or not_a_link.
 
     A changed page is stored as a new document that replaces the old one (whose passages
@@ -215,7 +215,8 @@ async def refresh(router: LLMRouter, document_id: int, by: Any = None,
         await cur.execute("UPDATE documents SET removed_at=now(), replaced_by=%s WHERE id=%s",
                           (new_id, document_id))
     # Checking a whole library records one version at the end instead (refresh_corpus).
-    version = await record_version(doc["corpus"], by) if record else None
+    # (Not named `record`: that is the result helper defined above.)
+    version = await record_version(doc["corpus"], by) if new_version else None
     return {"document_id": new_id, "replaced": document_id, "title": doc["title"], "link": link,
             "status": "updated", "passages": n, "version": version["version"] if version else None,
             "detail": f"The page had changed; re-read it into {n} passages."}
@@ -226,7 +227,7 @@ async def refresh_corpus(router: LLMRouter, corpus: str, by: Any = None) -> dict
     recorded as one new version of the library, not one per document."""
     rows = await fetch_all("SELECT id FROM documents WHERE corpus=%s AND metadata ? 'link' "
                            "AND removed_at IS NULL ORDER BY created_at", (corpus,))
-    results = [await refresh(router, r["id"], by, record=False) for r in rows]
+    results = [await refresh(router, r["id"], by, new_version=False) for r in rows]
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
