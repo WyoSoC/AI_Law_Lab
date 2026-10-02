@@ -65,6 +65,11 @@ past results. Fill in the fields below.</p>
        Everything it reads is saved to a library, so what it cites stays traceable to a
        document and version after the page changes.</p>
     <div id="aw_network_opts" hidden>
+      <label for="aw_sources">Sources to read online</label>
+      <input type="number" id="aw_sources" value="5" min="1" max="20" oninput="syncJSON()" style="max-width:8rem">
+      <p class="hint">How many of the most relevant results the agent reads before answering (1 to 20).
+         It reads fewer only if fewer are relevant, and may read two more to replace any that turn out
+         to be unreadable. Each takes a few seconds to read and add.</p>
       <label for="aw_fetch_pick">Library to save what it reads</label>
       <div class="cast-toolbar">
         <select id="aw_fetch_pick" onchange="showFetchNew(); syncJSON()">
@@ -278,6 +283,7 @@ function buildConfig() {
     const pick = val('aw_fetch_pick');
     const fetchLib = pick === '__new__' ? val('aw_fetch_new').trim() : pick;
     if (config.allow_network && fetchLib) config.fetch_library = fetchLib;
+    if (config.allow_network) config.network_sources = Math.max(1, Math.min(20, int('aw_sources', 5)));
     return config;
   }
   if (mode === 'roleplay') {

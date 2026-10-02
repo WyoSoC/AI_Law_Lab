@@ -35,6 +35,16 @@ Guidelines:
 """ + ANSWER_STYLE
 
 
+def _sources_goal(n: int) -> str:
+    """What the agent is asked to read online before answering."""
+    if n == 1:
+        return "After searching, read the single most relevant result before answering."
+    return (f"Draw on {n} independent sources: after searching, read the {n} most relevant "
+            "results before answering (read_online takes several at once, e.g. W1, W3, W4; search "
+            "again if the first search does not give enough), and read fewer only if fewer are "
+            "relevant.")
+
+
 def _sources_line(names: list[str]) -> str:
     if not names:
         return ("No library of legal sources is available for this task, so you cannot search "
@@ -77,10 +87,7 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
                     "read results or a public web page (read_online). What you read is saved "
                     f"to the library “{reader.library}” and comes back as numbered passages "
                     "you cite like any other. Search results themselves are not sources: never "
-                    "cite a [W] number. For a research question, draw on several independent "
-                    "sources: after searching, read the three to five most relevant results "
-                    "(read_online takes several at once, e.g. W1, W3, W4) before answering, "
-                    "unless fewer are relevant.")
+                    "cite a [W] number. " + _sources_goal(reader.wanted))
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(sources=sources)},
                 {"role": "user", "content": _task_message(state)}]
     messages.extend(state.get("scratchpad", []))
@@ -112,6 +119,23 @@ async def reason_node(state: AgenticState, config: RunnableConfig) -> dict:
     if stripped:
         await ctx.tracer.note("removed a memo-style header or sign-off from the answer "
                               "(the reply as written is in the trace above)", node="reason")
+    # An answer before the agent has read the sources it was asked for is held back, and it is
+    # told what it has not read yet. At most twice, and never on the last step, so it cannot
+    # loop; it may still answer with fewer if it says the rest are not relevant.
+    nudges = state.get("nudges", 0)
+    if (answer and reader and len(reader.fetched) < reader.wanted and nudges < 2
+            and iterations < max_iter - 1 and len(reader.fetched) < reader.max_reads):
+        note = more_sources_note(reader)
+        await ctx.tracer.note(f"answer held back: {len(reader.fetched)} of {reader.wanted} sources "
+                              "read; asked to read more", node="reason")
+        return {
+            "scratchpad": [{"role": "assistant", "content": answer},
+                           {"role": "user", "content": note}],
+            "iterations": iterations,
+            "nudges": nudges + 1,
+            "done": False,
+        }
+
     if not answer and res.truncated:
         # Reasoning consumed the whole budget. Don't silently return "".
         await ctx.tracer.error("reason node truncated before producing an answer", node="reason")
@@ -179,7 +203,24 @@ def should_continue(state: AgenticState) -> str:
     if state.get("iterations", 0) >= state.get("max_iterations", 8):
         return END
     last = state["scratchpad"][-1] if state.get("scratchpad") else {}
-    return "act" if last.get("tool_calls") else END
+    if last.get("tool_calls"):
+        return "act"
+    # A held-back answer ends with a message asking for more sources: think again.
+    return "reason" if last.get("role") == "user" else END
+
+
+def more_sources_note(reader) -> str:
+    """What an agent that answered too soon is told: how far it is from the sources asked for,
+    and which search results it has not read."""
+    unread = [f"W{n}" for n in range(1, len(reader.hits) + 1) if n not in reader.read_hits]
+    have = len(reader.fetched)
+    ask = (f"You have read {have} of the {reader.wanted} sources this task asks for. Before "
+           "answering, read more of the relevant ones")
+    if unread:
+        ask += f": search results not read yet are {', '.join(unread[:12])}"
+    ask += (". If those are not relevant, search again (search_online, perhaps another database "
+            "or wording). If no more relevant sources exist, answer now and say so.")
+    return ask
 
 
 def build_agentic_graph():
@@ -188,6 +229,6 @@ def build_agentic_graph():
     g.add_node("act", act_node)
 
     g.set_entry_point("reason")
-    g.add_conditional_edges("reason", should_continue, {"act": "act", END: END})
+    g.add_conditional_edges("reason", should_continue, {"act": "act", "reason": "reason", END: END})
     g.add_edge("act", "reason")
     return g.compile()

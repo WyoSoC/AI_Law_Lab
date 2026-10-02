@@ -165,3 +165,44 @@ def test_the_agent_is_asked_for_several_sources_and_never_a_w_number():
 
     [_, read_tool] = online_tools(reader())
     assert "W1, W3, W4" in read_tool.description and "never cite a W number" in read_tool.description
+
+
+def test_the_number_of_sources_is_chosen_and_bounded():
+    from ailawlab.graphs.agentic_workflow import _sources_goal
+    from ailawlab.network_tools import sources_wanted
+
+    assert sources_wanted({}) == 5 and sources_wanted({"network_sources": "12"}) == 12
+    assert sources_wanted({"network_sources": 0}) == 5           # unset reads as the default
+    assert sources_wanted({"network_sources": 99}) == 20 and sources_wanted({"network_sources": "x"}) == 5
+    r = OnlineReader(None, Libraries(None, []), SourceLedger(), Notes(), "run-1", "lib", wanted=12)
+    assert r.wanted == 12 and r.max_reads == 14                  # room for two unreadable ones
+    assert reader().max_reads == 8                                # no number set: the old budget
+    assert "read the 12 most relevant results" in _sources_goal(12)
+    assert "single most relevant result" in _sources_goal(1)
+
+
+def test_the_experiment_page_shows_the_number_of_sources():
+    from ailawlab.web.views import experiment_view
+
+    v = experiment_view({"mode": "agentic_workflow", "name": "Study",
+                         "config": {"allow_network": True, "network_sources": 7}}, [])
+    assert {"label": "Sources to read online", "value": "7",
+            "note": "the most relevant results, read before answering"} in v["facts"]
+
+
+def test_an_answer_with_too_few_sources_is_sent_back_for_more():
+    from langgraph.graph import END
+
+    from ailawlab.graphs.agentic_workflow import more_sources_note, should_continue
+
+    r = reader(wanted=8)
+    r.hits = [("ecfr", {}), ("ecfr", {}), ("ecfr", {}), ("ecfr", {})]
+    r.read_hits = {1: [1], 2: [2]}
+    r.fetched = [{}, {}]
+    note = more_sources_note(r)
+    assert "read 2 of the 8 sources" in note and "W3, W4" in note and "search again" in note
+    held = {"iterations": 3, "max_iterations": 12, "scratchpad": [
+        {"role": "assistant", "content": "early answer"}, {"role": "user", "content": note}]}
+    assert should_continue(held) == "reason"
+    assert should_continue({**held, "scratchpad": [{"role": "assistant", "content": "final"}]}) == END
+    assert should_continue({**held, "iterations": 12}) == END                # never past the limit

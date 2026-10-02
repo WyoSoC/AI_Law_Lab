@@ -346,3 +346,24 @@ async def test_renaming_a_library_everywhere():
     await experiments.trash_experiment(str(exp["id"]))
     await execute("DELETE FROM crawls WHERE corpus=%s", (new,))
     await rag.delete_corpus(new)
+
+
+async def test_a_document_whose_passages_fail_is_not_left_behind():
+    """2026-10-02: a page with NUL bytes was inserted as a document, then its passages failed
+    to store, leaving a document with no passages in the library."""
+    from ailawlab import rag
+
+    name = "test-atomic"
+    await rag.delete_corpus(name)
+    store = Corpus(await get_router(), name=name)
+    doc = await store.add_document("Has NUL", "Text with a NUL\x00 byte in it, for the test.")
+    rows = await fetch_all("SELECT content FROM chunks WHERE document_id=%s", (doc,))
+    assert rows and "\x00" not in rows[0]["content"]
+
+    async def broken(*a, **k):
+        raise RuntimeError("embedding failed")
+    store.store_chunks = broken
+    with pytest.raises(RuntimeError):
+        await store.add_document("Will fail", "Another text that will not be embedded.")
+    assert not await fetch_all("SELECT id FROM documents WHERE corpus=%s AND title='Will fail'", (name,))
+    await rag.delete_corpus(name)

@@ -15,7 +15,7 @@ from ..agent_spec import SECTIONS, check_cast, normalize_agent
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
-from ..network_tools import fetch_library_name
+from ..network_tools import fetch_library_name, sources_wanted
 from ..rag import case_files, library_names, run_library_names
 
 MODE_LABELS = {
@@ -262,6 +262,9 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
         facts += [
             _fact("Max tool steps", str(_int(config.get("max_iterations"), 8)),
                   "think-then-act cycles before it must answer"),
+            *([_fact("Sources to read online", str(sources_wanted(config)),
+                     "the most relevant results, read before answering")]
+              if config.get("allow_network") else []),
             _fact("Network tools", "allowed" if config.get("allow_network") else "not allowed",
                   (f"searches online databases and reads several sources; adds what it reads "
                    f"to “{fetch_library_name(config, str(exp.get('name') or ''))}”")

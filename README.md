@@ -115,8 +115,10 @@ reads a result or a public web page. Reading is ingesting: the document is saved
 (`fetch_library`, by default "Fetched: <experiment name>"), which records a new version, and
 the passages come back numbered like any other, so a citation to something read online names
 a document, library and version and survives the page changing. A run reads at most
-`network_max_reads` (8) documents, up to five per `read_online` call ("W1, W3, W4"), and is
-told to read the three to five most relevant results before answering. The library it saves
+the number of sources the experiment sets (`network_sources`, 1–20, default 5) plus two, up to
+five per `read_online` call ("W1, W3, W4"), and is asked to read that many of the most relevant
+results before answering. An answer given sooner is held back (at most twice) with the list
+of results not yet read, so the number is kept to rather than suggested. The library it saves
 into can be an existing one, chosen in the builder. If an answer cites a search result ([W2])
 rather than the passages read from it, the marker is turned into those passages' numbers; a
 result cited but never read is recorded as unsupported. Addresses must be public, as for every

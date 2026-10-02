@@ -33,6 +33,16 @@ log = logging.getLogger(__name__)
 _HIT = re.compile(r"^\s*\[?W(\d+)\]?\s*$", re.IGNORECASE)
 
 
+def sources_wanted(config: dict[str, Any]) -> int:
+    """How many sources an agent should read online: the experiment's (or run's)
+    `network_sources`, within 1 and settings.network_sources_max. Pure."""
+    try:
+        n = int(config.get("network_sources") or settings.network_sources_default)
+    except (TypeError, ValueError):
+        n = settings.network_sources_default
+    return max(1, min(n, settings.network_sources_max))
+
+
 def fetch_library_name(config: dict[str, Any], experiment_name: str) -> str:
     """The library a run saves what it reads into: the experiment's choice, or one named for
     the experiment. Pure."""
@@ -71,10 +81,13 @@ class OnlineReader:
 
     def __init__(self, router: LLMRouter, libraries: Libraries, ledger: SourceLedger, tracer,
                  run_id: str, library: str, added_by: Any = None,
-                 max_reads: int | None = None):
+                 max_reads: int | None = None, wanted: int | None = None):
         self.router, self.libraries, self.ledger, self.tracer = router, libraries, ledger, tracer
         self.run_id, self.library, self.added_by = run_id, library, added_by
-        self.max_reads = max_reads or settings.network_max_reads
+        # The agent is asked for `wanted` sources; its budget leaves room for two that turn out
+        # to be unreadable or empty.
+        self.wanted = wanted or settings.network_sources_default
+        self.max_reads = max_reads or (self.wanted + 2 if wanted else settings.network_max_reads)
         self.hits: list[tuple[str, dict[str, Any]]] = []      # [W<n>] -> (provider id, hit)
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
         self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
@@ -152,7 +165,11 @@ class OnlineReader:
         if not doc["text"].strip():
             return f"ERROR: {source} has no readable text."
 
-        doc_id, version, reused = await self._save(doc)
+        try:
+            doc_id, version, reused = await self._save(doc)
+        except Exception as e:  # noqa: BLE001 - one failed save must not sink the others
+            log.warning("run %s could not save %s: %s", self.run_id, source, e)
+            return f"ERROR: {source} was read but could not be saved ({type(e).__name__})."
         passages = await self._passages(doc_id, version, look_for or doc["title"])
         record = {"source": source, "title": doc["title"], "url": doc["source_uri"],
                   "provider": doc["metadata"].get("provider") or "web", "document_id": doc_id,

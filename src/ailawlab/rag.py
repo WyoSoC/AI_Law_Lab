@@ -116,7 +116,13 @@ class Corpus:
 
         `page_map` is an optional list of (char_offset, page_number) pairs used to anchor
         chunks to pages; PDF ingestion supplies it.
+
+        All or nothing: if the passages cannot be built (embedding fails, the text will not
+        store), the document is taken back out, so a library never holds a document with
+        no passages.
         """
+        # PostgreSQL text cannot hold NUL, which some sources' text contains.
+        text, title = text.replace("\x00", ""), title.replace("\x00", "")
         sha = hashlib.sha256(text.encode()).hexdigest()
         existing = await fetch_one("SELECT id FROM documents WHERE sha256=%s AND corpus=%s "
                                    "AND removed_at IS NULL", (sha, self.name))
@@ -130,7 +136,11 @@ class Corpus:
             (self.name, title, source_uri, doc_type, jsonb(metadata or {}), sha, self.added_by),
         )
         doc_id = row["id"]
-        n = await self.store_chunks(doc_id, text, page_map)
+        try:
+            n = await self.store_chunks(doc_id, text, page_map)
+        except BaseException:
+            await fetch_one("DELETE FROM documents WHERE id=%s RETURNING id", (doc_id,))
+            raise
         log.info("ingested %s: %d chunks", title, n)
         return doc_id
 

@@ -61,6 +61,7 @@ class AgenticState(TypedDict, total=False):
     citations: list[dict]
     sources: list[dict]         # every passage any search returned, by its run-wide number
     fetched: list[dict]         # documents read online and saved to a library
+    nudges: int                 # answers held back for reading too few sources (at most two)
     done: bool
     error: str
 

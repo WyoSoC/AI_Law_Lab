@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     # With "Allow network tools" an agent may search the online databases and read a result
     # or a public web page. Each read is saved into a library and embedded, so it occupies
     # cluster slots like an ingest: a run may read at most this many documents.
-    network_max_reads: int = 8
+    network_max_reads: int = 8          # the budget when an experiment sets no number of sources
+    network_sources_default: int = 5    # sources an agent is asked to read, unless the experiment says
+    network_sources_max: int = 20
     network_hits_per_source: int = 4
 
     # --- roleplay --------------------------------------------------------
