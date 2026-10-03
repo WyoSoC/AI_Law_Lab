@@ -382,7 +382,8 @@ async def execute_run(run_id: str) -> dict:
             await _check_roleplay(state, tracer)
             ctx.config = {**config, "stop_requested": lambda: run_id in _stop_requests}
             players = inputs.get("players") or {}
-            if players and not await _seat_players(run_id, state, players, inputs, tracer):
+            if players and not await _seat_players(run_id, state, players, inputs, tracer,
+                                                   run.get("experiment_name") or ""):
                 await tracer.note("stopped before everyone was ready; nothing was played")
                 await _set_status(run_id, "cancelled", finished_at=datetime.now(UTC))
                 return {}
@@ -531,11 +532,11 @@ async def _libraries_for_run(run_id: str, mode: str, config: dict, inputs: dict,
 
 
 async def _seat_players(run_id: str, state: dict, players: dict, inputs: dict,
-                        tracer: Tracer) -> bool:
+                        tracer: Tracer, experiment: str) -> bool:
     """Open the seats for the people in this run and wait until each has filled in their
     profile and said they are ready. Their profiles go into the run's cast. False if the run
     was stopped first."""
-    live = seats.open_run(run_id, state, players, int(inputs.get("reply_minutes") or 0))
+    live = seats.open_run(run_id, state, players, int(inputs.get("reply_minutes") or 0), experiment)
     who = ", ".join(f"{s.agent.get('name', s.agent_id)} ({s.player_name})" for s in live.seats.values())
     await tracer.note(f"waiting for the people in this run to be ready: {who}")
     if not await seats.wait_until_ready(live):

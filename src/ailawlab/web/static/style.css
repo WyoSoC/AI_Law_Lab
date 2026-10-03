@@ -759,3 +759,4 @@ input.narrow { width: 7rem; }
 .seat-main [hidden], .seat-table [hidden] { display: none; }
 .seat-main .panel > h2:first-child { margin-top: 0; }
 .seat-main .turn-box { margin-top: 1.2rem; }
+.seat-notice { font-weight: 600; }

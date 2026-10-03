@@ -58,6 +58,13 @@
   </header>
 
   <main>
+    {% if my_seats and active != 'seat' %}
+    {% for seat in my_seats %}
+    <p class="notice seat-notice">{{ 'It is your turn' if seat.your_turn else 'You are playing' }}
+      <strong>{{ seat.name }}</strong> in a live role-play, {{ seat.experiment }}.
+      <a href="{{ prefix }}/runs/{{ seat.run_id }}/play">Go to your seat</a></p>
+    {% endfor %}
+    {% endif %}
     {% block crumbs %}{% endblock %}
     {% block content %}{% endblock %}
   </main>

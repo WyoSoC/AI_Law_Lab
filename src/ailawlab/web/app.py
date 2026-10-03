@@ -85,7 +85,11 @@ def _prefix(request: Request) -> dict[str, str]:
     return {"prefix": request.scope.get("root_path", ""), "asset_version": _asset_version(),
             "user": user, "user_name": accounts.display_name(user),
             "can_write": auth.may(user, "write"), "is_admin": auth.may(user, "admin"),
-            "pending_accounts": getattr(request.state, "pending_accounts", 0)}
+            "pending_accounts": getattr(request.state, "pending_accounts", 0),
+            # Seats this person holds in live role-plays, so they can find them from any page.
+            "my_seats": [{"run_id": live.run_id, "name": seat.agent.get("name", seat.agent_id),
+                          "experiment": live.experiment, "your_turn": seat.turn_open}
+                         for live, seat in seats.seats_of(seats.user_key(user))] if user else []}
 
 
 def _asset_version() -> str:

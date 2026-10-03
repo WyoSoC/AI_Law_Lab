@@ -51,6 +51,7 @@ class Seat:
 @dataclass
 class LiveRun:
     run_id: str
+    experiment: str               # the experiment's name, for telling people where they play
     scenario: str
     word_limit: int
     roster: list[dict]            # every participant: id, name, role, and who plays it
@@ -74,7 +75,8 @@ class LiveRun:
 _live: dict[str, LiveRun] = {}
 
 
-def open_run(run_id: str, state: dict, players: dict[str, dict], reply_minutes: int) -> LiveRun:
+def open_run(run_id: str, state: dict, players: dict[str, dict], reply_minutes: int,
+             experiment: str = "") -> LiveRun:
     """Register a run's seats. `players` maps an agent id to {user, name}."""
     agents = state["agents"]
     seats = {a["id"]: Seat(agent_id=a["id"], user=str(players[a["id"]]["user"]),
@@ -83,7 +85,7 @@ def open_run(run_id: str, state: dict, players: dict[str, dict], reply_minutes: 
              for a in agents if a["id"] in players}
     roster = [{"id": a["id"], "name": a.get("name", a["id"]), "role": a.get("role", ""),
                "person": a["id"] in seats} for a in agents]
-    live = LiveRun(run_id=run_id, scenario=state.get("scenario", ""),
+    live = LiveRun(run_id=run_id, experiment=experiment, scenario=state.get("scenario", ""),
                    word_limit=int(state.get("word_limit") or 0), roster=roster, seats=seats,
                    reply_minutes=max(0, int(reply_minutes or 0)))
     _live[run_id] = live
