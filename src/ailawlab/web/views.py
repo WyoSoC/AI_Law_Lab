@@ -11,7 +11,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from ..agent_spec import SECTIONS, check_cast, normalize_agent
+from ..agent_spec import SECTIONS, check_cast, normalize_agent, seat_cast
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
@@ -37,9 +37,10 @@ MODE_BLURBS = {
         "and reads in parallel for as long as the question needs, and a lead agent writes the "
         "answer, every claim cited to the passage it rests on."),
     "roleplay": (
-        "Each run plays out the scenario between the cast. A moderator decides who speaks, "
-        "steps in when talks stall, and ends the scene; an evaluator then assesses the "
-        "outcome."),
+        "Each run plays out the scenario between the cast. Each role is played by a model "
+        "of its own or by a person, who types their turns on their own page. A moderator "
+        "decides who speaks, steps in when talks stall, and ends the scene; an evaluator "
+        "then assesses the outcome."),
 }
 
 _HEADINGS = {s.key: s.heading for s in SECTIONS}
@@ -130,6 +131,7 @@ def agent_view(raw: dict) -> dict[str, Any]:
         "private": [item(k) for k in _PRIVATE_KEYS if a.get(k)],
         "case_files": case_files(a),
         "prompt": a.get("system_prompt", ""),
+        "played_by": "a person" if a.get("played_by") == "person" else a.get("model", ""),
     }
 
 
@@ -254,7 +256,11 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             agents=[agent_view(a) for a in agents],
             cast_errors=[i["message"] for i in check_cast(agents) if i["level"] == "error"],
             source=source_view(source) if isinstance(source, dict) else None,
-            launch_defaults={"max_turns": turns, "word_limit": words, "libraries": libraries},
+            launch_defaults={"max_turns": turns, "word_limit": words, "libraries": libraries,
+                             "seating": [{"id": a.get("id"), "name": a.get("name") or a.get("id"),
+                                          "model": a.get("model", ""),
+                                          "person": a.get("played_by") == "person"}
+                                         for a in (normalize_agent(x) for x in agents)]},
         )
         return view
 
@@ -442,7 +448,14 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
 
     if mode == "roleplay":
         transcript = [t for t in result.get("transcript") or [] if isinstance(t, dict)]
-        agents = [a for a in config.get("agents") or [] if isinstance(a, dict)]
+        # The cast as played: with each role's model or person, and the profiles people
+        # filled in. Older runs kept only the cast they started with.
+        agents = [a for a in result.get("cast") or
+                  seat_cast([a for a in config.get("agents") or [] if isinstance(a, dict)],
+                            config.get("models"), config.get("players"))
+                  if isinstance(a, dict)]
+        players = {k: p.get("name", "") for k, p in (config.get("players") or {}).items()
+                   if isinstance(p, dict)}
         speakers = _speakers(transcript, agents)
         exhibits = [e for e in result.get("exhibits") or [] if isinstance(e, dict)]
         if view["summary_md"] and exhibits:          # the assessor may cite exhibits too
@@ -463,6 +476,8 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
                 "words": len((t.get("content") or "").split()),
                 "private_notes": t.get("private_notes") or {}, "thinking": t.get("thinking") or "",
                 "sources": t.get("sources") or [], "host": t.get("host", ""),
+                "by": (f"played by {t['played_by']}" if t.get("played_by")
+                       else t.get("model", "") if not moderator else ""),
             })
         view.update(
             scenario=str(config.get("scenario") or ""),
@@ -472,7 +487,10 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
                       for e in exhibits],
             turns=sum(1 for e in entries if not e["moderator"]),
             interventions=sum(1 for e in entries if e["moderator"]),
-            cast=[{**agent_view(a), "id": a.get("id")} for a in agents],
+            cast=[{**agent_view(a), "id": a.get("id"),
+                   **({"played_by": players[a.get("id")]} if a.get("id") in players else {})}
+                  for a in agents],
+            players=list(players.values()),
         )
     if mode == "agentic_workflow":
         plan = (run.get("inputs") or {}).get("plan") or result.get("plan") or {}

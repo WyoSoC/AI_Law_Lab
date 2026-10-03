@@ -57,6 +57,14 @@
 </div>
 {% endif %}
 
+{% if run.mode == 'roleplay' and run.status in ('running', 'pending') %}
+<form class="stop-form" method="post" action="{{ prefix }}/runs/{{ run.id }}/stop"
+      onsubmit="return confirm('End the role-play now? What has been said so far is assessed.')">
+  <button type="submit" class="danger-btn">■ End the role-play</button>
+  <span class="hint">Ends the exchange after the current turn{% if v.players %}, and stops waiting for {{ v.players|join(', ') }}{% endif %}; what was said so far is assessed.</span>
+</form>
+{% endif %}
+
 {% if v.plan %}
 {% set live = run.status in ('running', 'pending') %}
 {% if live %}
@@ -134,6 +142,7 @@
     <div class="person-card">
       <div class="person-name">{{ a.name }}</div>
       {% if a.role %}<div class="person-role">{{ a.role }}</div>{% endif %}
+      {% if a.played_by %}<div class="played-by">Played by {{ a.played_by }}</div>{% endif %}
       {% if a.goal %}<div class="person-field"><div class="person-label">Objective</div><div class="person-text">{{ a.goal }}</div></div>{% endif %}
       {% if a.case_files %}<div class="person-field"><div class="person-label">Case files</div><div class="person-text">{{ a.case_files|join(', ') }}</div></div>{% endif %}
     </div>
@@ -171,7 +180,7 @@
   <article class="turn c{{ t.color }}" id="turn-{{ t.turn }}" data-agent="{{ t.agent_id }}">
     <div class="turn-head">
       <span class="turn-name">{{ t.name }}</span>
-      <span class="turn-meta">{% if t.role %}{{ t.role }} &middot; {% endif %}turn {{ t.turn }} &middot; {{ t.words }} words</span>
+      <span class="turn-meta">{% if t.role %}{{ t.role }} &middot; {% endif %}turn {{ t.turn }} &middot; {{ t.words }} words{% if t.by %} &middot; {{ t.by }}{% endif %}</span>
       <a class="turn-anchor" href="#turn-{{ t.turn }}" title="Link to this turn">#</a>
     </div>
     <div class="turn-body md">{{ t.html|safe }}</div>

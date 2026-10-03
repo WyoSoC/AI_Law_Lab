@@ -146,62 +146,20 @@ def format_entries(entries: list[dict], max_words: int | None = None) -> str:
 
 # ---------------------------------------------------------------- legal sources
 #
-# A role-play can be given libraries of legal sources. Before each turn the speaker's side of
-# the exchange is used as a query, and the closest passages across all of them are put in
-# front of that speaker, each labelled with its library, numbered
-# [S1], [S2], ... so a reply can cite them and the page can show which were used. Passages
-# are cut to a few hundred words: they are there to be cited, and the turn's context
-# window is shared with memory and the conversation.
-
+# A role-play can be given libraries of legal sources. A speaker searches them when it needs
+# to (TurnSources in roleplay.py: an AI agent through tools, a person through a search box),
+# and what it finds is numbered [S1], [S2], ... in the order found, so a reply can cite it
+# and the page can show which were used. Passages are cut to a few hundred words: they are
+# there to be cited, and the turn's context window is shared with memory and the
+# conversation.
 #
-# An agent may also hold case files: libraries only it can search. Its case-file passages are
-# shown to it alone, first, and citing one discloses it: the passage becomes an exhibit
-# ([E1], [E2], ...) that every participant sees from then on and may cite to rely on it or
-# to answer it. A passage is never shown to another agent before its holder discloses it,
-# which is what lets the two sides argue from evidence the other has not seen.
+# A participant may also hold case files: libraries only they can search. Citing a passage
+# from one discloses it: the passage becomes an exhibit ([E1], [E2], ...) that every
+# participant sees from then on and may cite to rely on it or to answer it. A passage is
+# never shown to anyone else before its holder discloses it, which is what lets the two
+# sides argue from evidence the other has not seen.
 
 SOURCE_WORDS = 220
-
-
-def source_query(agent: dict, recent: list[dict], max_words: int = 160) -> str:
-    """What to search the libraries for: the speaker's objective plus what was just said."""
-    said = " ".join(e.get("content", "") for e in recent[-2:])
-    return truncate_words(f"{agent.get('goal') or agent.get('role') or ''} {said}".strip(),
-                          max_words)
-
-
-def format_sources(passages: list[dict], exhibits: list[dict] | None = None) -> str:
-    """The legal-sources block a speaker sees, or "" if there is nothing in it.
-
-    `passages` ({label, content, private}) are numbered [S1], [S2] in the order given, so the
-    caller puts the speaker's own case-file passages first. `exhibits` are the passages
-    already disclosed on the record (see disclose()), which anyone may cite as [E1], [E2].
-    """
-    if not passages and not exhibits:
-        return ""
-
-    def listed(items: list[tuple[int, dict]]) -> str:
-        return "\n\n".join(f"[S{i}] {p['label']}\n{truncate_words(p['content'], SOURCE_WORDS)}"
-                           for i, p in items)
-
-    numbered = list(enumerate(passages, start=1))
-    own = [(i, p) for i, p in numbered if p.get("private")]
-    shared = [(i, p) for i, p in numbered if not p.get("private")]
-    parts: list[str] = []
-    if own:
-        parts.append(
-            "From your own case file. No one else has seen these passages. Citing one, as [S1], "
-            "discloses it: it goes on the record as an exhibit that everyone can read and "
-            "answer. Disclose a passage when it strengthens your position; keep back one that "
-            "would hurt it.\n\n" + listed(own))
-    if shared:
-        parts.append(("From the shared legal sources, which every participant can consult. "
-                      if own else "Legal sources you may rely on. ")
-                     + "Cite one as [S1], [S2] when you use it.\n\n" + listed(shared))
-    if exhibits:
-        parts.append(format_exhibits(exhibits))
-    parts.append("Cite only what a passage actually says, and do not invent other authority.")
-    return "\n\n".join(parts)
 
 
 # Exhibits accumulate over a long run; the most recent are shown in full, older ones by

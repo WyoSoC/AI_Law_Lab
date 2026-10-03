@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Your seat · AI Law Lab{% endblock %}
+{% block crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ prefix }}/dashboard">Dashboard</a><span class="sep">›</span>
+  <span>{{ run.experiment_name }}</span><span class="sep">›</span>
+  <span>Your seat in run {{ (run.id|string)[:8] }}</span>
+</nav>
+{% endblock %}
+{% block content %}
+<h1 id="seat-title">{{ run.experiment_name }}</h1>
+<p class="lede" id="seat-sub">You are playing a role in this role-play. You see what an AI participant
+  in your seat would see: the scenario, your own profile, everything said aloud, and the exhibits on
+  the record. The full record, with everyone's private notes, opens when the run ends.</p>
+
+<div class="seat-status" id="status" role="status" aria-live="polite">Connecting…</div>
+
+<div class="seat-grid">
+  <div class="seat-main">
+    <section id="profile-box" class="panel" hidden>
+      <h2>Your profile</h2>
+      <p class="hint">Fill in who you are before the exchange starts. The other participants see only
+        your name and role; the moderator also sees your objective. Your bottom line and confidential
+        information are for you, and for the assessor after the run.</p>
+      <div class="two-col">
+        <div><label for="pf-name">Name</label><input type="text" id="pf-name" data-pf="name"></div>
+        <div><label for="pf-role">Role</label><input type="text" id="pf-role" data-pf="role"
+             placeholder="e.g. Counsel for the landowner"></div>
+      </div>
+      <label for="pf-goal">Objective</label>
+      <textarea id="pf-goal" class="short" data-pf="goal" placeholder="What you are trying to achieve."></textarea>
+      <label for="pf-backstory">Background</label>
+      <textarea id="pf-backstory" class="short" data-pf="backstory"></textarea>
+      <label for="pf-priorities">Priorities</label>
+      <textarea id="pf-priorities" class="short" data-pf="priorities"></textarea>
+      <label for="pf-bottom_line">Bottom line <span class="private-tag">private</span></label>
+      <textarea id="pf-bottom_line" class="short" data-pf="bottom_line"
+                placeholder="The point past which you would rather walk away."></textarea>
+      <label for="pf-confidential">Confidential information <span class="private-tag">private</span></label>
+      <textarea id="pf-confidential" class="short" data-pf="confidential"></textarea>
+      <p class="hint" id="pf-files"></p>
+      <div class="seat-actions">
+        <button type="button" class="primary" id="ready-btn">I'm ready</button>
+        <span class="hint" id="ready-note"></span>
+      </div>
+    </section>
+
+
+    <h2>The exchange</h2>
+    <details class="panel setup-panel" id="scenario-box">
+      <summary>Scenario and participants</summary>
+      <div class="scenario-text" id="scenario"></div>
+      <ul class="seat-roster" id="roster"></ul>
+    </details>
+    <div class="transcript" id="transcript"></div>
+    <p class="empty" id="transcript-empty">Nothing has been said yet.</p>
+
+    <h2 id="exhibits-head" hidden>Exhibits on the record</h2>
+    <ol class="exhibit-list panel" id="exhibits" hidden></ol>
+
+    <section id="turn-box" class="panel turn-box" hidden>
+      <h2>Your turn <span class="hint-inline" id="turn-no"></span></h2>
+      <p class="notice" id="directive" hidden></p>
+      <label for="reply">What you say</label>
+      <textarea id="reply" class="tall" placeholder="Speak as your character. Cite a passage you found as [S1], or an exhibit as [E1]."></textarea>
+      <div class="seat-actions">
+        <button type="button" class="primary" id="speak-btn">Speak</button>
+        <span class="hint" id="word-count"></span>
+        <span class="hint" id="deadline"></span>
+      </div>
+      <div id="search-box" hidden>
+        <h3>Look something up</h3>
+        <div class="seat-search">
+          <select id="search-where" aria-label="Where to search"></select>
+          <input type="text" id="search-q" placeholder="What are you looking for?">
+          <button type="button" id="search-btn">Search</button>
+        </div>
+        <p class="hint">Citing a passage from your own case file discloses it: it goes on the record as
+          an exhibit that everyone can read and answer.</p>
+        <ol class="found-list" id="found"></ol>
+      </div>
+    </section>
+  </div>
+</div>
+
+{% if can_stop %}
+<form class="stop-form" method="post" action="{{ prefix }}/runs/{{ run.id }}/stop"
+      onsubmit="return confirm('End the role-play now? What has been said so far is assessed.')">
+  <button type="submit" class="danger-btn">■ End the role-play</button>
+  <span class="hint">Ends the exchange for everyone; what was said so far is assessed.</span>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+const PREFIX = "{{ prefix }}";
+const RUN_ID = "{{ run.id }}";
+const ROLES = {{ roles|tojson }};
+</script>
+<script src="{{ prefix }}/static/play.js?v={{ asset_version }}"></script>
+{% endblock %}

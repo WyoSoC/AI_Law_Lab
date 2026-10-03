@@ -77,7 +77,8 @@ def test_a_roleplay_experiment_view():
     assert row["active"] and row["took"] == "44 min so far" and row["short"] == "b4fbcbf5"
     assert row["summary"] == "In progress: 31 of up to 100 turns so far"
     assert view["active_runs"] == [row]
-    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000, "libraries": []}
+    assert view["launch_defaults"] == {"max_turns": 100, "word_limit": 1000, "libraries": [],
+                                      "seating": [{"id": "a", "name": "A B", "model": "", "person": False}]}
 
 
 def test_document_and_agentic_experiment_views():

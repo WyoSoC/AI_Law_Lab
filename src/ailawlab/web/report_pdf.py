@@ -254,7 +254,9 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
             name = next((s["name"] for s in view["speakers"] if s["id"] == aid), aid)
             rule = colour_of.get(aid, (INK, "#fff"))[0]
             rows.append([Paragraph(f'<font color="{rule}"><b>{_plain(name)}</b></font>', st["cell"]),
-                         Paragraph(_plain(a.get("role", "")), st["cell"]),
+                         Paragraph(_plain(a.get("role", "")) + (
+                             f'<br/><font color="{MUTED}" size="8">played by {_plain(a["played_by"])}</font>'
+                             if a.get("played_by") else ""), st["cell"]),
                          Paragraph(_plain(a.get("goal", "")), st["cell"]),
                          Paragraph(str(turns_by.get(aid, 0)), st["cell"])])
         if len(rows) > 1:
@@ -278,7 +280,8 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
                 continue
             rule, fill = PALETTE[(e["color"] - 1) % len(PALETTE)] if e["color"] else (INK, "#f6f5f2")
             head = Paragraph(f'<a name="turn-{e["turn"]}"/><font color="{rule}"><b>{_plain(e["name"])}</b></font>'
-                             f'<font color="{MUTED}" size="8">  {_plain(e["role"])} · turn {e["turn"]} · {e["words"]} words</font>',
+                             f'<font color="{MUTED}" size="8">  {_plain(e["role"])} · turn {e["turn"]} · {e["words"]} words'
+                             f'{" · " + _plain(e["by"]) if e.get("by") else ""}</font>',
                              st["speaker"])
             inner = [head] + _blocks(parse(e["content"]), st, rule)
             if e["sources"]:

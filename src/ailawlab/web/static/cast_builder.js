@@ -9,6 +9,7 @@ const CAST_FIELDS = [
   // [key, label, control, placeholder, group]
   ["name", "Name", "input", "Dana Reyes"],
   ["role", "Role", "input", "Lead counsel for the Provider"],
+  ["played_by", "Played by", "player", "A model, or a person who types this role's turns during the run."],
   ["goal", "Objective", "area", "What is this person trying to achieve?"],
   ["backstory", "Background", "area", "Where they come from, and the experience that shapes how they act."],
   ["demeanor", "Demeanor", "input", "Calm and precise; never raises their voice."],
@@ -32,6 +33,13 @@ function slugify(s) {
 
 function field(card, key) { return card.querySelector(`[data-field="${key}"]`); }
 
+// Models a role can be played by: [{name, params, thinking}], and the lab default, set by the page.
+function modelChoices() { return typeof MODEL_CHOICES === "undefined" ? [] : MODEL_CHOICES; }
+function defaultModel() { return typeof DEFAULT_MODEL === "undefined" ? "" : DEFAULT_MODEL; }
+
+// The "Played by" choice stands for two fields: `model`, or `played_by: "person"`.
+function playerValue(agent) { return agent.played_by === "person" ? "person" : (agent.model || ""); }
+
 // Libraries a case file can be chosen from: [{name, documents}], set by the page.
 function libraryChoices() { return typeof LIBRARY_CHOICES === "undefined" ? [] : LIBRARY_CHOICES; }
 
@@ -43,6 +51,15 @@ function libraryOption(name, note) {
 function fieldHTML([key, label, control, placeholder, group]) {
   const tag = group === "private" ? ' <span class="private-tag">private</span>'
     : control === "list" ? ' <span class="hint-inline">(one per line)</span>' : "";
+  if (control === "player") {
+    const models = modelChoices().filter(m => m.name !== defaultModel())
+      .map(m => `<option value="${att(m.name)}">${att(m.name)}${m.params ? " · " + att(m.params) : ""}</option>`).join("");
+    return `<label>${label}</label>
+      <select data-field="${key}" data-control="player">
+        <option value="">AI · lab default${defaultModel() ? " (" + att(defaultModel()) + ")" : ""}</option>
+        ${models}<option value="person">A person (types their turns during the run)</option>
+      </select><p class="hint">${att(placeholder)} Each run can change this.</p>`;
+  }
   if (control === "libraries") {
     const option = l => libraryOption(l.name, plural(l.documents, "document"));
     const shown = libraryChoices().filter(l => !l.hidden).map(option).join("");
@@ -78,6 +95,15 @@ function addAgent(agent) {
     const v = agent[el.dataset.field];
     if (el.dataset.control === "libraries") {
       setCaseFiles(el, Array.isArray(v) ? v : (v ? [v] : []));
+      el.addEventListener("change", () => onCardInput(card, el));
+      return;
+    }
+    if (el.dataset.control === "player") {
+      const value = playerValue(agent);
+      // A model named in an uploaded file but not installed here is kept, and marked.
+      if (value && ![...el.options].some(o => o.value === value))
+        el.insertAdjacentHTML("beforeend", `<option value="${att(value)}">${att(value)} (not installed)</option>`);
+      el.value = value;
       el.addEventListener("change", () => onCardInput(card, el));
       return;
     }
@@ -133,6 +159,12 @@ function readCard(card) {
     if (control === "libraries") {
       const names = [...field(card, key).querySelectorAll("input:checked")].map(i => i.value);
       if (names.length) a[key] = names;
+      return;
+    }
+    if (control === "player") {
+      const v = field(card, key).value;
+      if (v === "person") a.played_by = "person";
+      else if (v) a.model = v;
       return;
     }
     const raw = field(card, key).value;

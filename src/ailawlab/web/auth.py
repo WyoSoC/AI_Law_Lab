@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
 import secrets
 import time
 from typing import Any
@@ -40,6 +41,9 @@ PUBLIC_PREFIXES = ("/static/",)
 # Signed in but not (yet) allowed in: these still work, everything else explains why not.
 LIMBO_EXACT = {"/auth/pending", "/auth/disabled"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# A person playing a role in a role-play may take their turns with a view-only account: the
+# seat endpoints check that the seat is theirs.
+SEAT_PATH = re.compile(r"^/api/runs/[0-9a-f-]{36}/seat/[a-z]+$")
 
 # Stand-in user when settings.auth_required is off (local development only).
 DEV_USER = {"id": None, "name": "Local developer", "email": "", "role": "admin",
@@ -252,7 +256,8 @@ class AuthGate:
             return await self._deny(scope, receive, send, 403,
                                     "Your account is waiting for approval." if user["status"] == "pending"
                                     else "Your account has been disabled.")
-        if method not in SAFE_METHODS and not may(user, "write") and path != "/auth/logout":
+        if method not in SAFE_METHODS and not may(user, "write") and path != "/auth/logout" \
+                and not SEAT_PATH.match(path):
             return await self._deny(scope, receive, send, 403,
                                     "Your account can view the lab but not change it. Ask an "
                                     "administrator for researcher access.")

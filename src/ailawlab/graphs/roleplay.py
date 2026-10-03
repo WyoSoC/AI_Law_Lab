@@ -21,12 +21,17 @@ import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from .. import seats
+from ..agent_spec import played_by_person
 from ..config import settings
 from ..grounding import in_list, link_citations
 from ..memory import Memory, MemoryScope, estimate_tokens
+from ..models import model_info, thinks
 from ..rag import Passage, case_files
+from ..tools import text_tool_calls, tool_args
 from .roleplay_policy import (
     MODERATOR_ID,
+    SOURCE_WORDS,
     character_reminder,
     cited_sources,
     compose_agent_prompt,
@@ -35,7 +40,6 @@ from .roleplay_policy import (
     format_entries,
     format_exhibits,
     format_ledger,
-    format_sources,
     intervention_due,
     intervention_text,
     last_speaker,
@@ -46,10 +50,10 @@ from .roleplay_policy import (
     pick_speaker,
     private_briefs,
     since_last_turn,
-    source_query,
     speaking_counts,
     speech_budget,
     transcript_segments,
+    truncate_words,
 )
 from .state import RoleplayState, ctx_from
 
@@ -134,6 +138,10 @@ async def moderator_node(state: RoleplayState, config: RunnableConfig) -> dict:
 
     if turn >= state.get("max_turns", settings.default_max_turns):
         return {"done": True, "next_speaker": "", "directive": ""}
+    if ctx.opt("stop_requested", lambda: False)():
+        await ctx.tracer.note("stopped by request: the exchange ends here and is assessed",
+                              node="moderator")
+        return {"done": True, "next_speaker": "", "directive": ""}
     if turn == 0:
         return {"next_speaker": agents[0]["id"], "done": False, "directive": ""}
 
@@ -184,6 +192,7 @@ async def moderator_node(state: RoleplayState, config: RunnableConfig) -> dict:
                                  "role": f"intervention: {technique}", "content": text}]
         update["last_intervention"] = turn
         directive.append(f"The moderator just said to you: {text}")
+        seats.publish(ctx.run_id, entries=update["transcript"])
 
     update["directive"] = "\n".join(directive)
     await ctx.tracer.note(f"turn {turn + 1}: {names[next_id]} speaks ({rule})"
@@ -194,12 +203,12 @@ async def moderator_node(state: RoleplayState, config: RunnableConfig) -> dict:
 
 
 async def _update_ledger(ctx, agent: dict, system: str, incoming: str, previous: dict | None,
-                         num_ctx: int) -> dict | None:
+                         num_ctx: int, model: str) -> dict | None:
     """The agent's private negotiation notes, carried forward turn to turn."""
     res = await ctx.router.chat(
         [{"role": "system", "content": system},
          {"role": "user", "content": f"{incoming}\n\n{format_ledger(previous)}\n\n{LEDGER_REQUEST}"}],
-        think=False, temperature=0.3, num_ctx=num_ctx,
+        model=model, think=False, temperature=0.3, num_ctx=num_ctx,
         options={"num_predict": 900}, format=ledger_schema(),
     )
     await ctx.tracer.llm_call(res, node="ledger", agent_id=agent["id"])
@@ -211,17 +220,155 @@ async def _update_ledger(ctx, agent: dict, system: str, incoming: str, previous:
     return ledger
 
 
+# ---------------------------------------------------------------- finding sources
+#
+# A speaker searches for what it needs instead of being handed passages: an AI agent through
+# tools, a person through the search box on their page. Both go through TurnSources, so a
+# passage is numbered [S1], [S2] in the order that speaker found it during the turn, and
+# citing one from a case file discloses it exactly as before.
+
+SEARCHES_PER_TURN = 4
+HITS_PER_SEARCH = 4
+
+TOOLS = {
+    "own": ("search_case_file",
+            ("Search your own case file: evidence and documents only you hold. No one else "
+             "has seen these passages. Citing one in your turn discloses it to everyone as an "
+             "exhibit.")),
+    "shared": ("search_legal_sources",
+               "Search the shared legal sources that every participant can consult."),
+}
+
+
+class TurnSources:
+    """The passages one speaker found during one turn, and the searches that found them."""
+
+    def __init__(self, ctx, state: RoleplayState, agent: dict):
+        self.ctx, self.agent = ctx, agent
+        own = [n for n in case_files(agent) if ctx.libraries.subset([n])]
+        shared = [n for n in state.get("libraries") or [] if n not in own]
+        self.libraries = {"own": own, "shared": [n for n in shared if ctx.libraries.subset([n])]}
+        self.exhibits = {e["chunk_id"]: e["marker"] for e in state.get("exhibits") or []}
+        self.found: list[tuple[Passage, bool]] = []
+        self.searches = 0
+
+    def places(self) -> list[str]:
+        return [k for k in ("own", "shared") if self.libraries[k]]
+
+    def tools(self) -> list[dict]:
+        return [{"type": "function", "function": {
+                    "name": TOOLS[k][0], "description": TOOLS[k][1],
+                    "parameters": {"type": "object", "required": ["query"], "properties": {
+                        "query": {"type": "string",
+                                  "description": "What you are looking for, in plain words."}}}}}
+                for k in self.places()]
+
+    def tool_place(self, name: str) -> str | None:
+        return next((k for k in self.places() if TOOLS[k][0] == name), None)
+
+    async def search(self, query: str, where: str) -> list[dict]:
+        """Search one place; returns the hits as listed, each with its [S] number (new or
+        already given) or its exhibit marker."""
+        query = " ".join(str(query or "").split())[:500]
+        if where not in self.places() or not query:
+            return []
+        self.searches += 1
+        try:
+            hits = await self.ctx.libraries.subset(self.libraries[where]).search(
+                query, top_k=HITS_PER_SEARCH)
+        except Exception as e:  # noqa: BLE001 - a failed search is the speaker's to work around
+            await self.ctx.tracer.note(f"legal source search failed ({type(e).__name__})",
+                                       node="speak", agent_id=self.agent["id"])
+            return []
+        await self.ctx.tracer.retrieval(query, hits, node="speak", agent_id=self.agent["id"])
+        known = {p.chunk_id: i for i, (p, _) in enumerate(self.found, start=1)}
+        out = []
+        for p in hits:
+            if p.chunk_id in self.exhibits:
+                out.append({"marker": self.exhibits[p.chunk_id], "passage": p, "new": False})
+                continue
+            if p.chunk_id not in known:
+                self.found.append((p, where == "own"))
+                known[p.chunk_id] = len(self.found)
+            out.append({"marker": f"S{known[p.chunk_id]}", "passage": p,
+                        "new": known[p.chunk_id] == len(self.found)})
+        return out
+
+    @staticmethod
+    def label(p: Passage, private: bool) -> str:
+        where = (f" (your case file {p.library_label()})" if private
+                 else f" (library {p.library_label()})" if p.corpus else "")
+        return p.cite_label() + where
+
+    def result_text(self, hits: list[dict], where: str) -> str:
+        if not hits:
+            return "Nothing relevant was found there. Try other words, or speak without it."
+        rows = []
+        for h in hits:
+            p = h["passage"]
+            if h["marker"].startswith("E"):
+                rows.append(f"[{h['marker']}] {p.cite_label()} is already on the record as an exhibit.")
+            else:
+                rows.append(f"[{h['marker']}] {self.label(p, where == 'own')}\n"
+                            f"{truncate_words(p.content, SOURCE_WORDS)}")
+        return "\n\n".join(rows)
+
+    def listing(self) -> list[dict]:
+        """The passages found so far, for a person's page."""
+        return [{"marker": f"S{i}", "label": self.label(p, private), "private": private,
+                 "content": truncate_words(p.content, SOURCE_WORDS)}
+                for i, (p, private) in enumerate(self.found, start=1)]
+
+
+def research_note(sources: TurnSources) -> str:
+    """How an AI speaker may look things up this turn, or "" when it has nowhere to look.
+
+    Worded to invite a search. Measured 2026-10-03 on an opening turn: a note that said to
+    search "when you need evidence ..., not by habit" got gemma4 to search 0 times in 6;
+    this one, 6 in 6 (qwen3.6: 2 in 4, then 4 in 4)."""
+    places = sources.places()
+    if not places:
+        return ""
+    holds, tools = [], []
+    if "own" in places:
+        holds.append("your case file holds evidence no one else has seen")
+        tools.append("search_case_file")
+    if "shared" in places:
+        holds.append("the shared legal sources hold the law every participant can consult")
+        tools.append("search_legal_sources")
+    own = ("Citing a passage from your own case file discloses it: it goes on the record as an "
+           "exhibit everyone can read and answer. Disclose one when it strengthens your "
+           "position; keep back one that would hurt it. " if "own" in places else "")
+    return (f"{' and '.join(holds).capitalize()}. Before you speak, look up what you need with "
+            f"{' or '.join(tools)} (up to {SEARCHES_PER_TURN} searches this turn): a position "
+            "backed by the record is stronger than one asserted. Passages come back numbered "
+            f"[S1], [S2]; cite one by its number when you rely on it. {own}Cite only what a "
+            "passage actually says, and do not invent other authority.")
+
+
+# ---------------------------------------------------------------- taking a turn
+
 async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
-    """The selected agent updates its private notes, then takes its turn."""
+    """The selected participant takes a turn: an AI agent updates its private notes, looks
+    up what it needs and speaks; a person is asked, and the run waits for their reply."""
     ctx = ctx_from(config)
     agents = state["agents"]
     agent = next((a for a in agents if a["id"] == state["next_speaker"]), None)
     if agent is None:
         raise ValueError(f"moderator selected unknown agent {state['next_speaker']!r}")
+    seats.publish(ctx.run_id, speaking=agent["id"])
+    if played_by_person(agent):
+        return await _person_turn(ctx, state, agent)
+    return await _agent_turn(ctx, state, agent)
+
+
+async def _agent_turn(ctx, state: RoleplayState, agent: dict) -> dict:
+    agents = state["agents"]
     name = agent.get("name", agent["id"])
     turn = state.get("turn", 0) + 1
     word_limit = int(state.get("word_limit", settings.default_word_limit))
-    think = True
+    model = agent.get("model") or settings.chat_model
+    think = thinks(await model_info(model))
     transcript = state.get("transcript", [])
 
     system = compose_agent_prompt(agent, agents, state["scenario"], word_limit)
@@ -233,61 +380,131 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
         label = "Since your last turn" if has_spoken else "What has been said so far"
         incoming = f"{label}:\n{format_entries(new)}"
 
-    found = await _consult_sources(ctx, state, agent, new or transcript)
-    passages = [p for p, _ in found]
+    sources = TurnSources(ctx, state, agent)
     exhibits = list(state.get("exhibits") or [])
-    sources = format_sources([{"label": p.cite_label() + (
-                                  f" (your case file {p.library_label()})" if private
-                                  else f" (library {p.library_label()})" if p.corpus else ""),
-                               "content": p.content, "private": private}
-                              for p, private in found], exhibits)
-
+    on_record = format_exhibits(exhibits) if exhibits else ""
+    # Room for every search's passages, on top of what the prompt holds before any search.
+    found_room = SEARCHES_PER_TURN * HITS_PER_SEARCH * 320 if sources.places() else 0
     num_ctx = context_window(estimate_tokens(system) + estimate_tokens(incoming) + 20_000
-                             + estimate_tokens(sources) + speech_budget(word_limit, think) + 1500)
+                             + estimate_tokens(on_record) + found_room
+                             + speech_budget(word_limit, think) + 1500)
     ledger = await _update_ledger(ctx, agent, system, incoming,
-                                  state.get("ledgers", {}).get(agent["id"]), num_ctx)
+                                  state.get("ledgers", {}).get(agent["id"]), num_ctx, model)
 
     memory = Memory(MemoryScope(run_id=ctx.run_id, agent_id=agent["id"]), ctx.router,
                     token_budget=memory_budget(word_limit, len(agents), num_ctx, think))
     prompt = "\n\n".join(p for p in (
         incoming,
         format_ledger(ledger),
-        sources,
+        on_record,
+        research_note(sources),
         f"Note from the moderator: {state['directive']}" if state.get("directive") else "",
         character_reminder(agent, word_limit),
         f"It is your turn. Respond as {name}.",
     ) if p)
     messages = await memory.build_messages(prompt, system_prompt=system)
 
-    res = await ctx.router.chat(messages, think=think, num_ctx=num_ctx, temperature=0.7,
-                                options={"num_predict": speech_budget(word_limit, think)})
-    event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"],
-                                         prompt_preview=prompt)
+    async def say(convo: list[dict], tools: list[dict] | None, thinking: bool):
+        return await ctx.router.chat(convo, model=model, tools=tools, think=thinking,
+                                     num_ctx=num_ctx, temperature=0.7,
+                                     options={"num_predict": speech_budget(word_limit, thinking)})
+
+    # The agent may search a few times, then speaks. Its last call has no tools, so the
+    # turn always ends in words.
+    convo = list(messages)
+    while True:
+        tools = sources.tools() if sources.searches < SEARCHES_PER_TURN else []
+        res = await say(convo, tools or None, think)
+        event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"],
+                                             prompt_preview=prompt if len(convo) == len(messages) else "")
+        calls = res.tool_calls or (text_tool_calls(res.text, [t["function"]["name"] for t in tools])
+                                   if tools else [])
+        if not (tools and calls):
+            break
+        convo.append({"role": "assistant", "content": "" if not res.tool_calls else res.text or "",
+                      "tool_calls": calls})
+        for call in calls:
+            tool, args = tool_args(call)
+            where = sources.tool_place(tool)
+            if where is None:
+                output = f"There is no tool called {tool!r}."
+            elif sources.searches >= SEARCHES_PER_TURN:
+                output = "No more searches this turn. Take your turn now."
+            else:
+                output = sources.result_text(await sources.search(args.get("query", ""), where), where)
+            await ctx.tracer.tool_call(tool, args, output, node="speak", agent_id=agent["id"])
+            convo.append({"role": "tool", "content": output, "tool_name": tool})
+    if text_tool_calls(res.text, [TOOLS[k][0] for k in TOOLS]):
+        # Out of searches but still asking for one, as text: ask once more for the turn itself.
+        convo.append({"role": "user", "content": "You cannot search any more this turn. Take "
+                      f"your turn now, in your own words, as {name}."})
+        res = await say(convo, None, think)
+        event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"])
     if res.truncated and not res.text.strip():
         await ctx.tracer.note("reasoning used the whole token budget before any reply; "
                               "retrying this turn without reasoning", node="speak",
                               agent_id=agent["id"])
-        res = await ctx.router.chat(messages, think=False, num_ctx=num_ctx, temperature=0.7,
-                                    options={"num_predict": speech_budget(word_limit, False)})
+        res = await say(convo, None, False)
         event_id = await ctx.tracer.llm_call(res, node="speak", agent_id=agent["id"])
 
     content = res.text.strip() or "(no response produced)"
-    words = len(content.split())
-    if words > word_limit * 1.15:
-        await ctx.tracer.note(f"{name} used {words} words against a limit of {word_limit}",
-                              node="speak", agent_id=agent["id"])
-
-    # Memory keeps what the agent heard and what it said, once each. The notes, reminder
-    # and moderator note are rebuilt every turn, so storing them would only duplicate.
+    # Memory keeps what the agent heard and what it said, once each. The notes, reminder,
+    # moderator note and passages are rebuilt every turn, so storing them would only duplicate.
     await memory.add_message("user", incoming)
     await memory.add_message("assistant", content)
     if await memory.maybe_compact():
         await ctx.tracer.event("memory_write", agent_id=agent["id"], node="speak",
                                payload={"action": "compacted short-term into long-term"})
+    return await _record_turn(ctx, state, agent, turn, content, sources.found, event_id,
+                              {"private_notes": ledger, "thinking": res.thinking,
+                               "host": res.host, "model": model})
 
+
+async def _person_turn(ctx, state: RoleplayState, agent: dict) -> dict:
+    """Ask the person in this seat for their turn and wait for it."""
+    name = agent.get("name", agent["id"])
+    turn = state.get("turn", 0) + 1
+    live = seats.get(ctx.run_id)
+    seat = live.seats[agent["id"]]
+    sources = TurnSources(ctx, state, agent)
+    await ctx.tracer.note(f"waiting for {name} ({seat.player_name}) to take turn {turn}",
+                          node="speak", agent_id=agent["id"])
+    content = await seats.await_reply(ctx.run_id, agent["id"], turn, state.get("directive", ""),
+                                      sources)
+    if content is None:
+        if live.stopped:
+            return {"directive": ""}
+        # The turn is spent, so a person who has gone away cannot hold the run forever.
+        text = (f"{name} did not reply within {live.reply_minutes} minute"
+                f"{'' if live.reply_minutes == 1 else 's'}, so the exchange moves on.")
+        await ctx.tracer.note(text, node="speak", agent_id=agent["id"])
+        entry = {"turn": turn - 1, "agent_id": MODERATOR_ID, "name": "Moderator",
+                 "role": "no reply", "content": text}
+        seats.publish(ctx.run_id, entries=[entry])
+        return {"transcript": [entry], "turn": turn, "directive": ""}
+    event_id = await ctx.tracer.event("note", node="speak", agent_id=agent["id"], payload={
+        "message": f"{name}'s turn, typed by {seat.player_name}", "response": content,
+        "player": seat.player_name})
+    return await _record_turn(ctx, state, agent, turn, content, sources.found, event_id,
+                              {"private_notes": None, "thinking": None, "host": "",
+                               "played_by": seat.player_name})
+
+
+async def _record_turn(ctx, state: RoleplayState, agent: dict, turn: int, content: str,
+                       found: list[tuple[Passage, bool]], event_id: int | None,
+                       extra: dict) -> dict:
+    """Put a turn on the record: the entry, the passages it found and cited, and what its
+    citations disclosed."""
+    name = agent.get("name", agent["id"])
+    word_limit = int(state.get("word_limit", settings.default_word_limit))
+    words = len(content.split())
+    if words > word_limit * 1.15:
+        await ctx.tracer.note(f"{name} used {words} words against a limit of {word_limit}",
+                              node="speak", agent_id=agent["id"])
+    exhibits = list(state.get("exhibits") or [])
+    passages = [p for p, _ in found]
     entry = {"turn": turn, "agent_id": agent["id"], "name": name,
-             "role": agent.get("role", ""), "content": content,
-             "private_notes": ledger, "thinking": res.thinking, "host": res.host}
+             "role": agent.get("role", ""), "content": content, **extra}
     cited = cited_sources(content, len(passages))
     records = [{**p.source(f"S{i}", i in cited), "private": private,
                 "holder": agent["id"] if private else None, "content": p.content}
@@ -308,10 +525,19 @@ async def speak_node(state: RoleplayState, config: RunnableConfig) -> dict:
     if disclosed:
         await ctx.tracer.note(f"{name} disclosed {', '.join(disclosed)}", node="speak",
                               agent_id=agent["id"])
+    # One note per turn spoken, which is also how a run's progress is counted.
+    by = extra.get("played_by") or extra.get("model") or ""
+    await ctx.tracer.event("note", node="speak", agent_id=agent["id"], payload={
+        "message": f"turn {turn}: {name} spoke {words} words" + (f" ({by})" if by else ""),
+        "spoken": turn})
+    seats.publish(ctx.run_id, entries=[entry], exhibits=after, speaking="")
+    ledgers = state.get("ledgers", {})
+    if extra.get("private_notes") is not None:
+        ledgers = {**ledgers, agent["id"]: extra["private_notes"]}
     return {
         "transcript": [entry],
         "turn": turn,
-        "ledgers": {**state.get("ledgers", {}), agent["id"]: ledger},
+        "ledgers": ledgers,
         "exhibits": after,
         "directive": "",
     }
@@ -330,44 +556,6 @@ def _exhibit_lookup(exhibits: list[dict]):
     return lookup
 
 
-async def _consult_sources(ctx, state: RoleplayState, agent: dict,
-                           recent: list[dict]) -> list[tuple[Passage, bool]]:
-    """The passages put before this speaker, each with whether it is from the speaker's own
-    case file: up to three from its case files, then the closest from the shared libraries.
-
-    Only this agent's case files and the shared libraries are searched, so another agent's
-    case file can reach this prompt only once disclosed, as an exhibit. Passages already on
-    the record as exhibits are left out here, since the speaker sees them there.
-
-    A failed search is noted in the trace and the turn goes ahead without sources: losing
-    the citations for one turn is better than losing an hour-long run.
-    """
-    own = case_files(agent)
-    shared = [n for n in state.get("libraries") or [] if n not in own]
-    if not own and not shared:
-        return []
-    query = source_query(agent, recent)
-    found: list[tuple[Passage, bool]] = []
-    try:
-        if own and ctx.libraries.subset(own):
-            found += [(p, True) for p in await ctx.libraries.subset(own).search(query, top_k=3)]
-        if shared and ctx.libraries.subset(shared):
-            k = 2 if own else min(settings.rag_top_k, 4)
-            found += [(p, False) for p in await ctx.libraries.subset(shared).search(query, top_k=k)]
-    except Exception as e:  # noqa: BLE001 - see docstring
-        await ctx.tracer.note(f"legal source search failed ({type(e).__name__}); this turn "
-                              "has no sources", node="speak", agent_id=agent["id"])
-        return []
-    await ctx.tracer.retrieval(query, [p for p, _ in found], node="speak", agent_id=agent["id"])
-    on_record = {e["chunk_id"] for e in state.get("exhibits") or []}
-    out, seen = [], set()
-    for p, private in found:
-        if p.chunk_id not in on_record and p.chunk_id not in seen:
-            seen.add(p.chunk_id)
-            out.append((p, private))
-    return out
-
-
 async def _summarize_segment(ctx, segment: list[dict]) -> str:
     entries = format_entries(segment)
     res = await ctx.router.chat(
@@ -382,6 +570,7 @@ async def _summarize_segment(ctx, segment: list[dict]) -> str:
 
 async def assess_node(state: RoleplayState, config: RunnableConfig) -> dict:
     ctx = ctx_from(config)
+    seats.publish(ctx.run_id, speaking="", phase="assessing")
     transcript = state.get("transcript", [])
     total = sum(estimate_tokens(t["content"]) + 20 for t in transcript)
 

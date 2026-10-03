@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from .agent_spec import check_cast, normalize_agent
+from . import accounts, seats
+from .agent_spec import check_cast, normalize_agent, played_by_person, seat_cast
 from .config import settings
 from .db import fetch_all, fetch_one, get_pool, jsonb
 from .graphs.agentic_workflow import build_agentic_graph, deadline_check
@@ -20,6 +22,7 @@ from .graphs.document_analysis import build_document_graph
 from .graphs.roleplay import build_roleplay_graph
 from .graphs.state import RunContext
 from .grounding import SourceLedger
+from .models import chat_models
 from .network_tools import OnlineReader, fetch_library_name, web_search_ready
 from .rag import Libraries, all_run_library_names, pin_libraries, run_library_names, wanted_versions
 from .research import brief_of, candidate_libraries, draft_plan, normalize_plan, research_settings
@@ -145,6 +148,8 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
         raise ValueError("this experiment is in the trash; restore it before running it")
     if exp["mode"] == "agentic_workflow":
         inputs = await _agentic_inputs(exp, inputs or {})
+    if exp["mode"] == "roleplay":
+        inputs = await _roleplay_inputs(exp, inputs or {}, launched_by)
     names = all_run_library_names(exp["mode"], exp["config"] or {}, inputs or {})
     merged = {**(exp["config"] or {}), **(inputs or {})}
     if exp["mode"] == "document_analysis":
@@ -165,6 +170,58 @@ async def create_run(experiment_id: str, inputs: dict | None = None,
             await cur.execute("INSERT INTO run_libraries (run_id, position, corpus) "
                               "VALUES (%s, %s, %s)", (run["id"], position, name))
     return run
+
+
+async def _roleplay_inputs(exp: dict, inputs: dict, launched_by: Any) -> dict:
+    """A role-play run's inputs as recorded: the model and the person for each role checked
+    against what is installed and who has an account. A role the experiment gives to a
+    person, with nobody named for it, is given to whoever launches the run."""
+    inputs = dict(inputs)
+    merged = {**(exp["config"] or {}), **inputs}
+    agents = [normalize_agent(a) for a in merged.get("agents") or [] if isinstance(a, dict)]
+    ids = {a.get("id") for a in agents}
+    installed = {m["name"] for m in await chat_models()}
+    models = {k: str(v or "") for k, v in (inputs.get("models") or {}).items() if k in ids}
+    for a in agents:
+        model = models.get(a.get("id"), a.get("model") or "")
+        if model and installed and model not in installed:
+            raise ValueError(f"{a.get('name') or a.get('id')} is set to be played by {model}, "
+                             "which is not installed on the cluster.")
+    raw_players = {k: v for k, v in (inputs.get("players") or {}).items() if k in ids and v}
+    for a in agents:
+        if played_by_person(a) and a["id"] not in raw_players and a["id"] not in models:
+            raw_players[a["id"]] = str(launched_by) if launched_by else "local"
+    players: dict[str, dict] = {}
+    for aid, who in raw_players.items():
+        who = who.get("user") if isinstance(who, dict) else who
+        if str(who) == "local":
+            if settings.auth_required:
+                raise ValueError("Choose a lab member to play each role played by a person.")
+            players[aid] = {"user": "local", "name": "Local developer"}
+            continue
+        user = await accounts.get_user(str(who)) if _uuid_like(str(who)) else None
+        if not user or user.get("status") != "active":
+            raise ValueError("Each role played by a person needs a lab member with an active "
+                             "account.")
+        players[aid] = {"user": str(user["id"]), "name": accounts.display_name(user)}
+    minutes = inputs.get("reply_minutes")
+    for key in ("models", "players", "reply_minutes"):
+        inputs.pop(key, None)
+    if models:
+        inputs["models"] = models
+    if players:
+        inputs["players"] = players
+        minutes = settings.reply_minutes_default if minutes in (None, "") else int(minutes)
+        inputs["reply_minutes"] = max(0, min(minutes, settings.reply_minutes_max))
+    return inputs
+
+
+def _uuid_like(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 async def _agentic_inputs(exp: dict, inputs: dict) -> dict:
@@ -268,7 +325,8 @@ def _initial_state(mode: str, config: dict, inputs: dict) -> dict:
         word_limit = int(merged.get("word_limit", settings.default_word_limit))
         return {
             "scenario": merged.get("scenario", ""),
-            "agents": [normalize_agent(a) for a in merged.get("agents", [])],
+            "agents": seat_cast(merged.get("agents", []), merged.get("models"),
+                                merged.get("players")),
             "transcript": [],
             "turn": 0,
             "max_turns": max(2, min(max_turns, settings.max_turns_limit)),
@@ -322,6 +380,12 @@ async def execute_run(run_id: str) -> dict:
                              "there is nothing to answer the question from")
         if mode == "roleplay":
             await _check_roleplay(state, tracer)
+            ctx.config = {**config, "stop_requested": lambda: run_id in _stop_requests}
+            players = inputs.get("players") or {}
+            if players and not await _seat_players(run_id, state, players, inputs, tracer):
+                await tracer.note("stopped before everyone was ready; nothing was played")
+                await _set_status(run_id, "cancelled", finished_at=datetime.now(UTC))
+                return {}
         if mode == "agentic_workflow":
             urls = state["plan"].get("urls") or []
             if urls and reader and reader.allow_web:
@@ -358,6 +422,7 @@ async def execute_run(run_id: str) -> dict:
     finally:
         _running.discard(run_id)
         _stop_requests.discard(run_id)
+        seats.close(run_id)
 
 
 # Runs the researcher asked to stop; their agents report what they have and the write-up runs.
@@ -365,10 +430,12 @@ _stop_requests: set[str] = set()
 
 
 def request_stop(run_id: str) -> bool:
-    """Ask a running agentic run to stop researching. False if it is not running here."""
+    """Ask a running run to stop: an agentic run stops researching and writes its answer; a
+    role-play ends the exchange and is assessed. False if it is not running here."""
     if run_id not in _running:
         return False
     _stop_requests.add(run_id)
+    seats.stop(run_id)
     return True
 
 
@@ -463,6 +530,22 @@ async def _libraries_for_run(run_id: str, mode: str, config: dict, inputs: dict,
     return libraries
 
 
+async def _seat_players(run_id: str, state: dict, players: dict, inputs: dict,
+                        tracer: Tracer) -> bool:
+    """Open the seats for the people in this run and wait until each has filled in their
+    profile and said they are ready. Their profiles go into the run's cast. False if the run
+    was stopped first."""
+    live = seats.open_run(run_id, state, players, int(inputs.get("reply_minutes") or 0))
+    who = ", ".join(f"{s.agent.get('name', s.agent_id)} ({s.player_name})" for s in live.seats.values())
+    await tracer.note(f"waiting for the people in this run to be ready: {who}")
+    if not await seats.wait_until_ready(live):
+        return False
+    state["agents"] = [live.seats[a["id"]].agent if a["id"] in live.seats else a
+                       for a in state["agents"]]
+    await tracer.note("everyone is ready; the exchange begins")
+    return True
+
+
 async def _check_roleplay(state: dict, tracer: Tracer) -> None:
     """Fail fast on a cast that cannot run; record lesser problems in the trace.
 
@@ -505,6 +588,7 @@ def _summarize(mode: str, final: dict) -> dict:
         }
     if mode == "roleplay":
         return {
+            "cast": final.get("agents", []),
             "outcome": final.get("outcome", ""),
             "transcript": final.get("transcript", []),
             "turns": final.get("turn", 0),

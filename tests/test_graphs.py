@@ -238,6 +238,62 @@ async def test_roleplay_case_files_stay_private_until_cited():
         assert e["corpus"] == own[e["disclosed_by"]] and e["private"]
 
 
+async def test_a_person_takes_turns_while_the_agents_wait():
+    """One role is played by a person (here a task standing in for them) and the other by
+    qwen3.6: the run waits for the person to be ready and for each of their turns."""
+    import asyncio
+
+    from ailawlab import seats
+
+    exp = await experiments.create_experiment(
+        "Person in the loop (test)", "roleplay",
+        config={"libraries": ["test"], "max_turns": 4, "word_limit": 120, "agents": [
+            {"id": "provider", "name": "Dana Reyes", "role": "counsel for the Provider",
+             "goal": "Cap indemnification at 12 months of fees.", "model": "qwen3.6:latest"},
+            {"id": "client", "name": "Sam Okafor", "role": "counsel for the Client",
+             "played_by": "person"},
+        ]},
+    )
+    run = await experiments.create_run(str(exp["id"]), inputs={
+        "scenario": "Provider and Client negotiate the indemnification cap in a Wyoming "
+                    "services agreement.", "reply_minutes": 5}, launched_by=None)
+    run_id = str(run["id"])
+    assert run["inputs"]["players"] == {"client": {"user": "local", "name": "Local developer"}}
+    said: list[str] = []
+
+    async def person():
+        while (live := seats.get(run_id)) is None:
+            await asyncio.sleep(0.2)
+        seats.set_profile(live, "client", {"goal": "Keep indemnification uncapped.",
+                                           "bottom_line": "No cap below 24 months of fees."})
+        seats.set_ready(live, "client")
+        while seats.get(run_id) is not None:
+            seat = live.seats["client"]
+            if seat.turn_open:
+                hits = await seat.sources.search("indemnification cap", "shared")
+                text = (f"We cannot accept a 12-month cap; see [{hits[0]['marker']}]. "
+                        if hits and hits[0]["marker"].startswith("S") else "We cannot accept a 12-month cap. ")
+                seats.submit(live, "client", text + "Would you consider 24 months?")
+                said.append(text)
+            await asyncio.sleep(0.5)
+
+    helper = asyncio.create_task(person())
+    result = await asyncio.wait_for(experiments.execute_run(run_id), 900)
+    helper.cancel()
+
+    by = {t["agent_id"]: t for t in result["transcript"] if t["agent_id"] != "moderator"}
+    assert set(by) == {"provider", "client"} and said
+    client = next(t for t in result["transcript"] if t["agent_id"] == "client")
+    assert client["played_by"] == "Local developer" and client["private_notes"] is None
+    assert by["provider"]["model"] == "qwen3.6:latest"
+    cast = {a["id"]: a for a in result["cast"]}
+    assert cast["client"]["bottom_line"] == "No cap below 24 months of fees."
+    # The person was given no memory: they remember for themselves.
+    rows = await fetch_all("SELECT DISTINCT agent_id FROM memory_messages WHERE run_id=%s", (run_id,))
+    assert {r["agent_id"] for r in rows} == {"provider"}
+    assert result["outcome"].strip()
+
+
 async def test_agent_reads_online_and_cites_a_saved_copy():
     brief = ("Find the eCFR section on how a federal agency must publish a notice of proposed "
              "rulemaking (1 CFR), read it, and answer in two sentences.")

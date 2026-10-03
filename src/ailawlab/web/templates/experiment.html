@@ -100,6 +100,7 @@
   <article class="person-card">
     <div class="person-name">{{ a.name }}</div>
     {% if a.role %}<div class="person-role">{{ a.role }}</div>{% endif %}
+    {% if a.played_by %}<div class="played-by">Played by {{ a.played_by }}</div>{% endif %}
     {% if a.goal %}
     <div class="person-field">
       <div class="person-label">Objective</div>
@@ -171,6 +172,44 @@
         </div>
       </div>
     </details>
+    {% if v.launch_defaults.seating %}
+    <details class="pacing" id="seating">
+      <summary>Who plays each role: <span id="seat-summary"></span></summary>
+      <p class="hint">Each role can be played by its own model, so you can set one model against
+        another, or swap them between runs to see whether the outcome follows the model. A role
+        played by a person waits for them: they fill in their profile when the run starts and type
+        their turns on their own page, and they see only what an AI in their seat would see.</p>
+      <table class="seat-table">
+        <tbody>
+        {% for a in v.launch_defaults.seating %}
+        <tr data-agent="{{ a.id }}">
+          <th scope="row">{{ a.name }}</th>
+          <td><select class="seat-by" aria-label="Who plays {{ a.name }}" onchange="syncInputs()">
+            <option value="">Lab default ({{ default_model }})</option>
+            {% for m in models %}{% if m.name != default_model %}
+            <option value="{{ m.name }}"{% if a.model == m.name %} selected{% endif %}>{{ m.name }}{% if m.params %} · {{ m.params }}{% endif %}{% if not m.thinking %} · no reasoning{% endif %}</option>
+            {% endif %}{% endfor %}
+            {% if a.model and a.model not in models|map(attribute='name')|list %}
+            <option value="{{ a.model }}" selected>{{ a.model }} (not installed)</option>
+            {% endif %}
+            <option value="person"{% if a.person %} selected{% endif %}>A person</option>
+          </select></td>
+          <td><select class="seat-player" aria-label="Who plays {{ a.name }}" onchange="syncInputs()" hidden>
+            {% for u in members %}<option value="{{ u.id }}">{{ u.name }}{% if u.email and u.email != u.name %} ({{ u.email }}){% endif %}</option>{% endfor %}
+          </select></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div id="reply-row" hidden>
+        <label for="in_reply">Minutes a person has to reply</label>
+        <input type="number" id="in_reply" min="0" max="{{ reply_minutes_max }}" value="{{ reply_minutes }}"
+               oninput="syncInputs()" class="narrow">
+        <p class="hint">If they have not replied by then, the exchange moves on without them. 0 waits
+          as long as it takes. The person is sent to their page when they open the run's link.</p>
+      </div>
+    </details>
+    {% endif %}
     <p class="estimate" id="estimate"></p>
   {% elif exp.mode == 'document_analysis' %}
     <label for="in_question">Question</label>
@@ -311,7 +350,7 @@
     {% endif %}
     <p class="hint">Starts as the experiment's {{ 'legal sources' if exp.mode == 'roleplay' else 'libraries' }}; changes
       apply to this run only, and the run records what it used. Ticked libraries are searched together.
-      {% if exp.mode == 'roleplay' %}Passages are put before each speaker, who can cite them as [S1], [S2].
+      {% if exp.mode == 'roleplay' %}Each speaker searches them when it needs to, and can cite what it finds as [S1], [S2].
       {% elif exp.mode == 'document_analysis' %}With a document, you may untick all for a run without retrieved authority.{% endif %}
       Each library is searched as it is now unless you choose an earlier version, which repeats an
       earlier result exactly. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
@@ -374,7 +413,7 @@ function buildInputs() {
     const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
     if (turns !== BASE.max_turns) inputs.max_turns = turns;
     if (words !== BASE.word_limit) inputs.word_limit = words;
-    return withLibraries(inputs);
+    return withLibraries(withSeating(inputs));
   }
   const inputs = MODE === "document_analysis" ? {question: $("in_question").value.trim()} : {};
   // The document is optional: sent only when there is one.
@@ -579,6 +618,41 @@ function withLibraries(inputs) {
   return inputs;
 }
 
+// Who plays each role in this run. Only what differs from the experiment is sent, except
+// that a role played by a person always names the person.
+function seatRows() { return [...document.querySelectorAll(".seat-table tr[data-agent]")]; }
+
+function withSeating(inputs) {
+  const models = {}, players = {};
+  seatRows().forEach((row, i) => {
+    const base = BASE.seating[i], by = row.querySelector(".seat-by").value;
+    if (by === "person") players[row.dataset.agent] = row.querySelector(".seat-player").value;
+    else if (base.person || by !== (base.model || "")) models[row.dataset.agent] = by;
+  });
+  if (Object.keys(models).length) inputs.models = models;
+  if (Object.keys(players).length) {
+    inputs.players = players;
+    inputs.reply_minutes = num("in_reply", 0);
+  }
+  return inputs;
+}
+
+function people() { return seatRows().filter(r => r.querySelector(".seat-by").value === "person").length; }
+
+function showSeating() {
+  if (!$("seating")) return;
+  const by = seatRows().map(r => {
+    const v = r.querySelector(".seat-by").value;
+    r.querySelector(".seat-player").hidden = v !== "person";
+    return v === "person" ? "a person" : (v || "default");
+  });
+  const kinds = [...new Set(by)];
+  $("seat-summary").textContent = kinds.length === 1 && kinds[0] === "default"
+    ? "the lab default model for everyone"
+    : seatRows().map((r, i) => `${r.querySelector("th").textContent} by ${by[i]}`).join(", ");
+  $("reply-row").hidden = !people();
+}
+
 // Mirrors views.duration_text and roleplay_policy.estimate_run_seconds.
 function estimateSeconds(turns, words) {
   return turns * (ESTIMATE.per_turn_s + ESTIMATE.per_1000_words_s * words / 1000) + ESTIMATE.assess_s;
@@ -598,7 +672,9 @@ function syncInputs() {
     const turns = num("in_turns", BASE.max_turns), words = num("in_words", BASE.word_limit);
     $("pace-turns").textContent = turns;
     $("pace-words").textContent = words.toLocaleString();
-    $("estimate").textContent = `If it uses every turn, this run takes ${durationText(estimateSeconds(turns, words))}. `
+    showSeating();
+    $("estimate").textContent = `If it uses every turn, this run takes ${durationText(estimateSeconds(turns, words))}`
+      + (people() ? ", plus the time people take to reply. " : ". ")
       + "The moderator usually ends it sooner, when the parties agree or someone walks away.";
   }
   if (!rawEdited) $("inputs_json").value = JSON.stringify(buildInputs(), null, 2);

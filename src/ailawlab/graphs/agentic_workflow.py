@@ -18,7 +18,6 @@ found it, so a [n] in the answer names one passage, document, library and versio
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -30,6 +29,7 @@ from langgraph.graph import END, StateGraph
 from ..config import settings
 from ..grounding import cited_numbers, link_citations
 from ..network_tools import current_agent, resolve_result_markers
+from ..tools import tool_args
 from .answer_style import ANSWER_STYLE, strip_letter_format
 from .state import AgenticState, ctx_from
 
@@ -155,17 +155,6 @@ def compact(messages: list[dict[str, Any]], keep: int) -> list[dict[str, Any]]:
     return out
 
 
-def _tool_args(call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    fn = call.get("function", {})
-    args = fn.get("arguments", {})
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except json.JSONDecodeError:
-            args = {}
-    return fn.get("name", ""), args if isinstance(args, dict) else {}
-
-
 async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str, Any]:
     """One research agent's loop over one sub-question. Returns its findings."""
     registry = ctx.opt("registry")
@@ -205,7 +194,7 @@ async def investigate(ctx, state: AgenticState, sub: dict[str, Any]) -> dict[str
         if res.tool_calls and not last:
             convo.append({"role": "assistant", "content": res.text or "", "tool_calls": res.tool_calls})
             for call in res.tool_calls:
-                name, args = _tool_args(call)
+                name, args = tool_args(call)
                 output, elapsed_ms = await registry.call(name, args)
                 await tracer.tool_call(name, args, output, node="act", agent_id=agent,
                                        eval_ms=elapsed_ms)

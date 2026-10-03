@@ -194,6 +194,8 @@ past results. Fill in the fields below.</p>
 <script>
 const PREFIX = "{{ prefix }}";
 const LIBRARY_CHOICES = {{ libraries|tojson }};   // for each agent's case files
+const MODEL_CHOICES = {{ models|tojson }};         // what each agent can be played by
+const DEFAULT_MODEL = {{ default_model|tojson }};
 // Once someone hand-edits the JSON, the builder stops overwriting it: their text is the
 // source of truth from that point, and silently clobbering it would be hostile.
 let rawEdited = false;

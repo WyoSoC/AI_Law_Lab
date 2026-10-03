@@ -730,3 +730,32 @@ a.cite { text-decoration: none; } a.cite:hover { text-decoration: underline; }
 .danger-btn { background: var(--bad); color: #fff; border: 0; border-radius: 6px; padding: .45rem .9rem; font-weight: 600; cursor: pointer; }
 .plan-lib { align-items: baseline; }
 .plan-lib .lib-name { white-space: nowrap; }
+
+/* A person's seat in a live role-play (play.html) */
+.seat-status { margin: 0 0 1.2rem; padding: .7rem 1rem; border-radius: var(--radius);
+               background: var(--panel); border: 1px solid var(--line); font-weight: 600; }
+.seat-status.yours { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.seat-status.done { background: var(--data-soft); color: var(--data); border-color: var(--data); }
+.seat-status a { color: inherit; }
+.seat-main { max-width: 900px; }
+.seat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; margin-top: .6rem; }
+.seat-actions .over { color: var(--bad); }
+.turn-box { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); scroll-margin-top: 5rem; }
+.turn-box h3 { font-size: .92rem; margin: 1.2rem 0 .4rem; }
+.seat-search { display: flex; flex-wrap: wrap; gap: .4rem; }
+.seat-search select { flex: 0 0 auto; width: auto; }
+.seat-search input { flex: 1 1 14rem; min-width: 0; }
+.found-list { margin: .6rem 0 0; padding-left: 0; list-style: none; display: grid; gap: .5rem; font-size: .88rem; }
+.found-list .thinking { margin-top: .3rem; max-height: 9rem; overflow: auto; }
+.seat-roster { list-style: none; padding: 0; margin: .8rem 0 0; display: grid; gap: .3rem; }
+.seat-roster li { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; }
+.seat-roster .turn-name { color: var(--c); }
+.seat-table { width: auto; margin: .4rem 0 .8rem; border-collapse: collapse; }
+.seat-table th { text-align: left; font-weight: 600; padding: .3rem 1rem .3rem 0; white-space: nowrap; }
+.seat-table td { padding: .3rem .5rem .3rem 0; }
+.seat-table select { width: auto; max-width: 22rem; margin: 0; }
+input.narrow { width: 7rem; }
+.played-by { font-size: .78rem; color: var(--muted); margin-top: .15rem; }
+.seat-main [hidden], .seat-table [hidden] { display: none; }
+.seat-main .panel > h2:first-child { margin-top: 0; }
+.seat-main .turn-box { margin-top: 1.2rem; }

@@ -25,6 +25,7 @@ from .. import (
     experiments,
     rag,
     research,
+    seats,
     source_material,
     sources,
     web_links,
@@ -32,12 +33,13 @@ from .. import (
 from ..config import settings
 from ..db import close_pool, fetch_all, fetch_one, get_pool
 from ..graphs.roleplay_policy import ESTIMATE
+from ..models import chat_models
 from ..network_tools import web_search_ready
 from ..rag import Corpus
 from ..router import get_router
 from ..tracing import run_metrics
 from . import auth, views
-from .auth import require, user_id
+from .auth import current_user, require, user_id
 
 log = logging.getLogger(__name__)
 BASE = Path(__file__).parent
@@ -272,6 +274,8 @@ async def new_experiment_form(request: Request):
         "word_limit_max": settings.word_limit_max,
         "aw_defaults": views.research_defaults({}, ""),
         "web_ready": web_search_ready(),
+        "models": await chat_models(),
+        "default_model": settings.chat_model,
     })
 
 
@@ -317,6 +321,8 @@ async def experiment_detail(request: Request, experiment_id: str):
     exp = await experiments.get_experiment(_experiment_id(experiment_id))
     if exp is None:
         raise HTTPException(404, "no such experiment")
+    if (seat := await _guard_player(request, experiment_id)) is not None:
+        return seat
     runs = await experiments.list_runs(experiment_id)
 
     # A role-play run can take hours, so its page says how far along it is.
@@ -325,7 +331,8 @@ async def experiment_detail(request: Request, experiment_id: str):
     if active and exp["mode"] == "roleplay":
         rows = await fetch_all(
             "SELECT run_id::text AS run_id, COUNT(*) AS turns FROM run_events "
-            "WHERE run_id = ANY(%s::uuid[]) AND node = 'speak' AND event_type = 'llm_call' "
+            "WHERE run_id = ANY(%s::uuid[]) AND node = 'speak' AND event_type = 'note' "
+            "  AND payload ? 'spoken' "
             "GROUP BY run_id", (active,))
         progress = {r["run_id"]: r["turns"] for r in rows}
 
@@ -340,7 +347,23 @@ async def experiment_detail(request: Request, experiment_id: str):
         "libraries": libraries,
         "library_versions": await _library_versions(),
         "web_ready": web_search_ready(),
+        **(await _seating_choices(request) if exp["mode"] == "roleplay" else {}),
     })
+
+
+async def _seating_choices(request: Request) -> dict:
+    """What a role can be played by: the installed chat models, and the lab's members (for a
+    role played by a person), with the person launching first."""
+    me = current_user(request) or {}
+    members = [{"id": str(u["id"]), "name": accounts.display_name(u), "email": u.get("email") or ""}
+               for u in await accounts.list_users() if u.get("status") == "active"]
+    if not settings.auth_required:
+        members = [{"id": "local", "name": "Local developer", "email": ""}, *members]
+    me_key = seats.user_key(me)
+    members.sort(key=lambda m: (m["id"] != me_key, m["name"].casefold()))
+    return {"models": await chat_models(), "default_model": settings.chat_model,
+            "members": members, "reply_minutes": settings.reply_minutes_default,
+            "reply_minutes_max": settings.reply_minutes_max}
 
 
 @app.post("/api/experiments/{experiment_id}/plan")
@@ -382,9 +405,141 @@ async def stop_run(run_id: str):
     return RedirectResponse(f"{P}/runs/{run_id}", status_code=303)
 
 
+# ---------------------------------------------------------------- people in a role-play
+#
+# A person playing a role sees only what an AI agent in that seat would see (seats.py). So
+# while their run is live, the pages that would show the others' private profiles, notes or
+# reasoning -- the experiment, its runs, the trace -- send them to their seat instead.
+
+
+async def _playing_in(request: Request, experiment_id: str) -> str | None:
+    """The live run of this experiment in which the signed-in person plays a role, if any."""
+    row = await fetch_one(
+        "SELECT id::text AS id FROM runs WHERE experiment_id=%s AND status IN ('pending','running') "
+        "AND EXISTS (SELECT 1 FROM jsonb_each(COALESCE(inputs->'players', '{}'::jsonb)) p "
+        "            WHERE p.value->>'user' = %s) ORDER BY created_at DESC LIMIT 1",
+        (experiment_id, seats.user_key(current_user(request))))
+    return row["id"] if row else None
+
+
+async def _guard_player(request: Request, experiment_id: str, html: bool = True):
+    """A redirect to the person's seat (or a 403 for the API) while they play in a live run of
+    this experiment; None otherwise."""
+    live = await _playing_in(request, str(experiment_id))
+    if live is None:
+        return None
+    if html:
+        return RedirectResponse(f"{P}/runs/{live}/play", status_code=303)
+    raise HTTPException(403, "You are playing a role in a live run of this experiment. Its full "
+                             "record opens when the run ends.")
+
+
+def _my_seat(request: Request, run_id: str, agent: str | None = None):
+    live = seats.get(run_id)
+    if live is None:
+        return None, None
+    key = seats.user_key(current_user(request))
+    mine = [s for s in live.seats.values() if s.user == key]
+    seat = next((s for s in mine if s.agent_id == agent), mine[0] if mine else None)
+    return live, seat
+
+
+async def _seat_or_error(request: Request, run_id: str):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    live, seat = _my_seat(request, _run_id(run_id), body.get("agent"))
+    if seat is None:
+        raise HTTPException(409, "This run has no open seat for you.")
+    return live, seat, body
+
+
+@app.get("/runs/{run_id}/play", response_class=HTMLResponse)
+async def play_page(request: Request, run_id: str):
+    run = await experiments.get_run(_run_id(run_id))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    key = seats.user_key(current_user(request))
+    players = (run.get("inputs") or {}).get("players") or {}
+    roles = [aid for aid, p in players.items() if isinstance(p, dict) and p.get("user") == key]
+    if not roles or run["status"] not in ("pending", "running"):
+        return RedirectResponse(f"{P}/runs/{run_id}", status_code=303)
+    return templates.TemplateResponse(request, "play.html", {
+        "run": run, "roles": roles,
+        "can_stop": auth.may(current_user(request), "write"),
+    })
+
+
+@app.get("/api/runs/{run_id}/seat")
+async def seat_view(request: Request, run_id: str, agent: str | None = None):
+    live, seat = _my_seat(request, _run_id(run_id), agent)
+    if seat is not None:
+        return no_store_json({**seats.view(live, seat), "status": "running"})
+    run = await fetch_one("SELECT status, inputs FROM runs WHERE id=%s", (run_id,))
+    players = ((run or {}).get("inputs") or {}).get("players") or {}
+    if not any(isinstance(p, dict) and p.get("user") == seats.user_key(current_user(request))
+               for p in players.values()):
+        raise HTTPException(404, "You have no seat in this run.")
+    # Before the seats open, and after the run is over, there is only its status to tell.
+    return no_store_json({"phase": "starting" if run["status"] in ("pending", "running") else "done",
+                          "status": run["status"]})
+
+
+def no_store_json(data: dict) -> JSONResponse:
+    return auth.no_store(JSONResponse(json.loads(json.dumps(data, default=str))))
+
+
+@app.post("/api/runs/{run_id}/seat/profile")
+async def seat_profile(request: Request, run_id: str):
+    live, seat, body = await _seat_or_error(request, run_id)
+    try:
+        seats.set_profile(live, seat.agent_id, body.get("profile") or {})
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return no_store_json(seats.view(live, seat))
+
+
+@app.post("/api/runs/{run_id}/seat/ready")
+async def seat_ready(request: Request, run_id: str):
+    live, seat, body = await _seat_or_error(request, run_id)
+    if body.get("profile"):
+        try:
+            seats.set_profile(live, seat.agent_id, body["profile"])
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+    if not str(seat.agent.get("name") or "").strip():
+        raise HTTPException(409, "Give your character a name first.")
+    seats.set_ready(live, seat.agent_id)
+    return no_store_json(seats.view(live, seat))
+
+
+@app.post("/api/runs/{run_id}/seat/search")
+async def seat_search(request: Request, run_id: str):
+    _live, seat, body = await _seat_or_error(request, run_id)
+    if not seat.turn_open or seat.sources is None:
+        raise HTTPException(409, "You can search during your turn.")
+    where = body.get("where") if body.get("where") in ("own", "shared") else "shared"
+    hits = await seat.sources.search(str(body.get("query") or ""), where)
+    return no_store_json({"hits": [h["marker"] for h in hits], "found": seat.sources.listing(),
+                          "exhibits": [h["marker"] for h in hits if h["marker"].startswith("E")]})
+
+
+@app.post("/api/runs/{run_id}/seat/speak")
+async def seat_speak(request: Request, run_id: str):
+    live, seat, body = await _seat_or_error(request, run_id)
+    try:
+        seats.submit(live, seat.agent_id, str(body.get("text") or ""))
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return no_store_json(seats.view(live, seat))
+
+
 @app.get("/experiments/{experiment_id}/cast.md")
-async def experiment_cast_file(experiment_id: str):
+async def experiment_cast_file(request: Request, experiment_id: str):
     """The experiment's cast as an agent file, to reuse in another experiment."""
+    await _guard_player(request, _experiment_id(experiment_id), html=False)
     exp = await experiments.get_experiment(experiment_id)
     agents = [a for a in ((exp or {}).get("config") or {}).get("agents") or [] if isinstance(a, dict)]
     if not agents:
@@ -410,6 +565,8 @@ async def run_detail(request: Request, run_id: str):
     run = await experiments.get_run(_run_id(run_id))
     if run is None:
         raise HTTPException(404, "no such run")
+    if (seat := await _guard_player(request, run["experiment_id"])) is not None:
+        return seat
     events = await fetch_all(
         "SELECT * FROM run_events WHERE run_id=%s ORDER BY seq", (run_id,)
     )
@@ -454,11 +611,12 @@ async def _references(cites: list[dict]) -> dict:
 
 
 @app.get("/runs/{run_id}/references.txt")
-async def run_references(run_id: str):
+async def run_references(request: Request, run_id: str):
     """The documents a run cited, as a numbered plain-text list with where each was cited."""
     run = await experiments.get_run(_run_id(run_id))
     if run is None:
         raise HTTPException(404, "no such run")
+    await _guard_player(request, run["experiment_id"], html=False)
     text = views.references_text(run, await _references(await _run_citations(run_id)))
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{run['experiment_name']} run {str(run['id'])[:8]} references").strip("-.")
     return Response(text, media_type="text/plain; charset=utf-8",
@@ -1002,8 +1160,9 @@ async def api_experiment_file(request: Request):
 
 
 @app.get("/experiments/{experiment_id}/experiment.md")
-async def experiment_file(experiment_id: str):
+async def experiment_file(request: Request, experiment_id: str):
     """A saved role-play experiment as one experiment file, to reuse or share."""
+    await _guard_player(request, _experiment_id(experiment_id), html=False)
     exp = await experiments.get_experiment(experiment_id)
     if exp is None or exp["mode"] != "roleplay":
         raise HTTPException(404, "no such role-play experiment")
@@ -1109,7 +1268,7 @@ async def api_cluster():
 
 
 @app.get("/runs/{run_id}/report.pdf")
-async def run_report_pdf(run_id: str, private: str = ""):
+async def run_report_pdf(request: Request, run_id: str, private: str = ""):
     """The run as a PDF: summary, scenario and cast, transcript. `private=1` adds each
     speaker's private notes and reasoning, which the default report leaves out."""
     from .report_pdf import run_report
@@ -1117,6 +1276,7 @@ async def run_report_pdf(run_id: str, private: str = ""):
     run = await experiments.get_run(_run_id(run_id))
     if run is None:
         raise HTTPException(404, "no such run")
+    await _guard_player(request, run["experiment_id"], html=False)
     if not run.get("result"):
         raise HTTPException(409, "This run has no result to export yet.")
     view = {**views.run_view(run), "refs": await _references(await _run_citations(run_id))}
@@ -1127,10 +1287,11 @@ async def run_report_pdf(run_id: str, private: str = ""):
 
 
 @app.get("/api/runs/{run_id}")
-async def api_run(run_id: str):
-    run = await experiments.get_run(run_id)
+async def api_run(request: Request, run_id: str):
+    run = await experiments.get_run(_run_id(run_id))
     if run is None:
         raise HTTPException(404, "no such run")
+    await _guard_player(request, run["experiment_id"], html=False)
     return JSONResponse({"run": json.loads(json.dumps(run, default=str)),
                          "metrics": await run_metrics(run_id)})
 
@@ -1143,6 +1304,11 @@ async def stream_run(run_id: str, request: Request):
     order of seconds, so a 1s poll is well within budget and avoids holding a dedicated
     connection open per viewer.
     """
+    run = await fetch_one("SELECT experiment_id FROM runs WHERE id=%s", (_run_id(run_id),))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    await _guard_player(request, run["experiment_id"], html=False)
+
     async def gen():
         last_seq = 0
         while True:

@@ -12,7 +12,9 @@ Design constraints for a legal research setting:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -23,6 +25,45 @@ from .network_tools import OnlineReader
 from .rag import Libraries, format_passages
 
 log = logging.getLogger(__name__)
+
+
+def tool_args(call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """A tool call's name and arguments; arguments that are not a JSON object become {}."""
+    fn = call.get("function", {})
+    args = fn.get("arguments", {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            args = {}
+    return fn.get("name", ""), args if isinstance(args, dict) else {}
+
+
+_TOOL_CALL_TAGS = re.compile(r"^\s*<tool_call>\s*(.*?)\s*</tool_call>\s*$", re.DOTALL)
+
+
+def text_tool_calls(text: str, names: list[str]) -> list[dict[str, Any]]:
+    """Tool calls a model wrote as its reply instead of making them. Some models (hermes3 on
+    Ollama) answer with {"name": ..., "arguments": {...}}, sometimes inside <tool_call> tags,
+    which Ollama passes through as text; read as a turn, that JSON would be spoken aloud.
+    Only a reply that is nothing but calls to the named tools counts. Pure."""
+    body = text.strip()
+    if m := _TOOL_CALL_TAGS.match(body):
+        body = m.group(1)
+    if not body.startswith(("{", "[")):
+        return []
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError:
+        return []
+    calls = value if isinstance(value, list) else [value]
+    out = []
+    for c in calls:
+        if not isinstance(c, dict) or c.get("name") not in names:
+            return []
+        args = c.get("arguments", c.get("parameters", {}))
+        out.append({"function": {"name": c["name"], "arguments": args if isinstance(args, dict) else {}}})
+    return out
 
 
 @dataclass

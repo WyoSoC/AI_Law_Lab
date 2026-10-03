@@ -105,6 +105,16 @@ SECTIONS: tuple[Section, ...] = (
             ("case file", "case files", "own case files", "library", "libraries",
              "private libraries", "own sources", "private sources", "evidence", "documents"),
             is_list=True),
+    Section("played_by", "Played by",
+            "Leave out for an AI agent. Write \"A person\" if someone will type this role's "
+            "turns during the run; they can fill in the rest of the profile when the run starts.",
+            ("player", "played by", "human", "human player", "participant type"),
+            in_template=False),
+    Section("model", "Model",
+            "The language model that plays this person, e.g. qwen3.6:latest. Leave out for "
+            "the lab's default model.",
+            ("language model", "llm", "ai model", "played by model"),
+            in_template=False),
     Section("notes", "Additional notes",
             "Anything else about this person.",
             ("notes", "other notes", "extra notes"),
@@ -265,6 +275,45 @@ def normalize_agent(agent: dict) -> dict:
             value = value.strip()
         if value not in ("", None, []):
             out[key] = value
+    # "Played by" is either a person or, when left out, the agent's model.
+    if "played_by" in out:
+        if is_person(out["played_by"]):
+            out["played_by"] = "person"
+            out.pop("model", None)
+        else:
+            del out["played_by"]
+    return out
+
+
+_PERSON_WORDS = {"person", "a person", "human", "a human", "human player", "a human player",
+                 "yes", "player", "participant", "a participant"}
+
+
+def is_person(value: object) -> bool:
+    """Whether a "Played by" value means a person types this role's turns."""
+    return isinstance(value, str) and " ".join(value.casefold().split()).rstrip(".") in _PERSON_WORDS
+
+
+def played_by_person(agent: dict) -> bool:
+    return agent.get("played_by") == "person"
+
+
+def seat_cast(agents: list[dict], models: dict | None, players: dict | None) -> list[dict]:
+    """The cast as a run plays it: each role played by the model or person the run chose,
+    falling back to the experiment's choice. Pure."""
+    out = []
+    for raw in agents:
+        a = normalize_agent(raw)
+        if a.get("id") in (players or {}):
+            a["played_by"] = "person"
+            a.pop("model", None)
+        elif a.get("id") in (models or {}):
+            a.pop("played_by", None)
+            if models[a["id"]]:
+                a["model"] = models[a["id"]]
+            else:
+                a.pop("model", None)
+        out.append(a)
     return out
 
 
@@ -622,6 +671,8 @@ def to_markdown(agents: list[dict]) -> str:
             value = a.get(s.key)
             if not value or s.key == "id":
                 continue
+            if s.key == "played_by":
+                value = "A person"
             body = "\n".join(f"- {item}" for item in value) if s.is_list else _escape(str(value))
             lines += ["", f"## {s.heading}", body]
         blocks.append("\n".join(lines))
@@ -715,8 +766,9 @@ def check_cast(agents: list[dict]) -> list[dict]:
                 "tell them apart.", aid)
         names.add((name or "").casefold())
 
-        if a.get("system_prompt"):
-            continue                        # a hand-written prompt is its author's call
+        if a.get("system_prompt") or played_by_person(a):
+            continue                        # a hand-written prompt is its author's call, and
+                                            # a person fills in their own profile at the start
         if not a.get("goal"):
             add("warning", f"{label} has no objective, so they have nothing to argue for.", aid)
         else:

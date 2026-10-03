@@ -9,7 +9,6 @@ from ailawlab.agent_spec import parse_markdown, to_markdown
 from ailawlab.graphs.roleplay_policy import (
     disclose,
     format_exhibits,
-    format_sources,
     private_briefs,
 )
 from ailawlab.rag import Libraries, LibraryPin, Passage, all_run_library_names, case_files
@@ -41,11 +40,7 @@ def p(chunk_id: int, corpus: str) -> Passage:
                    corpus=corpus, version=1)
 
 
-def test_an_agent_never_sees_another_agents_case_file():
-    from ailawlab.graphs import roleplay
-
-    searched: list[list[str]] = []
-
+def _fake_libraries(searched: list[list[str]]):
     class Fake(Libraries):
         async def search(self, query, top_k=None, library=None):
             searched.append(self.names)
@@ -55,38 +50,57 @@ def test_an_agent_never_sees_another_agents_case_file():
     pins = [LibraryPin(n, 1, [1]) for n in ("cases", "provider-file", "client-file")]
     libs = Fake(None, pins)
     libs.subset = lambda names: Fake(None, [x for x in pins if x.name in names])
+    return libs
 
-    async def note(*a, **k):
-        return 0
 
-    ctx = SimpleNamespace(libraries=libs, tracer=SimpleNamespace(retrieval=note, note=note))
+async def _note(*a, **k):
+    return 0
+
+
+def _ctx(libs):
+    return SimpleNamespace(libraries=libs, tracer=SimpleNamespace(retrieval=_note, note=_note))
+
+
+def test_an_agent_can_search_only_its_own_case_file_and_the_shared_sources():
+    from ailawlab.graphs.roleplay import TurnSources
+
+    searched: list[list[str]] = []
+    ctx = _ctx(_fake_libraries(searched))
     sam = {"id": "sam", "name": "Sam", "libraries": ["client-file"]}
-    state = {"libraries": ["cases"], "exhibits": []}
-    found = asyncio.run(roleplay._consult_sources(ctx, state, sam, []))
-    assert [(x.corpus, private) for x, private in found] == [("client-file", True), ("cases", False)]
+    turn = TurnSources(ctx, {"libraries": ["cases"], "exhibits": []}, sam)
+    assert turn.places() == ["own", "shared"]
+    assert [t["function"]["name"] for t in turn.tools()] == ["search_case_file", "search_legal_sources"]
+    own = asyncio.run(turn.search("the lease", "own"))
+    shared = asyncio.run(turn.search("the statute", "shared"))
+    assert [h["marker"] for h in own + shared] == ["S1", "S2"]
+    assert [(x.corpus, private) for x, private in turn.found] == [("client-file", True), ("cases", False)]
     assert "provider-file" not in {n for names in searched for n in names}
-    # Once on the record, a passage is shown as an exhibit, not again as a source.
-    found = asyncio.run(roleplay._consult_sources(ctx, {**state, "exhibits": [{"chunk_id": 2}]}, sam, []))
-    assert [x.corpus for x, _ in found] == ["cases"]
-    # No case file and no shared library: nothing is searched at all.
+    # The same passage found again keeps its number.
+    assert [h["marker"] for h in asyncio.run(turn.search("again", "own"))] == ["S1"]
+    assert len(turn.found) == 2 and turn.searches == 3
+    text = turn.result_text(own, "own")
+    assert text.startswith("[S1] Doc 2 (your case file “client-file” v1)\ntext 2")
+    # A passage already on the record comes back as its exhibit, not as a new source.
+    turn = TurnSources(ctx, {"libraries": ["cases"], "exhibits": [{"chunk_id": 2, "marker": "E1"}]}, sam)
+    hits = asyncio.run(turn.search("lease", "own"))
+    assert [h["marker"] for h in hits] == ["E1"] and turn.found == []
+    assert "already on the record" in turn.result_text(hits, "own")
+    # No case file and no shared library: no tools, and nothing is searched.
     searched.clear()
-    assert asyncio.run(roleplay._consult_sources(ctx, {"libraries": []}, {"id": "x"}, [])) == []
-    assert searched == []
+    bare = TurnSources(ctx, {"libraries": []}, {"id": "x"})
+    assert bare.places() == [] and bare.tools() == []
+    assert asyncio.run(bare.search("anything", "shared")) == [] and searched == []
 
 
-def test_the_sources_block_separates_own_shared_and_exhibits():
-    block = format_sources([{"label": "Memo", "content": "Own fact.", "private": True},
-                            {"label": "Statute", "content": "Law.", "private": False}],
-                           [{"marker": "E1", "label": "Lease", "content": "Clause.", "name": "Sam",
-                             "turn": 3, "private": True}])
-    own, shared, exhibits = block.index("[S1] Memo"), block.index("[S2] Statute"), block.index("[E1] Lease")
-    assert own < shared < exhibits
-    assert "No one else has seen these passages" in block and "discloses it" in block
-    assert "disclosed by Sam in turn 3, from their case file" in block
-    # Shared sources only: worded as before.
-    assert format_sources([{"label": "B", "content": "x"}]).startswith("Legal sources you may rely on.")
-    assert format_sources([], []) == ""
-    assert format_sources([], [{"marker": "E1", "label": "L", "content": "c", "name": "S", "turn": 1}])
+def test_the_research_note_says_where_an_agent_may_look():
+    from ailawlab.graphs.roleplay import TurnSources, research_note
+
+    ctx = _ctx(_fake_libraries([]))
+    both = research_note(TurnSources(ctx, {"libraries": ["cases"]}, {"id": "s", "libraries": ["client-file"]}))
+    assert "search_case_file" in both and "search_legal_sources" in both and "discloses it" in both
+    shared = research_note(TurnSources(ctx, {"libraries": ["cases"]}, {"id": "s"}))
+    assert "search_case_file" not in shared and "discloses" not in shared
+    assert research_note(TurnSources(ctx, {"libraries": []}, {"id": "s"})) == ""
 
 
 def test_older_exhibits_are_listed_by_label_only():

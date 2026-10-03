@@ -137,6 +137,22 @@ floor. Transcripts too long for the 128K window are summarized in sections, conc
 before assessment, and the assessor sees each party's bottom line so it can check whether
 anyone gave in past it or leaked a confidential fact.
 
+**Who plays each role.** Each role is played by the lab's default model (`chat_model`) unless
+it names its own (`model`, the "Model" section of an agent file), so a run can set qwen3.6
+against gemma4, or swap them between runs to see whether the outcome follows the model. The
+launch form lists the chat models installed on every Spark (`models.py`); a model without
+reasoning (hermes3) is called with thinking off. A role can instead be **played by a person**
+(`played_by: person`, "Played by: A person"), chosen per run from the lab's members. The run
+opens a seat for them (`seats.py`): on their own page (`/runs/{id}/play`) they fill in their
+profile, say they are ready, and type their turns; the run waits for them, and moves on after
+a time limit set at launch (default 30 minutes, 0 to wait indefinitely). A person sees only
+what an AI in their seat would see -- the scenario, their own profile, what is said aloud and
+the exhibits -- so while the run is live the experiment page, its runs and the trace send them
+back to their seat, and the full record opens when the run ends. A person with a view-only
+account can play; the seat endpoints check that the seat is theirs. **End the role-play**
+stops the exchange after the current turn (or stops waiting for a person) and assesses what
+was said. A run lives in the server process, so a restart ends it, people's seats included.
+
 These rules, and the studies they come from, are in `graphs/roleplay_policy.py`. Defaults
 are 100 turns and 2000 words a turn (the most a turn may be). Each turn is three calls; at
 1000 words they took about 26-30 s together on a live run (the reply ~17 s, private notes
@@ -227,12 +243,16 @@ of the text that was used.
 
 ### Legal sources in a role-play
 
-A role-play can be given a corpus, when it is designed or for a single run. Before each turn
-the speaker's objective and what was just said are used as a query, and the closest four
-passages (each cut to about 220 words) are put in front of that speaker as [S1]..[S4], with
-an instruction to cite only what a passage says. The retrieval is traced, and the transcript
-records which passages each turn was given and which it cited. A failed search costs that turn
-its sources, not the run. With no corpus, turns are exactly as before.
+A role-play can be given a corpus, when it is designed or for a single run. A speaker looks
+things up when it needs to rather than being handed passages: an AI agent has a
+`search_legal_sources` tool (and `search_case_file` for its own case files), up to four
+searches a turn, and a person has a search box on their page (`TurnSources` in
+`graphs/roleplay.py`). Passages (each cut to about 220 words) are numbered [S1], [S2] in the
+order the speaker found them, with an instruction to cite only what a passage says. A model
+that writes its search as text instead of calling the tool (hermes3) is read as calling it.
+Every search is traced, and the transcript records which passages each turn found and which
+it cited. A failed search costs that turn its sources, not the run. With no corpus, the
+speaker has nothing to search and turns are exactly as before.
 
 ### Reading a run
 
@@ -347,9 +367,9 @@ returned once. Every passage put in a prompt is labelled with its library, and a
 confine a search to one library (`search_libraries(..., library=...)`).
 
 In a role-play each agent can also hold **case files**: libraries only it can search (the
-agent's `libraries` list, the "Case files" section of an agent file). Before each turn the
-speaker sees up to three passages from its own case files, marked as unseen by anyone else,
-then the closest from the shared libraries. Citing a case-file passage discloses it: it goes
+agent's `libraries` list, the "Case files" section of an agent file). The speaker searches
+them separately from the shared libraries, and their passages come back marked as unseen by
+anyone else. Citing a case-file passage discloses it: it goes
 on the record as an exhibit, [E1], [E2], which every participant sees from then on and may
 cite to rely on it or answer it. Another agent's case file never reaches a prompt except as
 an exhibit. The run stores the exhibits with who disclosed each and in which turn; the
@@ -358,7 +378,7 @@ assessor sees them and each side's case files, and the run page and PDF list the
 Citations are traced to the source in every mode (`grounding.py`). Document analysis numbers
 its one retrieval [1], [2]; an agent's passages keep one number across all of its searches
 (`SourceLedger`), so a [3] in its answer names one passage whichever search found it; a
-role-play speaker cites the passages shown that turn as [S1], [S2], and exhibits as [E1]. Each marker becomes a
+role-play speaker cites the passages it found that turn as [S1], [S2], and exhibits as [E1]. Each marker becomes a
 `citations` row holding the chunk, document, library and version, and where it appeared
 ("Answer", "Turn 7 · Dana Reyes"); a marker naming no passage the model was given is recorded
 as unsupported. The run page lists the sources given to the model and a **References**

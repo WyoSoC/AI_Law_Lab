@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     # graphs/roleplay_policy.ESTIMATE holds the figures the pages show.
     default_word_limit: int = 2000
     word_limit_max: int = 2000
+    # A role played by a person: how long the run waits for their reply before the exchange
+    # moves on without it (0 waits as long as it takes). Set per run at launch.
+    reply_minutes_default: int = 30
+    reply_minutes_max: int = 1440
 
     # --- web ------------------------------------------------------------
     host: str = "0.0.0.0"
