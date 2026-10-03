@@ -240,6 +240,11 @@ details summary { cursor: pointer; color: var(--muted); font-size: .84rem; margi
 .lede { font-size: 1.08rem; line-height: 1.6; color: var(--ink); max-width: 62ch; margin-bottom: 1.4rem; }
 .prose { line-height: 1.7; max-width: 68ch; color: var(--ink); }
 .prose.muted-note { color: var(--muted); font-size: .88rem; margin-top: 1rem; }
+.terms { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+         color: var(--muted); font-size: .7rem; line-height: 1.5; max-width: 110ch; }
+.terms h2 { font-size: .78rem; margin: 0 0 .4rem; color: var(--muted); }
+.terms h3 { font-size: .7rem; font-weight: 600; margin: .7rem 0 .15rem; color: var(--muted); }
+.terms p { margin: 0 0 .35rem; }
 
 .cta-row { display: flex; gap: .6rem; flex-wrap: wrap; }
 .btn {
