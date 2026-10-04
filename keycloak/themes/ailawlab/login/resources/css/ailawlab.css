@@ -1,0 +1,12 @@
+/* The terms acknowledgement under the sign-in box (footer.ftl), inset to line up with the form. */
+.ailawlab-ack {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--pf-v5-global--Color--200, #6a6e73);
+  margin: 0;
+  padding: 0 3rem 2rem;
+}
+.ailawlab-ack a { color: inherit; text-decoration: underline; }
+@media (max-width: 576px) {
+  .ailawlab-ack { padding: 0 1.5rem 1.5rem; }
+}

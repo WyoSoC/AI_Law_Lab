@@ -7,7 +7,7 @@ admin: KC_ADMIN_USERNAME from .env (asking for the password at the terminal, whi
 stored), or else the temporary bootstrap admin while it still exists.
 It creates or updates:
 
-* the `ailawlab` realm: sign-in by email, brute-force lockout, a password policy, and
+* the `ailawlab` realm: its sign-in pages' theme (keycloak/themes/ailawlab), sign-in by email, brute-force lockout, a password policy, and
   self-registration only when an outgoing mail server is configured (registration needs
   email verification, and password resets need email);
 * the `ai-law-lab` client the web app signs people in through, and its secret, which is
@@ -101,6 +101,8 @@ def realm_settings(env: dict[str, str]) -> dict:
     body = {
         "realm": REALM, "enabled": True, "displayName": "AI Law Lab",
         "displayNameHtml": "AI Law Lab",
+        # keycloak/themes/ailawlab, mounted by docker-compose.yml: the terms acknowledgement.
+        "loginTheme": "ailawlab",
         "loginWithEmailAllowed": True, "duplicateEmailsAllowed": False,
         "registrationEmailAsUsername": True, "rememberMe": True, "editUsernameAllowed": False,
         # Self-service accounts need email: to verify the address, and to reset a password.

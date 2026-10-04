@@ -44,6 +44,9 @@ services:
     ports:
       # Loopback only: the public route is Apache's /sso/ proxy, over HTTPS.
       - "127.0.0.1:8180:8080"
+    volumes:
+      # The sign-in pages' theme: Keycloak's own plus the terms acknowledgement.
+      - ./keycloak/themes/ailawlab:/opt/keycloak/themes/ailawlab:ro
     depends_on:
       db:
         condition: service_healthy

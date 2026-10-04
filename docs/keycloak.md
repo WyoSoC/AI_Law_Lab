@@ -11,6 +11,7 @@ decides what they may do (`src/ailawlab/accounts.py`).
 | Realm / client | `ailawlab` / `ai-law-lab` |
 | Keycloak's data | database `keycloak` in the `ailawlab-db` Postgres |
 | Configuration | `scripts/keycloak_setup.py`, re-runnable, reads `.env` |
+| Sign-in theme | `keycloak/themes/ailawlab` (Keycloak's own pages plus the terms acknowledgement) |
 | Console | `https://datahive.uwyo.edu/sso/admin/` |
 
 ## Who gets in
@@ -106,6 +107,10 @@ users can reach the lab or its sign-in page. External users need UW IT to publis
   `KC_BOOTSTRAP_ADMIN_USERNAME` and `KC_BOOTSTRAP_ADMIN_PASSWORD` to the keycloak service's
   `environment` (with values), start it, replace that admin as in step 2, then remove both lines
   again. Keycloak refuses to start if the username is set but the password is empty.
+- Sign-in pages: the realm's login theme is `ailawlab`, Keycloak's own `keycloak.v2` with the
+  Terms of Use acknowledgement in small print under the sign-in box (`footer.ftl`; styles in
+  `resources/css/ailawlab.css`). `docker-compose.yml` mounts it read-only. Keycloak caches
+  themes, so after editing it run `docker compose -p ai_law_lab up -d --force-recreate keycloak`.
 - Logs: `docker logs ailawlab-keycloak`.
 - Backups: Keycloak's data is the `keycloak` database in the same Postgres volume as the lab;
   back up both, e.g. `docker exec ailawlab-db pg_dump -U ailawlab keycloak > keycloak.sql`.
