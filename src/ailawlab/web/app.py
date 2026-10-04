@@ -1083,7 +1083,8 @@ def _taken_ids(raw: object) -> list[str]:
 @app.get("/api/agents/template")
 async def api_agents_template():
     """A blank, commented agent file to fill in by hand."""
-    return _markdown_download(agent_spec.template(), "agent-template")
+    return _markdown_download(agent_spec.template(settings.chat_model, await _model_names()),
+                              "agent-template")
 
 
 @app.get("/api/experiment-file/template")
@@ -1091,8 +1092,17 @@ async def api_experiment_file_template():
     """A blank, commented experiment file: scenario, settings, and a person to copy."""
     return _markdown_download(
         agent_spec.experiment_template(settings.default_max_turns, settings.default_word_limit,
-                                       settings.max_turns_limit, settings.word_limit_max),
+                                       settings.max_turns_limit, settings.word_limit_max,
+                                       settings.chat_model, await _model_names()),
         "experiment-template")
+
+
+async def _model_names() -> list[str]:
+    """Models a role can be played by, for the templates to list; none if the Sparks are down."""
+    try:
+        return [m["name"] for m in await chat_models()]
+    except Exception:  # noqa: BLE001 - a template is still useful without the list
+        return []
 
 
 @app.post("/api/agents/upload")

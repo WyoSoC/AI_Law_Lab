@@ -99,9 +99,14 @@ SECTIONS: tuple[Section, ...] = (
             "Private. Facts only this person knows. They guard them unless revealing one helps.",
             ("confidential", "private information", "private facts", "secrets",
              "secret information", "what only they know", "hidden information")),
+    Section("model", "Model",
+            "The language model that plays this person. Leave out, or write \"Default\", for "
+            "the lab's default model.",
+            ("language model", "llm", "ai model", "played by model")),
     Section("libraries", "Case files",
             "Private. Libraries from Legal Sources that only this person can draw on, one per "
-            "line starting with a dash (-). Citing a passage from one discloses it to everyone.",
+            "line starting with a dash (-). Citing a passage from one discloses it to everyone. "
+            "\"None\" or left out: no case files.",
             ("case file", "case files", "own case files", "library", "libraries",
              "private libraries", "own sources", "private sources", "evidence", "documents"),
             is_list=True),
@@ -109,11 +114,6 @@ SECTIONS: tuple[Section, ...] = (
             "Leave out for an AI agent. Write \"A person\" if someone will type this role's "
             "turns during the run; they can fill in the rest of the profile when the run starts.",
             ("player", "played by", "human", "human player", "participant type"),
-            in_template=False),
-    Section("model", "Model",
-            "The language model that plays this person, e.g. qwen3.6:latest. Leave out for "
-            "the lab's default model.",
-            ("language model", "llm", "ai model", "played by model"),
             in_template=False),
     Section("notes", "Additional notes",
             "Anything else about this person.",
@@ -141,6 +141,9 @@ their name. Under the name, fill in the sections that start with "## ".
   - Under "Tendencies", put each habit on its own line starting with "- ".
   - "Bottom line" and "Confidential information" are private. The other people in the
     role-play never see them.
+  - "Model" is the AI model that plays this person, and "Case files" the private libraries
+    they can search. They come filled in with the defaults: the lab's default model and no
+    case files. Change them to set a different model or give the person case files.
   - Anything between these arrow markers is instructions and is ignored, like this
     whole paragraph. You can delete it.
 
@@ -160,6 +163,9 @@ This file holds a whole role-play: the scenario, its settings, and the cast.
     with sections that start with "## ", exactly as in an agent file.
   - "Bottom line" and "Confidential information" are private. The other people in the
     role-play never see them.
+  - "Model" is the AI model that plays this person, and "Case files" the private libraries
+    they can search. They come filled in with the defaults: the lab's default model and no
+    case files. Change them to set a different model or give the person case files.
   - Anything between these arrow markers is instructions and is ignored, like this
     whole paragraph. You can delete it.
 
@@ -275,6 +281,14 @@ def normalize_agent(agent: dict) -> dict:
             value = value.strip()
         if value not in ("", None, []):
             out[key] = value
+    # "None" under Case files, and "Default" under Model, mean the same as leaving them out.
+    if "libraries" in out:
+        out["libraries"] = [x for x in out["libraries"] if _blank_word(x) not in _NONE_WORDS]
+        if not out["libraries"]:
+            del out["libraries"]
+    if "model" in out and _blank_word(out["model"]) in _NONE_WORDS | {"default", "the default",
+                                                                    "lab default", "default model"}:
+        del out["model"]
     # "Played by" is either a person or, when left out, the agent's model.
     if "played_by" in out:
         if is_person(out["played_by"]):
@@ -283,6 +297,13 @@ def normalize_agent(agent: dict) -> dict:
         else:
             del out["played_by"]
     return out
+
+
+_NONE_WORDS = {"none", "no", "n/a", "na", "nil", "-", "no case files", "none."}
+
+
+def _blank_word(value: object) -> str:
+    return " ".join(str(value).casefold().split()).rstrip(".") if isinstance(value, str) else ""
 
 
 _PERSON_WORDS = {"person", "a person", "human", "a human", "human player", "a human player",
@@ -711,25 +732,43 @@ def to_experiment_markdown(scenario: str, settings: dict[str, int], agents: list
     return f"{text}\n\n{to_markdown(agents)}" if agents else text
 
 
-def _agent_template_lines() -> list[str]:
+def _agent_template_lines(default_model: str, models: Iterable[str] = ()) -> list[str]:
+    """One person to fill in. Model and Case files come filled in with their defaults, the
+    lab's default model and no case files, so the file shows what a run will use."""
+    others = [m for m in models if m != default_model]
+    filled = {
+        "model": (default_model, f"The language model that plays this person. {default_model} "
+                  "is the lab's default" + (f"; also available: {', '.join(others)}." if others
+                                            else ".")),
+        "libraries": ("None", ("Private. Libraries from Legal Sources that only this person "
+                               "can draw on. Replace \"None\" with their names, one per line "
+                               "starting with a dash (-). Citing a passage from one discloses "
+                               "it to everyone.")),
+    }
     lines = ["# Full name of the person"]
     for s in SECTIONS:
-        if s.in_template:
+        if not s.in_template:
+            continue
+        if s.key in filled:
+            value, hint = filled[s.key]
+            lines += ["", f"## {s.heading}", f"<!-- {hint} -->", value]
+        else:
             lines += ["", f"## {s.heading}", f"<!-- {s.hint} -->"]
     return lines
 
 
-def template() -> str:
+def template(default_model: str = "gemma4:latest", models: Iterable[str] = ()) -> str:
     """A blank, commented agent file to fill in."""
-    return "\n".join([TEMPLATE_INTRO, "", *_agent_template_lines()]) + "\n"
+    return "\n".join([TEMPLATE_INTRO, "", *_agent_template_lines(default_model, models)]) + "\n"
 
 
 def experiment_template(max_turns: int = 100, word_limit: int = 1000, max_turns_limit: int = 100,
-                        word_limit_max: int = 2000) -> str:
+                        word_limit_max: int = 2000, default_model: str = "gemma4:latest",
+                        models: Iterable[str] = ()) -> str:
     """A blank, commented experiment file: scenario, settings, and one person to copy."""
     head = to_experiment_markdown("", {"max_turns": max_turns, "word_limit": word_limit}, [],
                                   max_turns_limit=max_turns_limit, word_limit_max=word_limit_max)
-    return head + "\n\n" + "\n".join(_agent_template_lines()) + "\n"
+    return head + "\n\n" + "\n".join(_agent_template_lines(default_model, models)) + "\n"
 
 
 def check_cast(agents: list[dict]) -> list[dict]:

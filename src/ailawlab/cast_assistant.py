@@ -174,7 +174,9 @@ Return an empty list if there is nothing worth raising."""
 
 
 def _headings() -> str:
-    return "\n\n".join(f"## {s.heading}\n({s.hint})" for s in SECTIONS if s.in_template)
+    # Model and case files are the experimenter's choice, not something to invent.
+    return "\n\n".join(f"## {s.heading}\n({s.hint})" for s in SECTIONS
+                       if s.in_template and s.key not in ("model", "libraries"))
 
 
 def _strip_fences(text: str) -> str:

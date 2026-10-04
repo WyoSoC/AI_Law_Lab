@@ -184,10 +184,18 @@ Will go as far as 24 months of fees; walks away from uncapped indemnification.
 
 ## Confidential information
 The Provider's insurer refuses to cover uncapped indemnities.
+
+## Model
+qwen3.6:latest
+
+## Case files
+- provider-contract-file
 ```
 
 The other sections are `Background`, `Demeanor` and `Priorities`. Only the name is
-required. Headings match case-insensitively and by common synonyms ("Goal", "Walk-away
+required. `Model` is the model that plays the person (left out, or "Default": the lab's
+default, gemma4) and `Case files` the private libraries they can search (left out, or "None":
+none); the templates come with both filled in with those defaults. Headings match case-insensitively and by common synonyms ("Goal", "Walk-away
 point", "Interests"); ids are generated from names; text before the first name or inside
 `<!-- -->` is ignored. Unrecognized sections are kept under "Additional notes" and reported,
 never dropped. The builder offers an agent file template, bulk upload (several files, or

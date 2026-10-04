@@ -4,6 +4,8 @@ from __future__ import annotations
 from ailawlab.agent_spec import (
     assign_ids,
     check_cast,
+    experiment_template,
+    normalize_agent,
     parse_files,
     parse_markdown,
     template,
@@ -185,8 +187,25 @@ def test_the_blank_template_reads_cleanly():
     assert r.warnings == []
     assert len(r.agents) == 1
     for heading in ("## Role", "## Objective", "## Tendencies", "## Bottom line",
-                    "## Confidential information"):
+                    "## Confidential information", "## Model", "## Case files"):
         assert heading in t
+    # Model and Case files come filled in with the defaults: the lab's model, no case files.
+    assert r.agents[0]["model"] == "gemma4:latest" and "libraries" not in r.agents[0]
+
+
+def test_the_templates_list_the_models_and_take_them_back():
+    t = experiment_template(default_model="gemma4:latest",
+                            models=["gemma4:latest", "qwen3.6:latest"])
+    assert "also available: qwen3.6:latest" in t and "## Case files" in t
+    edited = t.replace("\ngemma4:latest\n", "\nqwen3.6:latest\n").replace(
+        "\nNone\n", "\n- lease-file\n- deed-file\n")
+    agent = parse_markdown(edited).agents[0]
+    assert agent["model"] == "qwen3.6:latest" and agent["libraries"] == ["lease-file", "deed-file"]
+
+
+def test_none_and_default_mean_left_out():
+    assert normalize_agent({"id": "x", "libraries": ["None"], "model": "Default"}) == {"id": "x"}
+    assert normalize_agent({"id": "x", "libraries": "- n/a\n- deed"})["libraries"] == ["deed"]
 
 
 def test_check_cast_needs_two_agents():
