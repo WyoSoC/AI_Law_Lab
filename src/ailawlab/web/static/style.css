@@ -245,6 +245,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: .84rem; margi
 .terms h2 { font-size: .78rem; margin: 0 0 .4rem; color: var(--muted); }
 .terms h3 { font-size: .7rem; font-weight: 600; margin: .7rem 0 .15rem; color: var(--muted); }
 .terms p { margin: 0 0 .35rem; }
+.nowrap { white-space: nowrap; }
 .terms ul, .terms ol { margin: 0 0 .35rem; padding-left: 1.4rem; }
 .terms li { margin: 0 0 .15rem; }
 .support-list { padding-left: 1.4rem; }
