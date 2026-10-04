@@ -11,7 +11,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from ..agent_spec import SECTIONS, check_cast, normalize_agent, seat_cast
+from ..agent_spec import SECTIONS, check_cast, normalize_agent, seat_cast, short_model
 from ..citations import citation
 from ..config import settings
 from ..graphs.roleplay_policy import estimate_run_seconds
@@ -131,7 +131,7 @@ def agent_view(raw: dict) -> dict[str, Any]:
         "private": [item(k) for k in _PRIVATE_KEYS if a.get(k)],
         "case_files": case_files(a),
         "prompt": a.get("system_prompt", ""),
-        "played_by": "a person" if a.get("played_by") == "person" else a.get("model", ""),
+        "played_by": "a person" if a.get("played_by") == "person" else short_model(a.get("model", "")),
     }
 
 
@@ -477,7 +477,7 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
                 "private_notes": t.get("private_notes") or {}, "thinking": t.get("thinking") or "",
                 "sources": t.get("sources") or [], "host": t.get("host", ""),
                 "by": (f"played by {t['played_by']}" if t.get("played_by")
-                       else t.get("model", "") if not moderator else ""),
+                       else short_model(t.get("model", "")) if not moderator else ""),
             })
         view.update(
             scenario=str(config.get("scenario") or ""),

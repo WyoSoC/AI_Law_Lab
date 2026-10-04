@@ -185,12 +185,12 @@
         <tr data-agent="{{ a.id }}">
           <th scope="row">{{ a.name }}</th>
           <td><select class="seat-by" aria-label="Who plays {{ a.name }}" onchange="syncInputs()">
-            <option value="">Lab default ({{ default_model }})</option>
+            <option value="">Lab default ({{ default_model|replace(':latest', '') }})</option>
             {% for m in models %}{% if m.name != default_model %}
-            <option value="{{ m.name }}"{% if a.model == m.name %} selected{% endif %}>{{ m.name }}{% if m.params %} · {{ m.params }}{% endif %}{% if not m.thinking %} · no reasoning{% endif %}</option>
+            <option value="{{ m.name }}"{% if a.model == m.name %} selected{% endif %}>{{ m.name|replace(':latest', '') }}{% if m.params %} · {{ m.params }}{% endif %}{% if not m.thinking %} · no reasoning{% endif %}</option>
             {% endif %}{% endfor %}
             {% if a.model and a.model not in models|map(attribute='name')|list %}
-            <option value="{{ a.model }}" selected>{{ a.model }} (not installed)</option>
+            <option value="{{ a.model }}" selected>{{ a.model|replace(':latest', '') }} (not installed)</option>
             {% endif %}
             <option value="person"{% if a.person %} selected{% endif %}>A person</option>
           </select></td>

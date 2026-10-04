@@ -265,6 +265,22 @@ def slugify(name: str) -> str:
     return s[:40].strip("-") or "agent"
 
 
+def default_model() -> str:
+    from .config import settings
+    return settings.chat_model
+
+
+def full_model(name: str) -> str:
+    """A model name as Ollama lists it: "gemma4" is "gemma4:latest"."""
+    name = " ".join(str(name).split())
+    return name if not name or ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+
+
+def short_model(name: str) -> str:
+    """A model name as a person writes it: "gemma4:latest" is "gemma4"."""
+    return name.removesuffix(":latest")
+
+
 def normalize_agent(agent: dict) -> dict:
     """A tidy copy of one agent: strings trimmed, tendencies as a list, empty fields dropped.
 
@@ -286,9 +302,16 @@ def normalize_agent(agent: dict) -> dict:
         out["libraries"] = [x for x in out["libraries"] if _blank_word(x) not in _NONE_WORDS]
         if not out["libraries"]:
             del out["libraries"]
-    if "model" in out and _blank_word(out["model"]) in _NONE_WORDS | {"default", "the default",
-                                                                    "lab default", "default model"}:
-        del out["model"]
+    # A model is held as Ollama names it ("gemma4" is "gemma4:latest"); the lab's default
+    # model, named or not, is the same as leaving it out.
+    if "model" in out:
+        if _blank_word(out["model"]) in _NONE_WORDS | {"default", "the default", "lab default",
+                                                       "default model"}:
+            del out["model"]
+        else:
+            out["model"] = full_model(out["model"])
+            if out["model"] == full_model(default_model()):
+                del out["model"]
     # "Played by" is either a person or, when left out, the agent's model.
     if "played_by" in out:
         if is_person(out["played_by"]):
@@ -690,11 +713,20 @@ def to_markdown(agents: list[dict]) -> str:
         lines = [f"# {name}"]
         for s in SECTIONS:
             value = a.get(s.key)
-            if not value or s.key == "id":
+            if s.key == "id":
                 continue
-            if s.key == "played_by":
-                value = "A person"
-            body = "\n".join(f"- {item}" for item in value) if s.is_list else _escape(str(value))
+            # Model and Case files are always written, with their defaults when unset, so a
+            # downloaded file shows what a run will use and where to change it.
+            if s.key == "model" and not played_by_person(a):
+                body = short_model(value or default_model())
+            elif s.key == "libraries" and not value:
+                body = "None"
+            elif not value:
+                continue
+            elif s.key == "played_by":
+                body = "A person"
+            else:
+                body = "\n".join(f"- {item}" for item in value) if s.is_list else _escape(str(value))
             lines += ["", f"## {s.heading}", body]
         blocks.append("\n".join(lines))
     return "\n\n\n".join(blocks) + "\n"
@@ -732,14 +764,15 @@ def to_experiment_markdown(scenario: str, settings: dict[str, int], agents: list
     return f"{text}\n\n{to_markdown(agents)}" if agents else text
 
 
-def _agent_template_lines(default_model: str, models: Iterable[str] = ()) -> list[str]:
+def _agent_template_lines(models: Iterable[str] = ()) -> list[str]:
     """One person to fill in. Model and Case files come filled in with their defaults, the
     lab's default model and no case files, so the file shows what a run will use."""
-    others = [m for m in models if m != default_model]
+    default = short_model(default_model())
+    others = [short_model(m) for m in models if short_model(m) != default]
     filled = {
-        "model": (default_model, f"The language model that plays this person. {default_model} "
-                  "is the lab's default" + (f"; also available: {', '.join(others)}." if others
-                                            else ".")),
+        "model": (default, f"The language model that plays this person. {default} is the "
+                  "lab's default" + (f"; also available: {', '.join(others)}." if others
+                                     else ".")),
         "libraries": ("None", ("Private. Libraries from Legal Sources that only this person "
                                "can draw on. Replace \"None\" with their names, one per line "
                                "starting with a dash (-). Citing a passage from one discloses "
@@ -757,18 +790,17 @@ def _agent_template_lines(default_model: str, models: Iterable[str] = ()) -> lis
     return lines
 
 
-def template(default_model: str = "gemma4:latest", models: Iterable[str] = ()) -> str:
+def template(models: Iterable[str] = ()) -> str:
     """A blank, commented agent file to fill in."""
-    return "\n".join([TEMPLATE_INTRO, "", *_agent_template_lines(default_model, models)]) + "\n"
+    return "\n".join([TEMPLATE_INTRO, "", *_agent_template_lines(models)]) + "\n"
 
 
 def experiment_template(max_turns: int = 100, word_limit: int = 1000, max_turns_limit: int = 100,
-                        word_limit_max: int = 2000, default_model: str = "gemma4:latest",
-                        models: Iterable[str] = ()) -> str:
+                        word_limit_max: int = 2000, models: Iterable[str] = ()) -> str:
     """A blank, commented experiment file: scenario, settings, and one person to copy."""
     head = to_experiment_markdown("", {"max_turns": max_turns, "word_limit": word_limit}, [],
                                   max_turns_limit=max_turns_limit, word_limit_max=word_limit_max)
-    return head + "\n\n" + "\n".join(_agent_template_lines(default_model, models)) + "\n"
+    return head + "\n\n" + "\n".join(_agent_template_lines(models)) + "\n"
 
 
 def check_cast(agents: list[dict]) -> list[dict]:

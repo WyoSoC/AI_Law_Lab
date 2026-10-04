@@ -34,6 +34,8 @@ function slugify(s) {
 function field(card, key) { return card.querySelector(`[data-field="${key}"]`); }
 
 // Models a role can be played by: [{name, params, thinking}], and the lab default, set by the page.
+// "gemma4:latest" reads as "gemma4"; the full name stays the value sent to the server.
+function shortModel(name) { return (name || "").replace(/:latest$/, ""); }
 function modelChoices() { return typeof MODEL_CHOICES === "undefined" ? [] : MODEL_CHOICES; }
 function defaultModel() { return typeof DEFAULT_MODEL === "undefined" ? "" : DEFAULT_MODEL; }
 
@@ -53,10 +55,10 @@ function fieldHTML([key, label, control, placeholder, group]) {
     : control === "list" ? ' <span class="hint-inline">(one per line)</span>' : "";
   if (control === "player") {
     const models = modelChoices().filter(m => m.name !== defaultModel())
-      .map(m => `<option value="${att(m.name)}">${att(m.name)}${m.params ? " · " + att(m.params) : ""}</option>`).join("");
+      .map(m => `<option value="${att(m.name)}">${att(shortModel(m.name))}${m.params ? " · " + att(m.params) : ""}</option>`).join("");
     return `<label>${label}</label>
       <select data-field="${key}" data-control="player">
-        <option value="">AI · lab default${defaultModel() ? " (" + att(defaultModel()) + ")" : ""}</option>
+        <option value="">AI · lab default${defaultModel() ? " (" + att(shortModel(defaultModel())) + ")" : ""}</option>
         ${models}<option value="person">A person (types their turns during the run)</option>
       </select><p class="hint">${att(placeholder)} Each run can change this.</p>`;
   }
@@ -102,7 +104,7 @@ function addAgent(agent) {
       const value = playerValue(agent);
       // A model named in an uploaded file but not installed here is kept, and marked.
       if (value && ![...el.options].some(o => o.value === value))
-        el.insertAdjacentHTML("beforeend", `<option value="${att(value)}">${att(value)} (not installed)</option>`);
+        el.insertAdjacentHTML("beforeend", `<option value="${att(value)}">${att(shortModel(value))} (not installed)</option>`);
       el.value = value;
       el.addEventListener("change", () => onCardInput(card, el));
       return;

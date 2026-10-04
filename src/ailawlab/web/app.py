@@ -1083,7 +1083,7 @@ def _taken_ids(raw: object) -> list[str]:
 @app.get("/api/agents/template")
 async def api_agents_template():
     """A blank, commented agent file to fill in by hand."""
-    return _markdown_download(agent_spec.template(settings.chat_model, await _model_names()),
+    return _markdown_download(agent_spec.template(await _model_names()),
                               "agent-template")
 
 
@@ -1093,7 +1093,7 @@ async def api_experiment_file_template():
     return _markdown_download(
         agent_spec.experiment_template(settings.default_max_turns, settings.default_word_limit,
                                        settings.max_turns_limit, settings.word_limit_max,
-                                       settings.chat_model, await _model_names()),
+                                       await _model_names()),
         "experiment-template")
 
 

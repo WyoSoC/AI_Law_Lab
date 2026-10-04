@@ -189,23 +189,38 @@ def test_the_blank_template_reads_cleanly():
     for heading in ("## Role", "## Objective", "## Tendencies", "## Bottom line",
                     "## Confidential information", "## Model", "## Case files"):
         assert heading in t
-    # Model and Case files come filled in with the defaults: the lab's model, no case files.
-    assert r.agents[0]["model"] == "gemma4:latest" and "libraries" not in r.agents[0]
+    # Model and Case files come filled in with the defaults, which read back as left out.
+    assert "## Model\n<!--" in t and "\ngemma4\n" in t and "\nNone\n" in t
+    assert "model" not in r.agents[0] and "libraries" not in r.agents[0]
 
 
 def test_the_templates_list_the_models_and_take_them_back():
-    t = experiment_template(default_model="gemma4:latest",
-                            models=["gemma4:latest", "qwen3.6:latest"])
-    assert "also available: qwen3.6:latest" in t and "## Case files" in t
-    edited = t.replace("\ngemma4:latest\n", "\nqwen3.6:latest\n").replace(
+    t = experiment_template(models=["gemma4:latest", "qwen3.6:latest", "hermes3:latest"])
+    assert "also available: qwen3.6, hermes3." in t
+    edited = t.replace("\ngemma4\n", "\nqwen3.6\n").replace(
         "\nNone\n", "\n- lease-file\n- deed-file\n")
     agent = parse_markdown(edited).agents[0]
     assert agent["model"] == "qwen3.6:latest" and agent["libraries"] == ["lease-file", "deed-file"]
 
 
 def test_none_and_default_mean_left_out():
-    assert normalize_agent({"id": "x", "libraries": ["None"], "model": "Default"}) == {"id": "x"}
+    for model in ("Default", "gemma4", "gemma4:latest", "None"):
+        assert normalize_agent({"id": "x", "libraries": ["None"], "model": model}) == {"id": "x"}
     assert normalize_agent({"id": "x", "libraries": "- n/a\n- deed"})["libraries"] == ["deed"]
+    assert normalize_agent({"id": "x", "model": "satgeze/qwen36-35b"})["model"] == "satgeze/qwen36-35b:latest"
+    assert normalize_agent({"id": "x", "model": "qwen3.6:35b"})["model"] == "qwen3.6:35b"
+
+
+def test_downloads_always_show_model_and_case_files():
+    text = to_markdown([{"id": "dana", "name": "Dana"},
+                        {"id": "sam", "name": "Sam", "model": "qwen3.6:latest", "libraries": ["deed"]},
+                        {"id": "pat", "name": "Pat", "played_by": "person"}])
+    dana, sam, pat = text.split("\n\n\n")
+    assert "## Model\ngemma4\n\n## Case files\nNone" in dana
+    assert "## Model\nqwen3.6\n\n## Case files\n- deed" in sam
+    assert "## Model" not in pat and "## Case files\nNone" in pat
+    # Read back, the defaults are the same as never having been set.
+    assert [a.get("model") for a in parse_markdown(text).agents] == [None, "qwen3.6:latest", None]
 
 
 def test_check_cast_needs_two_agents():

@@ -17,7 +17,7 @@ def test_played_by_and_model_read_and_write_as_agent_file_sections():
     assert dana["played_by"] == "person" and "model" not in dana
     assert sam["model"] == "hermes3:latest" and "played_by" not in sam
     text = to_markdown([dana, sam])
-    assert "## Played by\nA person" in text and "## Model\nhermes3:latest" in text
+    assert "## Played by\nA person" in text and "## Model\nhermes3" in text
     assert parse_markdown(text).agents == [dana, sam]
     assert is_person("a Human.") and is_person("Person") and not is_person("gemma4") and not is_person(None)
     assert "played_by" not in normalize_agent({"id": "x", "played_by": "AI"})
