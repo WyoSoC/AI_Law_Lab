@@ -186,7 +186,7 @@ async def _roleplay_inputs(exp: dict, inputs: dict, launched_by: Any) -> dict:
         model = models.get(a.get("id"), a.get("model") or "")
         if model and installed and model not in installed:
             raise ValueError(f"{a.get('name') or a.get('id')} is set to be played by {model}, "
-                             "which is not installed on the cluster.")
+                             "which is not one of the lab's role-play models.")
     raw_players = {k: v for k, v in (inputs.get("players") or {}).items() if k in ids and v}
     for a in agents:
         if played_by_person(a) and a["id"] not in raw_players and a["id"] not in models:

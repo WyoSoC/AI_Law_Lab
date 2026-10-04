@@ -16,6 +16,9 @@ class Settings(BaseSettings):
 
     chat_model: str = "gemma4:latest"
     embed_model: str = "nomic-embed-text:latest"
+    # Installed models never offered to play a role: any whose name contains one of these
+    # (case-insensitive). The Sparks carry uncensored variants for other work.
+    hidden_models: list[str] = Field(default=["uncensored", "abliterated"])
 
     # Measured 2026-07-23: aggregate throughput on a Spark plateaus at ~16 concurrent
     # requests (~160 tok/s). Beyond that, latency grows linearly while throughput stays

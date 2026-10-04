@@ -3,7 +3,8 @@
 A role-play agent may name its own model, so a run can set, say, qwen3.6 against gemma4,
 or swap them to see whether the outcome follows the model rather than the case. A model
 is offered only when every Spark has it, because the router sends a call to whichever
-Spark frees a slot first. Capabilities come from Ollama's /api/show: a model without
+Spark frees a slot first, and only when its name matches none of settings.hidden_models
+(the uncensored variants installed for other work). Capabilities come from Ollama's /api/show: a model without
 "thinking" (hermes3) must be called with think off, or Ollama refuses the request.
 """
 from __future__ import annotations
@@ -36,6 +37,10 @@ async def _show(client: httpx.AsyncClient, base: str, name: str) -> dict:
     return r.json()
 
 
+def hidden(name: str) -> bool:
+    return any(h.lower() in name.lower() for h in settings.hidden_models if h)
+
+
 def _describe(name: str, tag: dict, show: dict) -> dict | None:
     caps = show.get("capabilities") or []
     if "completion" not in caps:            # embedding models
@@ -51,7 +56,7 @@ def _describe(name: str, tag: dict, show: dict) -> dict | None:
 
 
 async def chat_models(refresh: bool = False) -> list[dict]:
-    """Chat models installed on every Spark, the lab default first, then by name. A Spark
+    """Chat models installed on every Spark and not hidden, the lab default first, then by name. A Spark
     that cannot be reached is left out of the intersection rather than emptying the list."""
     async with _lock:
         if not refresh and _cache["models"] and time.monotonic() - _cache["at"] < CACHE_S:
@@ -64,7 +69,7 @@ async def chat_models(refresh: bool = False) -> list[dict]:
             if not reachable:
                 log.warning("no Spark answered for its model list")
                 return _cache["models"]
-            names = set.intersection(*(set(h) for _, h in reachable))
+            names = {n for n in set.intersection(*(set(h) for _, h in reachable)) if not hidden(n)}
             base, tags = reachable[0]
             shows = await asyncio.gather(*(_show(client, base, n) for n in sorted(names)),
                                          return_exceptions=True)

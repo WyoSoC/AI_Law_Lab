@@ -165,3 +165,10 @@ def test_tool_calls_written_as_text_are_read_as_calls():
     assert text_tool_calls("I will look that up.", names) == []
     assert text_tool_calls('{"name": "delete_everything", "arguments": {}}', names) == []
     assert text_tool_calls('{"offer": "3%"}', names) == []
+
+
+def test_uncensored_models_are_not_offered():
+    from ailawlab.models import hidden
+
+    assert hidden("satgeze/qwen36-35b-uncensored-1m:latest") and hidden("huihui_ai/gemma-4-Abliterated:latest")
+    assert not hidden("gemma4:latest") and not hidden("qwen3.6:latest") and not hidden("hermes3:latest")
