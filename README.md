@@ -140,7 +140,8 @@ anyone gave in past it or leaked a confidential fact.
 **Who plays each role.** Each role is played by the lab's default model (`chat_model`) unless
 it names its own (`model`, the "Model" section of an agent file), so a run can set qwen3.6
 against gemma4, or swap them between runs to see whether the outcome follows the model. The
-launch form lists the chat models installed on every Spark (`models.py`); a model without
+launch form lists the chat models installed on every Spark (`models.py`), leaving out any whose
+name matches `hidden_models` (uncensored and abliterated variants); a model without
 reasoning (hermes3) is called with thinking off. A role can instead be **played by a person**
 (`played_by: person`, "Played by: A person"), chosen per run from the lab's members. The run
 opens a seat for them (`seats.py`): on their own page (`/runs/{id}/play`) they fill in their
