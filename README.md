@@ -117,7 +117,13 @@ set per run) and a Stop button end research early; the answer is still written f
 found. Two permissions, both off by default: **legal databases** (CourtListener, Federal Register,
 eCFR, govinfo, EDGAR) and **the open web** (Brave Search, and any public page; set
 `AILAWLAB_BRAVE_API_KEY`). Everything read is saved into a library first, recording a version, so a
-citation names a fixed copy; every search is stored with the results it returned. Passages are
+citation names a fixed copy; every search is stored with the results it returned. A web page is
+read only if its site lets AI agents read it (`site_rules.py`): robots.txt is obeyed for the
+agents' own name, `AILawLab-agent` (`agent_user_agent`), and a page it closes to well-known AI
+agents (GPTBot, ClaudeBot, ChatGPT-User, ...) is not read either; nor is one marked `noai` or
+whose site reserves text-and-data-mining rights (W3C TDMRep). The agent is told why, and the run
+page lists every page turned away with its reason. The legal databases are official APIs, used
+under their own terms, and are not put through these checks. Passages are
 numbered once per run (`SourceLedger`), whichever agent found them, so each [n] traces to one
 passage, document and library version.
 
@@ -401,7 +407,9 @@ links, `crawler.py`) reads an index page and adds the documents it links to on t
 website, one level deep. A preview, which reads only the page and its robots.txt, shows how
 many links there are, what robots.txt allows, the pause it will use and the licence notice it
 found, before anything is collected. Its rules are shown on the page and enforced in code:
-robots.txt is obeyed (a failing one stops the crawl), requests go one at a time at least
+robots.txt is obeyed (a failing one stops the crawl; `*` and `$` wildcards are understood), pages
+it closes to AI agents, pages marked `noai` and pages with a TDM reservation are skipped as "not
+open to AI use" (the same `site_rules.py` checks as agents' reading), requests go one at a time at least
 `crawl_delay_s` (2 s) apart or slower if robots.txt asks, at most `crawl_max_pages` (100) a
 crawl, it stops on HTTP 429/503 or three failures in a row, it identifies itself with
 `crawl_user_agent`, and only public addresses and web pages, PDFs and text are read. Each
@@ -445,6 +453,7 @@ src/ailawlab/
   cast_assistant.py    AI-drafted casts, real-name replacement, AI cast review
   tools.py             tool registry for agentic workflows
   network_tools.py     online search and reading for agents, saved into a library
+  site_rules.py        whether a site lets AI agents read a page: robots.txt, noai, TDMRep
   crawler.py           polite one-level crawl of a page's same-site links into a library
   pdf_text.py          PDF text extraction (PDFium), page checks, Dhamma Palatino Pali repair
   tracing.py           trace writer + run metrics
@@ -457,8 +466,13 @@ scripts/               benchmark and utilities
 tests/                 offline unit tests and integration tests against real hardware
 ```
 
-Two notes live in `docs/`, each with a script that regenerates it into
+Three notes live in `docs/`, each with a script that regenerates it into
 `src/ailawlab/web/static/docs/`, where the portal links to it:
+
+- **[Outside data access and agent web reading](src/ailawlab/web/static/docs/network-access.pdf)** --
+  every outside service the lab connects to, when a research run goes online, and the checks a
+  site's wishes pass before an agent or a crawl reads a page (`docs/network-access/build.py`;
+  `.venv/bin/python docs/network-access/build.py`).
 
 - **[System architecture](src/ailawlab/web/static/docs/architecture.pdf)** --
   the one-page diagram above in full, plus a component reference

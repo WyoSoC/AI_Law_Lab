@@ -30,7 +30,9 @@
    legal databases are official sources with their own interfaces. The open web reaches much more
    (agency guidance, scholarship, foreign law, news) and its search queries go to an outside search
    service. Everything read is saved to a library first, so what is cited stays traceable to a document
-   and version after the page changes. Web addresses written in the brief are read before research starts.</p>
+   and version after the page changes. Web addresses written in the brief are read before research starts.
+   A page is read only if its site lets AI agents read it (robots.txt, &ldquo;noai&rdquo;, text-and-data-mining
+   reservations); pages turned away are listed on the run page.</p>
 
 <div id="{{ p }}_save" {% if not (d.use_databases or d.use_web) %}hidden{% endif %}>
   <label for="{{ p }}_fetch">Library to save what it reads</label>

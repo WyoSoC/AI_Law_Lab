@@ -25,7 +25,7 @@ TITLE = "AI Law Lab: System Architecture"
 SUBTITLE = "How a request becomes a traced, reproducible experiment run"
 AUTHOR = "Jian Gong"
 AFFILIATION = "AI Law Lab, University of Wyoming"
-DATELINE = "Architecture note, October 2026. Describes the software at commit 74d2d40."
+DATELINE = "Architecture note, October 2026. Describes the software at commit dd9f6bd."
 FOOTER = "AI Law Lab · Architecture note"
 
 # Palette taken from the portal's own CSS custom properties (web/static/style.css), so the
@@ -91,8 +91,8 @@ ROWS = [
          "lines": ["private to each agent", "recent turns · summaries"]},
         {"id": "rag", "kind": "llm", "w": 1.15, "title": "Legal RAG · versioned libraries",
          "lines": ["several libraries searched together,", "page anchors, pinned versions"]},
-        {"id": "online", "kind": "ext", "w": 1.05, "dashed": True, "title": "Online legal databases",
-         "lines": ["CourtListener · Federal Register · eCFR", "govinfo · SEC EDGAR · web pages"]},
+        {"id": "online", "kind": "ext", "w": 1.05, "dashed": True, "title": "Online sources",
+         "lines": ["legal databases · Brave web search", "pages a site lets AI agents read"]},
     ]},
     {"id": "router", "label": "Router", "h": 34, "boxes": [
         {"id": "router", "kind": "llm", "title": "LLM router · one bounded queue",
@@ -578,7 +578,8 @@ SECTIONS: list[tuple[str, object]] = [
         Model inference runs on the two Sparks; no prompt or document is sent to a commercial
         model API. The server makes outbound requests in one case, drawn dashed on the
         services row: fetching public material -- searches and documents from CourtListener,
-        the Federal Register, the eCFR, govinfo and SEC EDGAR, a web page added to a library,
+        the Federal Register, the eCFR, govinfo and SEC EDGAR, open-web searches (Brave) and
+        the pages a research agent reads, a web page added to a library or crawled into one,
         or a page or PDF a cast is drafted from. These carry a search term or an address,
         never an uploaded document.
     """)),
@@ -590,6 +591,14 @@ SECTIONS: list[tuple[str, object]] = [
         same substitution is applied to the model's output: a draft invents bottom lines and
         confidential facts, and attaching those to a real company is the failure worth
         engineering against.
+    """)),
+    ("body", t("""
+        A page that a research agent or a crawl reads on the lab's own initiative is read only if
+        its site lets AI agents read it (`site_rules.py`): robots.txt for the lab's own name and
+        for well-known AI agents, a `noai` marking, and text-and-data-mining reservations (W3C
+        TDMRep). Pages turned away are listed on the run page. The companion note *AI Law Lab:
+        Outside Data Access and Agent Web Reading* sets out each service, when a run goes online,
+        and these checks in full.
     """)),
 
     ("h1", "Where each box lives"),
@@ -603,7 +612,8 @@ SECTIONS: list[tuple[str, object]] = [
             ["Experiment manager", "experiments.py"],
             ["Modes", ("graphs/document_analysis.py, graphs/agentic_workflow.py,\n"
                        "graphs/roleplay.py, graphs/roleplay_policy.py, graphs/state.py")],
-            ["Legal RAG", "rag.py, sources.py, web_links.py"],
+            ["Legal RAG", "rag.py, sources.py, web_links.py, crawler.py"],
+            ["Online sources", "network_tools.py, site_rules.py, source_material.py"],
             ["Tools, memory", "tools.py, memory.py"],
             ["LLM router", "router.py"],
             ["Logging and evaluation", "tracing.py, grounding.py, citations.py"],
