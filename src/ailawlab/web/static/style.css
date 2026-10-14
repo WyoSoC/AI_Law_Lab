@@ -765,3 +765,134 @@ input.narrow { width: 7rem; }
 .seat-main .panel > h2:first-child { margin-top: 0; }
 .seat-main .turn-box { margin-top: 1.2rem; }
 .seat-notice { font-weight: 600; }
+
+/* ================================================================ polish (October 2026)
+   One layer over everything above: a serif for headings (the notes are set in one), calmer
+   links, softer depth, and a little more contrast in secondary text. Colours come from the
+   tokens at the top, so the dark theme follows without a second copy. */
+
+:root {
+  --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Source Serif Pro", "Georgia", ui-serif, serif;
+  --ink-soft: color-mix(in srgb, var(--ink) 74%, var(--muted));
+  --shadow-sm: 0 1px 2px rgb(20 18 12 / .05);
+  --shadow-md: 0 2px 4px rgb(20 18 12 / .05), 0 8px 24px rgb(20 18 12 / .07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --shadow-sm: 0 1px 2px rgb(0 0 0 / .35); --shadow-md: 0 2px 4px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .35); }
+}
+:root[data-theme="dark"] { --shadow-sm: 0 1px 2px rgb(0 0 0 / .35); --shadow-md: 0 2px 4px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .35); }
+
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* Headings */
+h1, h2, .hero h1, .feature h3, .method-title, .status-card h1 {
+  font-family: var(--serif); letter-spacing: -.005em;
+}
+h1 { font-size: 1.75rem; font-weight: 700; }
+h2 { font-size: 1.28rem; font-weight: 650; margin: 2.4rem 0 .9rem; }
+.sub { color: var(--ink-soft); font-size: .95rem; }
+
+/* Links: coloured, underlined only when pointed at, except in running text */
+a { color: var(--accent); text-underline-offset: .18em; text-decoration-thickness: 1px; }
+td a, .tabs a, .crumbs a, .method-meta a, .feature a, .lib-tag a, .cite-title { text-decoration: none; }
+td a:hover, .method-meta a:hover, .feature a:hover, .lib-tag a:hover, .cite-title:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* Top bar: a little translucency over the page as it scrolls */
+.topbar {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px);
+}
+.tabs a { transition: background-color .15s, color .15s; }
+
+/* Surfaces */
+.panel, .stat, .feature, .method-notes li { box-shadow: var(--shadow-sm); }
+.panel { border-radius: 10px; }
+.stat { border-radius: 10px; }
+.stat .value { font-family: var(--serif); font-size: 1.65rem; font-weight: 700; }
+.stat .label { font-size: .72rem; letter-spacing: .06em; }
+
+/* Tables: a row lights up under the pointer */
+tbody tr { transition: background-color .12s; }
+tbody tr:hover td { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+th { font-size: .72rem; letter-spacing: .06em; }
+
+/* Buttons */
+.btn, button, .small-btn { border-radius: 8px; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, filter .15s; }
+.btn { box-shadow: var(--shadow-sm); }
+.btn.primary:hover, button.primary:hover { box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+.btn.ghost { box-shadow: none; }
+
+/* Landing page: the hero sits on a soft wash of the accent */
+.hero {
+  position: relative; margin: -.5rem 0 2.2rem; padding: 2.2rem 2.2rem 2rem;
+  border: 1px solid var(--line); border-radius: 14px;
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--accent-soft) 85%, transparent) 0%, transparent 55%),
+    radial-gradient(90% 120% at 0% 100%, color-mix(in srgb, var(--llm-soft) 70%, transparent) 0%, transparent 60%),
+    var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+.hero h1 { font-size: 2.5rem; margin-bottom: .7rem; }
+.hero-title .logo { width: 52px; height: 52px; border-radius: 12px; box-shadow: var(--shadow-sm); }
+.lede { font-size: 1.14rem; color: var(--ink-soft); max-width: 60ch; }
+@media (max-width: 620px) {
+  .hero { padding: 1.4rem 1.1rem; }
+  .hero h1 { font-size: 1.9rem; }
+}
+
+.prose { color: var(--ink-soft); }
+.prose strong, .steps strong { color: var(--ink); }
+
+/* Feature cards: a coloured rule for each kind of work, lifted on hover */
+.feature { position: relative; border-radius: 12px; padding: 1.3rem 1.3rem 1.2rem; overflow: hidden;
+           transition: transform .18s, box-shadow .18s, border-color .18s; }
+.feature::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--accent); }
+.feature-grid .feature:nth-child(1)::before { background: var(--data); }
+.feature-grid .feature:nth-child(2)::before { background: var(--accent); }
+.feature-grid .feature:nth-child(3)::before { background: var(--llm); }
+.feature-grid .feature:nth-child(4)::before { background: var(--p2); }
+.feature:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.feature-icon {
+  display: inline-grid; place-items: center; width: 2.4rem; height: 2.4rem; font-size: 1.25rem;
+  border-radius: 10px; background: var(--bg); border: 1px solid var(--line);
+}
+.feature h3 { font-size: 1.12rem; margin: .8rem 0 .45rem; }
+.feature p { color: var(--ink-soft); font-size: .9rem; line-height: 1.6; }
+.feature p:last-child { margin-bottom: 0; }
+
+/* How a study runs: numbered markers */
+.steps { list-style: none; padding-left: 0; counter-reset: step; }
+.steps li { position: relative; padding-left: 2.6rem; margin: .9rem 0; color: var(--ink-soft); counter-increment: step; }
+.steps li::before {
+  content: counter(step); position: absolute; left: 0; top: .05rem;
+  width: 1.75rem; height: 1.75rem; border-radius: 999px; display: grid; place-items: center;
+  font: 700 .85rem/1 var(--serif); color: var(--accent); background: var(--accent-soft);
+}
+
+/* Notes: each one a card with its downloads as small buttons */
+.method-notes { max-width: none; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.method-notes li { border-radius: 12px; padding: 1.15rem 1.25rem; border-left: 3px solid var(--accent);
+                   transition: box-shadow .18s; }
+.method-notes li:hover { box-shadow: var(--shadow-md); }
+.method-title { font-size: 1.08rem; line-height: 1.35; }
+.method-meta { margin-top: .35rem; }
+.method-meta a {
+  display: inline-block; padding: .05rem .5rem; margin-left: .1rem; border-radius: 999px;
+  font-size: .76rem; font-weight: 700; letter-spacing: .03em;
+  background: var(--accent-soft); color: var(--accent);
+}
+.method-meta a:hover { text-decoration: none; filter: brightness(.97); }
+.method-blurb { color: var(--ink-soft); }
+
+/* The terms keep their small print, now with room to breathe */
+.terms { border-top-style: dashed; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+  .feature:hover { transform: none; }
+}
+/* Four long cards read better as two rows of two than as four narrow columns. */
+@media (min-width: 760px) { .feature-grid { grid-template-columns: repeat(2, 1fr); gap: 1.1rem; } }
+.stat a { text-decoration: none; }
+.stat a:hover { text-decoration: underline; }
