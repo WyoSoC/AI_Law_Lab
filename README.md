@@ -471,8 +471,8 @@ Three notes live in `docs/`, each with a script that regenerates it into
 
 - **[Outside data access and agent web reading](src/ailawlab/web/static/docs/network-access.pdf)** --
   every outside service the lab connects to, when a research run goes online, and the checks a
-  site's wishes pass before an agent or a crawl reads a page (`docs/network-access/build.py`;
-  `.venv/bin/python docs/network-access/build.py`).
+  site's wishes pass before an agent or a crawl reads a page, also as Word
+  (`docs/network-access/build.py`).
 
 - **[System architecture](src/ailawlab/web/static/docs/architecture.pdf)** --
   the one-page diagram above in full, plus a component reference

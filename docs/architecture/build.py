@@ -596,8 +596,8 @@ SECTIONS: list[tuple[str, object]] = [
         A page that a research agent or a crawl reads on the lab's own initiative is read only if
         its site lets AI agents read it (`site_rules.py`): robots.txt for the lab's own name and
         for well-known AI agents, a `noai` marking, and text-and-data-mining reservations (W3C
-        TDMRep). Pages turned away are listed on the run page. The companion note *AI Law Lab:
-        Outside Data Access and Agent Web Reading* sets out each service, when a run goes online,
+        TDMRep). Pages turned away are listed on the run page. The companion note *Outside Data
+        Access and Agent Web Reading in the AI Law Lab* sets out each service, when a run goes online,
         and these checks in full.
     """)),
 

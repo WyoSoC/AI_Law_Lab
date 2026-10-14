@@ -871,7 +871,7 @@ th { font-size: .72rem; letter-spacing: .06em; }
 }
 
 /* Notes: each one a card with its downloads as small buttons */
-.method-notes { max-width: none; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.method-notes { max-width: 80ch; grid-template-columns: 1fr; gap: .8rem; }
 .method-notes li { border-radius: 12px; padding: 1.15rem 1.25rem; border-left: 3px solid var(--accent);
                    transition: box-shadow .18s; }
 .method-notes li:hover { box-shadow: var(--shadow-md); }
