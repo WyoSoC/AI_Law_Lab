@@ -5,9 +5,10 @@ const LinkUI = (() => {
   const esc = s => String(s ?? "").replace(/[&<>"]/g,
     c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const MARK = {added: '✓', updated: '↻', unchanged: '=', exists: '=', error: '✕', not_a_link: '–',
-                unreadable: '⚠'};
+                unreadable: '⚠', refused: '⊘'};
   const WORD = {added: 'added', updated: 'updated', unchanged: 'no change', exists: 'already there',
-                error: 'not added', not_a_link: 'not a link', unreadable: 'unreadable, skipped'};
+                error: 'not added', not_a_link: 'not a link', unreadable: 'unreadable, skipped',
+                refused: 'not open to AI use, skipped'};
 
   async function post(url, body) {
     const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},

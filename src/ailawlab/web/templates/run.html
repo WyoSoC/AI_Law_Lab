@@ -37,7 +37,7 @@
   {% if v.exhibits %}<a href="#exhibits">Exhibits</a>{% endif %}
   <a href="#metrics-head">Metrics</a>
   {% if v.sources %}<a href="#sources">Sources</a>{% endif %}
-  {% if v.fetched %}<a href="#fetched">Read online</a>{% endif %}
+  {% if v.fetched or v.refused %}<a href="#fetched">Read online</a>{% endif %}
   {% if citations %}<a href="#citations">References</a>{% endif %}
   <a href="#trace-head">Trace</a>
   {% if run.result %}
@@ -288,9 +288,10 @@
 </div>
 {% endif %}
 
-{% if v.fetched %}
+{% if v.fetched or v.refused %}
 <h2 id="fetched">Read online</h2>
 <div class="panel">
+  {% if v.fetched %}
   {% set given = v.fetched|selectattr('given')|list|length %}
   <p class="lib-summary">{% if given %}{{ given }} web page{{ '' if given == 1 else 's' }} given with the task
     {{ 'was' if given == 1 else 'were' }} read before the agent started{% if v.fetched|length > given %}, and the agent
@@ -305,6 +306,17 @@
       <span class="hint">{% if f.given %}given with the task{% else %}from {{ f.provider }} &middot; read as {{ f.source }}{% endif %}</span></li>
     {% endfor %}
   </ul>
+  {% endif %}
+  {% if v.refused %}
+  <p class="lib-summary">{{ v.refused|length }} page{{ '' if v.refused|length == 1 else 's' }} {{ 'was' if v.refused|length == 1 else 'were' }}
+    not read, because {{ 'its site does' if v.refused|length == 1 else 'their sites do' }} not allow AI agents to read {{ 'it' if v.refused|length == 1 else 'them' }}.</p>
+  <ul class="source-list refused-list">
+    {% for r in v.refused %}
+    <li>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url }}</a>{% endif %}
+      <span class="hint">{{ r.reason }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 </div>
 {% endif %}
 

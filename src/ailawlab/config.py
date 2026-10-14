@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # a citation to it names a fixed copy.
     network_hits_per_source: int = 4
     web_hits: int = 8                   # results per open-web search
+    # The name research agents read web pages under; robots.txt rules for it (and for the
+    # well-known AI agents, site_rules.AI_AGENTS) are obeyed before a page is read.
+    agent_user_agent: str = ("AILawLab-agent/1.0 (+https://datahive.uwyo.edu/ai_law_lab/; "
+                             "University of Wyoming legal research; gojian@uwyo.edu)")
 
     # --- roleplay --------------------------------------------------------
     # A negotiation needs room to actually move: 12 turns is roughly three exchanges per

@@ -90,17 +90,27 @@ def test_the_crawl_stops_when_the_site_says_it_is_busy(monkeypatch):
     for status in (429, 503):
         async def busy(*a, status=status, **k):
             raise source_material.SourceError("busy", status=status)
-        monkeypatch.setattr(source_material, "fetch_raw", busy)
+        monkeypatch.setattr(source_material, "fetch_page", busy)
         result, ok = asyncio.run(crawler._read_one(None, "https://example.org/a.pdf",
                                                    "https://example.org/", "", "lib", "c1"))
         assert not ok and f"HTTP {status}" in result["halt"]
 
     async def gone(*a, **k):
         raise source_material.SourceError("not found", status=404)
-    monkeypatch.setattr(source_material, "fetch_raw", gone)
+    monkeypatch.setattr(source_material, "fetch_page", gone)
     result, ok = asyncio.run(crawler._read_one(None, "https://example.org/a.pdf",
                                                "https://example.org/", "", "lib", "c1"))
     assert not ok and "halt" not in result                     # one missing page is not a reason to stop
+
+
+def test_a_crawled_page_that_opts_out_of_ai_is_not_kept(monkeypatch):
+    async def noai(*a, **k):
+        return ("https://example.org/a.html", httpx.Headers({"content-type": "text/html", "x-robots-tag": "noai"}),
+                b"<html><body>text</body></html>")
+    monkeypatch.setattr(source_material, "fetch_page", noai)
+    result, ok = asyncio.run(crawler._read_one(None, "https://example.org/a.html",
+                                               "https://example.org/", "", "lib", "c1"))
+    assert ok and result["status"] == "refused" and "noai" in result["detail"]   # not a failed request
 
 
 def test_the_rules_shown_are_the_rules_in_force():
@@ -157,8 +167,8 @@ def test_unreadable_files_do_not_stop_a_crawl_but_failed_requests_do(monkeypatch
 
 def test_a_downloaded_file_that_cannot_be_read_is_marked_unreadable(monkeypatch):
     async def fine(*a, **k):
-        return "https://e.org/a.pdf", "application/pdf", b"%PDF-1.5 broken"
-    monkeypatch.setattr(source_material, "fetch_raw", fine)
+        return "https://e.org/a.pdf", httpx.Headers({"content-type": "application/pdf"}), b"%PDF-1.5 broken"
+    monkeypatch.setattr(source_material, "fetch_page", fine)
     result, ok = asyncio.run(crawler._read_one(None, "https://e.org/a.pdf", "https://e.org/", "", "lib", "c1"))
     assert ok and result["status"] == "unreadable" and result["detail"].startswith("Downloaded, but")
 

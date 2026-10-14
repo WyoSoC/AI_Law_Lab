@@ -436,6 +436,9 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         # Documents an agent read online, each saved to a library.
         "fetched": [{**f, "url": safe_url(f.get("url"))} for f in result.get("fetched") or []
                     if isinstance(f, dict)],
+        # Pages an agent wanted but whose site does not let AI agents read them.
+        "refused": [{**r, "url": safe_url(r.get("url"))} for r in result.get("refused") or []
+                    if isinstance(r, dict)],
     }
     view["rerun_versions"] = {lib["name"]: lib["version"] for lib in view["libraries"]
                               if lib.get("version")}

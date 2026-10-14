@@ -340,7 +340,8 @@ async def write_up_node(state: AgenticState, config: RunnableConfig) -> dict:
     cited = cited_numbers(answer) + [n for f in findings for n in cited_numbers(f["text"])]
     return {"answer": answer, "citations": citations, "sources": ledger.sources(cited),
             "fetched": list(reader.fetched) if reader else [],
-            "searches": list(reader.searches) if reader else []}
+            "searches": list(reader.searches) if reader else [],
+            "refused": list(reader.refused) if reader else []}
 
 
 def build_agentic_graph():

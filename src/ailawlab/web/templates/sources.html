@@ -271,7 +271,7 @@ document.getElementById('crawl-preview').addEventListener('click', async ev => {
     box.innerHTML = `<div class="crawl-plan">
       <p class="cast-msg-head">${p.found} link${p.found === 1 ? '' : 's'} on ${esc(p.host)} found on this page.</p>
       <ul>
-        <li><strong>robots.txt:</strong> ${esc(p.robots)}${p.disallowed ? ` ${p.disallowed} link${p.disallowed === 1 ? ' is' : 's are'} disallowed and will be skipped.` : ''}</li>
+        <li><strong>robots.txt:</strong> ${esc(p.robots)}${p.disallowed ? ` ${p.disallowed} link${p.disallowed === 1 ? ' is' : 's are'} closed to this crawler or to AI agents and will be skipped.` : ''}</li>
         <li><strong>Allowed links:</strong> ${countText(p.allowed_kinds)}; ${p.in_folder} of them under ${esc(p.folder)}.</li>
         <li><strong>Would read:</strong> ${p.take} (${esc(kinds) || 'none'})${p.chosen > p.take ? `, the first ${p.take} of the ${p.chosen} your choices keep, because of the limit` : ''}.</li>
         <li><strong>Pace:</strong> one at a time, ${p.delay} s apart; about ${p.minutes} minute${p.minutes === 1 ? '' : 's'} in all.</li>
@@ -337,7 +337,7 @@ async function watchCrawl(id) {
   const live = c.status === 'running' || c.status === 'stopping';
   const pct = c.total ? Math.round(100 * c.done / c.total) : 100;
   const n = c.counts || {};
-  const tally = [['added', 'added'], ['exists', 'already there'], ['unreadable', 'unreadable'], ['error', 'failed']]
+  const tally = [['added', 'added'], ['exists', 'already there'], ['unreadable', 'unreadable'], ['refused', 'not open to AI'], ['error', 'failed']]
     .filter(([k]) => n[k]).map(([k, w]) => `${n[k]} ${w}`).join(' · ');
   const finish = new Date(Date.now() + 1000 * (c.eta_s || 0));
   const timeLine = live

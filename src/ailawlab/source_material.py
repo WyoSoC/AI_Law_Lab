@@ -417,6 +417,13 @@ async def fetch_raw(raw_url: str, *, transport: httpx.AsyncBaseTransport | None 
     """Fetch a link's bytes: (final url, content type, body). Every hop of a redirect is
     re-checked for a public address, and the body is capped at settings.source_max_bytes.
     `transport` exists so tests can stand in for the network."""
+    url, headers, body = await fetch_page(raw_url, transport=transport, user_agent=user_agent)
+    return url, headers.get("content-type", ""), body
+
+
+async def fetch_page(raw_url: str, *, transport: httpx.AsyncBaseTransport | None = None,
+                     user_agent: str | None = None) -> tuple[str, httpx.Headers, bytes]:
+    """fetch_raw, with all the response's headers (site_rules reads the AI opt-outs in them)."""
     url = normalize_link(raw_url)
     headers = {"User-Agent": user_agent or settings.sec_user_agent,
                "Accept": "text/html,application/xhtml+xml,application/pdf,text/plain;q=0.9,*/*;q=0.5"}
@@ -437,7 +444,7 @@ async def fetch_raw(raw_url: str, *, transport: httpx.AsyncBaseTransport | None 
                             raise SourceError(
                                 f"That page is too large to read (over "
                                 f"{settings.source_max_bytes // 1_000_000} MB).")
-                    return url, r.headers.get("content-type", ""), bytes(body)
+                    return url, r.headers, bytes(body)
             except httpx.RequestError as e:
                 raise SourceError(f"Could not reach {_host(url) or 'that website'}: it did not "
                                   "respond. Check the link, or paste the text instead.") from e

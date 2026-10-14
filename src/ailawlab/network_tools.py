@@ -12,8 +12,10 @@ changes. A document is read once per run, however many agents ask for it.
 
 Searching is not reading: a search returns candidates ([W1], [W2], ...) with snippets, which
 are leads, not sources, and cannot be cited. Every search is kept with the results it gave.
-Fetches of a bare address go through source_material.fetch_url, which refuses anything that is
-not a public http(s) host.
+Fetches of a bare address go through source_material.fetch_page, which refuses anything that is
+not a public http(s) host. A web page is read only if its site lets AI agents read it
+(site_rules: robots.txt, "noai", TDM reservations); a page that does not is not read, the agent
+is told why, and the run keeps a list of what was turned away.
 """
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import source_material, sources
+from . import site_rules, source_material, sources
 from .config import settings
 from .db import fetch_one, get_pool
 from .grounding import SourceLedger
@@ -213,6 +215,7 @@ class OnlineReader:
         self.fetched: list[dict[str, Any]] = []               # what was read, for the result
         self.read_hits: dict[int, list[int]] = {}             # W<n> read -> its passage numbers
         self.searches: list[dict[str, Any]] = []              # every search, with what it returned
+        self.refused: list[dict[str, Any]] = []               # pages whose site does not allow it
         self._save_lock = asyncio.Lock()
         self._read_urls: dict[str, int] = {}                  # address -> its index in fetched
 
@@ -354,9 +357,14 @@ class OnlineReader:
             return (f"“{record['title']}” was already read in this run (library “{self.library}” "
                     f"v{record['version']}). The passages most relevant to “{look_for or record['title']}”:"
                     "\n\n" + format_passages(passages, numbers))
+        refused = len(self.refused)
         try:
             doc = await self._fetch(source)
         except LookupError as e:
+            if len(self.refused) > refused:
+                await self.tracer.note(f"did not read {self.refused[-1]['url']}: "
+                                       f"{self.refused[-1]['reason']}", node="act",
+                                       agent_id=current_agent.get())
             return f"ERROR: {e}"
         except Exception as e:  # noqa: BLE001 - a failed read is information for the agent
             log.warning("run %s could not read %s: %s", self.run_id, source, e)
@@ -411,12 +419,35 @@ class OnlineReader:
         if not self.allow_web:
             raise LookupError("reading web pages is not allowed in this run (the researcher did "
                               "not allow the open web).")
-        page = await source_material.fetch_url(source, max_words=settings.web_link_max_words)
+        await source_material.check_public_url(source_material.normalize_link(source))
+        await self._check_site(source)
+        final, headers, body = await source_material.fetch_page(source, user_agent=settings.agent_user_agent)
+        if urlparse(final).netloc != urlparse(source).netloc:
+            await self._check_site(final)               # it moved to another site, with its own rules
+        if refusal := site_rules.page_refusal(headers, body, site_rules.token(settings.agent_user_agent)):
+            self._refuse(source, refusal)
+        page = await asyncio.to_thread(source_material.from_bytes, body,
+                                       content_type=headers.get("content-type", ""), url=final,
+                                       max_words=settings.web_link_max_words)
         return {"title": page.title, "text": page.text, "source_uri": page.url or source,
                 "doc_type": page.kind, "page_map": page.page_map or None,
                 "metadata": {"link": source, "site": page.site, "published": page.published,
                              "words": page.words, "truncated": page.truncated,
-                             "retrieved_at": page.retrieved_at}}
+                             "retrieved_at": page.retrieved_at,
+                             "permission": "The site's robots.txt allows AI agents to read it, and "
+                                           "it carries no AI or text-and-data-mining opt-out."}}
+
+    async def _check_site(self, url: str) -> None:
+        """Raise LookupError, and note the page as turned away, if its site's robots.txt or
+        TDM reservations do not let AI agents read it."""
+        robots = await site_rules.for_page(url, settings.agent_user_agent)
+        if refusal := robots.refusal(url):
+            self._refuse(url, refusal)
+
+    def _refuse(self, url: str, reason: str) -> None:
+        if not any(r["url"] == url for r in self.refused):
+            self.refused.append({"url": url, "reason": reason, "agent": current_agent.get()})
+        raise LookupError(f"{url} was not read: {reason}. Find another source for this.")
 
     async def _save(self, doc: dict[str, Any]) -> tuple[int, int, bool]:
         """Add the document to the fetch library (once: the same text is reused) and record

@@ -11,6 +11,8 @@ ran under, and the code below is what enforces each one:
 
 * the site's robots.txt is read first and obeyed, including any Crawl-delay; a robots.txt
   that cannot be read because the site is failing stops the crawl (RFC 9309, section 2.3.1);
+  pages it closes to the well-known AI agents, and pages that opt out of AI use or reserve
+  text-and-data-mining rights, are not taken either (site_rules);
 * requests go one at a time, with a pause between them, and identify the lab;
 * a crawl takes at most settings.crawl_max_pages pages, and stops when the site says it is
   overloaded (429, 503) or when requests keep failing;
@@ -32,11 +34,10 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urldefrag, urljoin, urlsplit
-from urllib.robotparser import RobotFileParser
 
 import httpx
 
-from . import source_material
+from . import site_rules, source_material
 from .config import settings
 from .db import fetch_all, fetch_one, jsonb
 from .rag import Corpus, check_idle, record_version
@@ -59,6 +60,11 @@ def rules() -> list[dict[str, str]]:
                  "for this crawler is skipped. If it asks for a longer pause between requests, "
                  f"that pause is used (up to {settings.crawl_max_delay_s:g} seconds). If robots.txt "
                  "cannot be read because the site is failing, nothing is crawled."},
+        {"title": "Sites that refuse AI are left alone",
+         "text": "A page the site's robots.txt closes to AI agents (GPTBot, ClaudeBot, ChatGPT-User "
+                 "and the like) is skipped, since the lab is one. So is a page marked “noai”, and "
+                 "one whose site reserves its text-and-data-mining rights (the W3C TDM Reservation "
+                 "Protocol)."},
         {"title": "One page at a time, with a pause",
          "text": f"Pages are fetched one after another, at least {delay} seconds apart, never in "
                  "parallel, so a crawl puts no more load on a site than a person reading it."},
@@ -294,46 +300,8 @@ def _tidy(text: str) -> str:
 
 # ---------------------------------------------------------------- robots.txt
 
-
-class Robots:
-    """A site's robots.txt as it applies to this crawler."""
-
-    def __init__(self, status: str, parser: RobotFileParser | None = None, note: str = ""):
-        self.status, self.parser, self.note = status, parser, note
-
-    def allows(self, url: str) -> bool:
-        if self.status == "unreachable":
-            return False
-        return self.parser is None or self.parser.can_fetch(settings.crawl_user_agent, url)
-
-    def delay(self) -> float:
-        asked = self.parser.crawl_delay(settings.crawl_user_agent) if self.parser else None
-        return min(max(settings.crawl_delay_s, float(asked or 0)), settings.crawl_max_delay_s)
-
-
-def parse_robots(text: str) -> Robots:
-    parser = RobotFileParser()
-    parser.parse(text.splitlines())
-    return Robots("read", parser, "robots.txt was read and is obeyed.")
-
-
-async def read_robots(page_url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> Robots:
-    """The site's robots.txt (RFC 9309): absent (4xx) means no rules; unreachable or failing
-    (5xx, no answer) means crawl nothing."""
-    parts = urlsplit(page_url)
-    url = f"{parts.scheme}://{parts.netloc}/robots.txt"
-    try:
-        _, _, body = await source_material.fetch_raw(url, transport=transport,
-                                                     user_agent=settings.crawl_user_agent)
-    except source_material.SourceError as e:
-        if e.status is not None and 400 <= e.status < 500:
-            return Robots("none", None, "The site has no robots.txt, so it sets no rules for crawlers.")
-        return Robots("unreachable", None, "The site's robots.txt could not be read, so nothing "
-                                           f"will be crawled ({e}).")
-    if body[:600].lstrip().lower().startswith((b"<!doctype", b"<html", b"<?xml")):
-        return Robots("none", None, "The site has no robots.txt (that address shows a web page "
-                                    "instead), so it sets no rules for crawlers.")
-    return parse_robots(body.decode("utf-8", errors="replace"))
+# The site's rules live in site_rules, shared with research agents' reading.
+Robots, parse_robots, read_robots = site_rules.Robots, site_rules.parse_robots, site_rules.read_robots
 
 
 # ---------------------------------------------------------------- preview
@@ -341,7 +309,10 @@ async def read_robots(page_url: str, *, transport: httpx.AsyncBaseTransport | No
 
 async def _start_page(url: str) -> tuple[str, str, str]:
     """(final url, html, text) of the page a crawl starts from."""
-    final, ctype, body = await source_material.fetch_raw(url, user_agent=settings.crawl_user_agent)
+    final, headers, body = await source_material.fetch_page(url, user_agent=settings.crawl_user_agent)
+    if refusal := site_rules.page_refusal(headers, body, site_rules.token(settings.crawl_user_agent)):
+        raise source_material.SourceError(f"This page will not be crawled: {refusal}.")
+    ctype = headers.get("content-type", "")
     if "html" not in ctype.lower() and not body[:1000].lstrip().lower().startswith((b"<!doctype", b"<html")):
         raise source_material.SourceError("That address is not a web page with links on it. Give "
                                           "the page that lists the documents.")
@@ -370,10 +341,9 @@ async def _plan(url: str, max_pages: int | None = None, kinds: list[str] | None 
     robots = await read_robots(url)
     if robots.status == "unreachable":
         return {"url": url, "ok": False, "robots": robots.note, "rules": rules()}
-    if not robots.allows(url):
+    if refusal := robots.refusal(url):
         return {"url": url, "ok": False, "rules": rules(),
-                "robots": "The site's robots.txt does not allow crawlers to read this page, so it "
-                          "will not be crawled."}
+                "robots": f"This page will not be crawled: {refusal}."}
     final, html, text = await _start_page(url)
     links = extract_links(html, final)
     allowed = [u for u in links if robots.allows(u)]
@@ -505,13 +475,17 @@ async def _read_one(store: Corpus, link: str, start_url: str, licence: str, corp
     file's problem, not the site's: it is marked unreadable and the crawl goes on.
     """
     try:
-        final, ctype, body = await source_material.fetch_raw(link, user_agent=settings.crawl_user_agent)
+        final, headers, body = await source_material.fetch_page(link, user_agent=settings.crawl_user_agent)
     except source_material.SourceError as e:
         result = {"link": link, "status": "error", "detail": str(e)}
         if e.status in (429, 503):
             result["halt"] = (f"The site answered HTTP {e.status} (it is busy or asking crawlers "
                               "to slow down), so the crawl stopped.")
         return result, False
+    if refusal := site_rules.page_refusal(headers, body, site_rules.token(settings.crawl_user_agent)):
+        # The request worked; the page asks not to be used, so it is not kept.
+        return {"link": link, "status": "refused", "detail": f"Not kept: {refusal}."}, True
+    ctype = headers.get("content-type", "")
     try:
         doc = await asyncio.to_thread(source_material.from_bytes, body, content_type=ctype,
                                       url=final, max_words=settings.web_link_max_words)
