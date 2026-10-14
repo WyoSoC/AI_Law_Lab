@@ -82,7 +82,7 @@ leaves the server is a search term or an address, never a document a researcher 
             must stay confidential should be run with both outside permissions off."""),
         "header": ["Destination", "What is sent", "When"],
         "rows": [
-            ["The two DGX Spark units (Tailscale, inside the university)",
+            ["The two DGX Spark units, inside the university",
              "Prompts, and text to embed", "Every model call"],
             ["CourtListener, Federal Register, eCFR, govinfo, SEC EDGAR",
              "A search term, or the identifier of a result",
