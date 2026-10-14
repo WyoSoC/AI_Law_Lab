@@ -63,21 +63,29 @@ role changes and deletions are written to `audit_log` and shown on the Users pag
 
 ## Connecting sign-in providers
 
-Each provider needs an app registration with this **redirect URI**, then its credentials in
-`.env`, then `scripts/keycloak_setup.py` again. Nothing else changes: Keycloak shows a button for
-each connected provider on its sign-in page.
+Google and Microsoft each need an app registration with this **redirect URI**, then its
+credentials in `.env`, then `scripts/keycloak_setup.py` again. UW sign-on uses SAML instead (below).
+Nothing else changes: Keycloak shows a button for each connected provider on its sign-in page.
 
 | Provider | Redirect URI | `.env` |
 |---|---|---|
-| UW sign-on | `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/uwyo/endpoint` | `KC_UWYO_ISSUER`, `KC_UWYO_CLIENT_ID`, `KC_UWYO_CLIENT_SECRET` |
+| UW sign-on | (SAML, see below) | `KC_UWYO_SAML` |
 | Google | `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/google/endpoint` | `KC_GOOGLE_CLIENT_ID`, `KC_GOOGLE_CLIENT_SECRET` |
 | Microsoft | `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/microsoft/endpoint` | `KC_MICROSOFT_CLIENT_ID`, `KC_MICROSOFT_CLIENT_SECRET` |
 
-- **UW sign-on**: ask UW IT for an OpenID Connect client ("web application", scopes
-  `openid email profile`) with the redirect URI above. They supply the issuer URL (for Microsoft
-  Entra ID, `https://login.microsoftonline.com/<UW tenant id>/v2.0`), client ID and secret. If
-  UW IT can only offer SAML (Shibboleth/InCommon), Keycloak supports that too, but the setup
-  script covers OIDC only; the provider can be added in the console instead.
+- **UW sign-on** is SAML with UW's Shibboleth (`https://shibboleth.uwyo.edu/idp/shibboleth`),
+  which is what UW IT prefers. The setup script reads UW's metadata from InCommon
+  (`mdq.incommon.org`; shibboleth.uwyo.edu itself refuses connections from datahive), and
+  Keycloak keeps re-reading it, so UW's certificate changes need nothing from us.
+  1. Set `KC_UWYO_SAML=hidden` and run the setup script. This creates the provider without a
+     button on the sign-in page, and publishes our metadata at
+     `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/uwyo/endpoint/descriptor`
+     (entity ID `https://datahive.uwyo.edu/sso/realms/ailawlab`). UW IT registers that.
+  2. Ask UW IT to release `eduPersonPrincipalName` (Keycloak's identifier for the person),
+     `mail`, `givenName` and `sn`. Without eduPersonPrincipalName the sign-in fails.
+  3. Once they confirm, set `KC_UWYO_SAML=on` and run the script again to show the button.
+  Our signing and encryption keys are the realm's own; if they are ever rotated (Realm settings →
+  Keys), tell UW IT, since they may have stored a copy of the metadata.
 - **Google**: Google Cloud Console → a project → APIs & Services → OAuth consent screen
   (External, app name "AI Law Lab", scopes openid/email/profile) → Credentials → Create OAuth
   client ID → Web application, with the redirect URI. Basic scopes need no Google review, but
@@ -94,11 +102,6 @@ Self-registration, email verification and password resets are **off** until Keyc
 mail. To turn them on, set `KC_SMTP_HOST`, `KC_SMTP_PORT` (587), `KC_SMTP_FROM`, and if the
 server needs a login `KC_SMTP_USER` / `KC_SMTP_PASSWORD` (UW's relay, or a lab mailbox with an app
 password), then run the setup script. Until then, admins can create accounts in the console.
-
-## Reaching the site from off campus
-
-`datahive.uwyo.edu` resolves publicly to a private address (172.26.7.78), so only campus and VPN
-users can reach the lab or its sign-in page. External users need UW IT to publish the site.
 
 ## Running it
 

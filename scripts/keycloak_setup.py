@@ -13,8 +13,8 @@ It creates or updates:
 * the `ai-law-lab` client the web app signs people in through, and its secret, which is
   written to .env as AILAWLAB_OIDC_CLIENT_SECRET if not already there;
 * a token claim naming the identity provider someone signed in with;
-* each identity provider whose credentials are in .env (see docs/keycloak.md):
-    UW sign-on   KC_UWYO_ISSUER, KC_UWYO_CLIENT_ID, KC_UWYO_CLIENT_SECRET   (OIDC)
+* each identity provider turned on in .env (see docs/keycloak.md):
+    UW sign-on   KC_UWYO_SAML=hidden or on   (SAML, UW's Shibboleth via InCommon metadata)
     Google       KC_GOOGLE_CLIENT_ID, KC_GOOGLE_CLIENT_SECRET
     Microsoft    KC_MICROSOFT_CLIENT_ID, KC_MICROSOFT_CLIENT_SECRET
 * outgoing mail, when KC_SMTP_HOST is set (with KC_SMTP_PORT, KC_SMTP_FROM, KC_SMTP_USER,
@@ -173,9 +173,81 @@ def ensure_client(kc: Admin) -> str:
     return kc.get(f"/{REALM}/clients/{cid}/client-secret")["value"]
 
 
+UWYO_IDP = "https://shibboleth.uwyo.edu/idp/shibboleth"
+# UW's IdP metadata as InCommon publishes it (MDQ). shibboleth.uwyo.edu itself refuses
+# connections from this server. Keycloak re-reads it, so UW's certificate changes carry over.
+UWYO_METADATA = "https://mdq.incommon.org/entities/https%3A%2F%2Fshibboleth.uwyo.edu%2Fidp%2Fshibboleth"
+# SAML attributes UW releases, by their standard (OID) names, and where Keycloak keeps them.
+UWYO_ATTRIBUTES = [
+    ("email", "urn:oid:0.9.2342.19200300.100.1.3", "mail"),
+    ("firstName", "urn:oid:2.5.4.42", "givenName"),
+    ("lastName", "urn:oid:2.5.4.4", "sn"),
+]
+EPPN = "urn:oid:1.3.6.1.4.1.5923.1.1.1.6"   # eduPersonPrincipalName, e.g. jdoe@uwyo.edu
+
+
+def ensure_uwyo(kc: Admin, env: dict[str, str]) -> None:
+    """UW sign-on: SAML with UW's Shibboleth. KC_UWYO_SAML=hidden sets it up without a
+    button on the sign-in page (so UW IT can read our metadata before they have registered
+    us); KC_UWYO_SAML=on shows the button. Our metadata, for UW IT:
+    https://datahive.uwyo.edu/sso/realms/ailawlab/broker/uwyo/endpoint/descriptor"""
+    mode = env.get("KC_UWYO_SAML", "").lower()
+    if mode not in ("hidden", "on"):
+        print("  UW sign-on: not configured (KC_UWYO_SAML=hidden or on)")
+        return
+    metadata = env.get("KC_UWYO_SAML_METADATA") or UWYO_METADATA
+    config = kc.post(f"/{REALM}/identity-provider/import-config",
+                     {"providerId": "saml", "fromUrl": metadata}).json()
+    if config.get("idpEntityId") != UWYO_IDP:
+        sys.exit(f"UW sign-on: {metadata} describes {config.get('idpEntityId')!r}, not {UWYO_IDP}")
+    config.update({
+        # Our own SAML name, which UW IT registers.
+        "entityId": f"{kc_public_url(env)}/realms/{REALM}",
+        "metadataDescriptorUrl": metadata, "useMetadataDescriptorUrl": "true",
+        "nameIDPolicyFormat": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+        "principalType": "ATTRIBUTE", "principalAttribute": EPPN,
+        "postBindingResponse": "true", "postBindingAuthnRequest": "true",
+        "wantAuthnRequestsSigned": "true", "signatureAlgorithm": "RSA_SHA256",
+        "xmlSigKeyInfoKeyNameTransformer": "KEY_ID",
+        "validateSignature": "true", "wantAssertionsSigned": "false",
+        # UW's Shibboleth encrypts assertions to the key in our metadata.
+        "wantAssertionsEncrypted": "true", "encryptionAlgorithm": "RSA-OAEP",
+        # Lists the attributes below in our metadata, so UW IT can see what we ask for.
+        "attributeConsumingServiceIndex": "1", "attributeConsumingServiceName": "AI Law Lab",
+        "allowedClockSkew": "30", "syncMode": "IMPORT",
+        # Signing out of the lab does not sign the person out of everything else at UW.
+        "singleLogoutServiceUrl": "", "backchannelSupported": "false",
+    })
+    body = {"alias": "uwyo", "providerId": "saml", "displayName": "UW sign-on", "enabled": True,
+            "hideOnLogin": mode == "hidden", "trustEmail": True, "storeToken": False,
+            "firstBrokerLoginFlowAlias": "first broker login", "config": config}
+    if kc.get(f"/{REALM}/identity-provider/instances/uwyo") is None:
+        kc.post(f"/{REALM}/identity-provider/instances", body)
+        print(f"  UW sign-on: added ({mode})")
+    else:
+        kc.put(f"/{REALM}/identity-provider/instances/uwyo", body)
+        print(f"  UW sign-on: updated ({mode})")
+    mappers = {m["name"]: m for m in kc.get(f"/{REALM}/identity-provider/instances/uwyo/mappers") or []}
+    for user_attribute, oid, friendly in UWYO_ATTRIBUTES:
+        mapper = {"name": friendly, "identityProviderAlias": "uwyo",
+                  "identityProviderMapper": "saml-user-attribute-idp-mapper",
+                  "config": {"syncMode": "INHERIT", "attribute.name": oid,
+                             "attribute.friendly.name": friendly,
+                             "attribute.name.format": "ATTRIBUTE_FORMAT_URI",
+                             "user.attribute": user_attribute}}
+        if friendly in mappers:
+            kc.put(f"/{REALM}/identity-provider/instances/uwyo/mappers/{mappers[friendly]['id']}",
+                   {**mapper, "id": mappers[friendly]["id"]})
+        else:
+            kc.post(f"/{REALM}/identity-provider/instances/uwyo/mappers", mapper)
+
+
+def kc_public_url(env: dict[str, str]) -> str:
+    return env.get("KC_PUBLIC_URL", "https://datahive.uwyo.edu/sso").rstrip("/")
+
+
 PROVIDERS = [
     # alias, Keycloak provider, display name, env prefix, trust the email it reports
-    ("uwyo", "oidc", "UW sign-on", "KC_UWYO", True),
     ("google", "google", "Google", "KC_GOOGLE", True),
     # A Microsoft work account's email address is set by whoever runs that tenant, so it
     # proves nothing about ownership; people who sign in this way are approved by an admin.
@@ -192,18 +264,6 @@ def ensure_providers(kc: Admin, env: dict[str, str]) -> None:
         config = {"clientId": client_id, "clientSecret": secret, "syncMode": "IMPORT",
                   "defaultScope": "openid email profile", "pkceEnabled": "true",
                   "pkceMethod": "S256"}
-        if provider == "oidc":
-            issuer = env.get(f"{prefix}_ISSUER", "").rstrip("/")
-            if not issuer:
-                print(f"  {name}: set {prefix}_ISSUER too (the sign-on service's issuer URL)")
-                continue
-            meta = httpx.get(f"{issuer}/.well-known/openid-configuration", timeout=30).raise_for_status().json()
-            config.update({"issuer": meta["issuer"], "authorizationUrl": meta["authorization_endpoint"],
-                           "tokenUrl": meta["token_endpoint"], "jwksUrl": meta["jwks_uri"],
-                           "userInfoUrl": meta.get("userinfo_endpoint", ""),
-                           "logoutUrl": meta.get("end_session_endpoint", ""),
-                           "validateSignature": "true", "useJwksUrl": "true",
-                           "clientAuthMethod": "client_secret_post"})
         if provider == "microsoft":
             # "common": work or school accounts from any organization, and personal accounts.
             config["tenantId"] = env.get(f"{prefix}_TENANT", "common")
@@ -240,6 +300,7 @@ def main() -> None:
     append_env("AILAWLAB_OIDC_CLIENT_SECRET", secret,
                "Secret of the ai-law-lab client in Keycloak (written by scripts/keycloak_setup.py)")
     print("identity providers:")
+    ensure_uwyo(kc, env)
     ensure_providers(kc, env)
     if args.admin_email:
         ensure_user(kc, args.admin_email)
