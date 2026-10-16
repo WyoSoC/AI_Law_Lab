@@ -4,7 +4,9 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from ailawlab.accounts import email_is_proven, initial_access
+import pytest
+
+from ailawlab.accounts import AccountError, clean_request, email_is_proven, initial_access
 from ailawlab.web.auth import may, origin_allowed, pkce_pair, safe_next
 
 ADMINS, DOMAINS = "gojian@uwyo.edu, other@uwyo.edu", "uwyo.edu"
@@ -55,3 +57,17 @@ def test_pkce_challenge_is_the_s256_of_the_verifier():
     assert 43 <= len(verifier) <= 128
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     assert challenge == expected
+
+
+def test_access_requests_need_a_name_an_organization_and_a_reason():
+    ok = clean_request("  Ada   Lovelace ", " Analytical  Engines LLP ", "  Contract research for a seminar. ",
+                       "viewer")
+    assert ok == {"name": "Ada Lovelace", "affiliation": "Analytical Engines LLP",
+                  "reason": "Contract research for a seminar.", "role": "viewer"}
+    for args in (("", "Firm", "A good reason here", "researcher"),
+                 ("Ada", " ", "A good reason here", "researcher"),
+                 ("Ada", "Firm", "short", "researcher"),
+                 ("Ada", "Firm", "A good reason here", "admin"),  # nobody asks to be an admin
+                 ("Ada", "Firm", "x" * 2001, "researcher")):
+        with pytest.raises(AccountError):
+            clean_request(*args)

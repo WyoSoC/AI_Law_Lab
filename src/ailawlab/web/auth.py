@@ -39,7 +39,7 @@ router = APIRouter()
 PUBLIC_EXACT = {"/", "/auth/login", "/auth/callback", "/auth/logout", "/auth/signed-out"}
 PUBLIC_PREFIXES = ("/static/",)
 # Signed in but not (yet) allowed in: these still work, everything else explains why not.
-LIMBO_EXACT = {"/auth/pending", "/auth/disabled"}
+LIMBO_EXACT = {"/auth/pending", "/auth/disabled", "/auth/request"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # A person playing a role in a role-play may take their turns with a view-only account: the
 # seat endpoints check that the seat is theirs.

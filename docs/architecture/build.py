@@ -391,7 +391,10 @@ SECTIONS: list[tuple[str, object]] = [
         own public address, so browsers are sent to Keycloak's public URL while the code
         exchange and signing keys go over loopback. Keycloak proves who someone is; the portal
         decides what they may do (`accounts.py`). A verified `uwyo.edu` address is approved as a
-        researcher on first sign-in; anyone else waits for an administrator. A viewer reads and
+        researcher on first sign-in; anyone else (a Google or Microsoft account outside the
+        university, say) fills in a short access request (name, organization, what they want
+        to use the lab for, and viewer or researcher access), and an administrator approves
+        it with a role or declines it with a note the person sees. A viewer reads and
         exports, a researcher also builds experiments, runs them and curates libraries, and an
         administrator also manages people and deletes things for good. Each request re-reads
         the person from the database, so disabling someone takes effect on their next click.
@@ -562,8 +565,9 @@ SECTIONS: list[tuple[str, object]] = [
                                                      "documents each version held.")],
             ["memory_messages,\nmemory_long_term", ("Short-term buffers and summarized "
                                                     "long-term memory, per (run, agent).")],
-            ["users, audit_log", ("Who may use the lab and in what role, and a log of "
-                                  "approvals, role changes and permanent deletions.")],
+            ["users, audit_log", ("Who may use the lab and in what role, their access "
+                                  "requests, and a log of requests, approvals, role "
+                                  "changes and permanent deletions.")],
         ],
         "mono_first": True,
         "caption": t("""

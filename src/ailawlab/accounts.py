@@ -8,7 +8,8 @@ own); this module decides what that person may do. On a first sign-in:
 * a verified address in an auto-approve domain (uwyo.edu) becomes an active researcher,
   unless it came through Microsoft, whose work-account addresses are set by whoever runs
   each organization's tenant and so prove nothing (Keycloak is told not to trust them);
-* everyone else is pending until an admin approves them.
+* everyone else is pending. They tell the admins who they are and why they want access
+  (submit_request), and an admin approves the request, with a role, or declines it.
 
 Roles: a viewer reads everything and exports; a researcher also creates experiments, runs
 them and curates libraries; an admin also manages people and deletes things for good.
@@ -105,17 +106,68 @@ async def list_users() -> list[dict]:
 
 
 async def pending_count() -> int:
-    row = await fetch_one("SELECT COUNT(*) AS n FROM users WHERE status='pending'")
+    """Requests waiting for an admin (people who signed in but never asked are not counted)."""
+    row = await fetch_one("SELECT COUNT(*) AS n FROM users WHERE status='pending' "
+                          "AND requested_at IS NOT NULL")
     return row["n"] if row else 0
+
+
+async def admin_emails() -> list[str]:
+    rows = await fetch_all("SELECT email FROM users WHERE role='admin' AND status='active' "
+                           "AND email <> ''")
+    return [r["email"] for r in rows]
 
 
 class AccountError(ValueError):
     """A change to someone's access that is not allowed, in words an admin can act on."""
 
 
+REQUESTABLE_ROLES = ("researcher", "viewer")
+LIMITS = {"name": 200, "affiliation": 200, "reason": 2000}
+
+
+def clean_request(name: str, affiliation: str, reason: str, role: str) -> dict[str, str]:
+    """Check an access request's fields; raise AccountError naming what to fix. Pure."""
+    fields = {"name": " ".join(name.split()), "affiliation": " ".join(affiliation.split()),
+              "reason": reason.strip()}
+    if not fields["name"]:
+        raise AccountError("Please give your name.")
+    if not fields["affiliation"]:
+        raise AccountError("Please say which organization, firm or school you are with.")
+    if len(fields["reason"]) < 10:
+        raise AccountError("Please say in a sentence or two what you would like to use the lab for.")
+    for key, limit in LIMITS.items():
+        if len(fields[key]) > limit:
+            raise AccountError(f"Please shorten the {key} to {limit} characters or fewer.")
+    if role not in REQUESTABLE_ROLES:
+        raise AccountError("Choose the access you need.")
+    return {**fields, "role": role}
+
+
+async def submit_request(user: dict, name: str, affiliation: str, reason: str,
+                         role: str) -> dict:
+    """Record (or update) a pending person's request for access."""
+    if user.get("status") != "pending":
+        raise AccountError("This account is not waiting for approval.")
+    f = clean_request(name, affiliation, reason, role)
+    first = user.get("requested_at") is None
+    updated = await fetch_one(
+        "UPDATE users SET name=%s, affiliation=%s, request_reason=%s, requested_role=%s, "
+        "requested_at=COALESCE(requested_at, now()) WHERE id=%s AND status='pending' RETURNING *",
+        (f["name"], f["affiliation"], f["reason"], f["role"], user["id"]))
+    if updated is None:
+        raise AccountError("This account is not waiting for approval.")
+    await audit(user["id"], "account.requested" if first else "account.request_updated",
+                updated["email"] or updated["subject"], role=f["role"],
+                affiliation=f["affiliation"])
+    updated["first_request"] = first
+    return updated
+
+
 async def set_access(actor: dict, user_id: str, *, status: str | None = None,
-                     role: str | None = None) -> dict:
-    """Approve, disable, re-enable, or change the role of an account."""
+                     role: str | None = None, note: str | None = None) -> dict:
+    """Approve, decline, disable, re-enable, or change the role of an account. `note` is
+    shown to the person (a reason for declining or disabling)."""
     if status is not None and status not in STATUSES:
         raise AccountError(f"Unknown status {status!r}.")
     if role is not None and role not in ROLES:
@@ -130,16 +182,21 @@ async def set_access(actor: dict, user_id: str, *, status: str | None = None,
                                  "AND status='active' AND id <> %s", (user_id,))
         if not others or not others["n"]:
             raise AccountError("This is the only active admin. Make someone else an admin first.")
-    approving = status == "active" and target["status"] == "pending"
+    # Letting in someone never approved (pending, or declined and now re-enabled) is an approval.
+    approving = status == "active" and target["status"] != "active" and target["approved_at"] is None
     user = await fetch_one(
         "UPDATE users SET status=COALESCE(%s, status), role=COALESCE(%s, role), "
         "approved_by = CASE WHEN %s THEN %s ELSE approved_by END, "
-        "approved_at = CASE WHEN %s THEN now() ELSE approved_at END "
+        "approved_at = CASE WHEN %s THEN now() ELSE approved_at END, "
+        "decision_note = COALESCE(%s, decision_note) "
         "WHERE id=%s RETURNING *",
-        (status, role, approving, actor["id"], approving, user_id))
-    await audit(actor["id"], "account.access", target["email"] or target["subject"],
-                status=user["status"], role=user["role"],
-                was={"status": target["status"], "role": target["role"]})
+        (status, role, approving, actor["id"], approving,
+         None if note is None else note.strip()[:1000], user_id))
+    detail = {"status": user["status"], "role": user["role"],
+              "was": {"status": target["status"], "role": target["role"]}}
+    if note:
+        detail["note"] = note.strip()[:1000]
+    await audit(actor["id"], "account.access", target["email"] or target["subject"], **detail)
     return user
 
 

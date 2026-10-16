@@ -285,7 +285,12 @@ are included only when asked for.
 
 Everything but the About page needs a sign-in, through a self-hosted Keycloak at `/sso/`
 (UW sign-on, Google, Microsoft, or an AI Law Lab account). Verified `@uwyo.edu` addresses are
-approved automatically as researchers; others wait for an admin on the Users page. Roles are
+approved automatically as researchers. Anyone else (a Google or Microsoft account from outside
+the university, say) is asked for their name, organization, what they want to use the lab for and
+whether they need viewer or researcher access; the request waits on the Users page, where an admin
+approves it with a role or declines it with a note the person sees. With an outgoing mail server
+set (`KC_SMTP_*`), admins are emailed about each new request and the person about the decision
+(`notify.py`). Roles are
 viewer, researcher and admin; everything is shared lab-wide, with experiments, runs, documents
 and library versions attributed to the person who made them. Setup, providers, email, backups
 and upgrades: [`docs/keycloak.md`](docs/keycloak.md). The sign-in itself is in `web/auth.py`,

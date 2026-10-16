@@ -5,24 +5,61 @@
 <h1>Users</h1>
 <p class="sub">People sign in through UW sign-on, Google, Microsoft or an AI Law Lab account.
 Verified addresses at {{ auto_domains }} are approved automatically as researchers; everyone else
-waits here for an administrator. Viewers can read and export; researchers can also create, run and
-curate; admins can also manage people and delete things for good.
+asks for access, and their request waits here for an administrator. Viewers can read and export;
+researchers can also create, run and curate; admins can also manage people and delete things for good.
 </p>
 
 {% if request.query_params.get('msg') %}<p class="notice">{{ request.query_params.get('msg') }}</p>{% endif %}
 
-{% set pending = users | selectattr('status', 'equalto', 'pending') | list %}
-{% if pending %}
-<h2>Waiting for approval ({{ pending|length }})</h2>
-<div class="panel">
+{% set via_names = {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'} %}
+{% set requests = users | selectattr('status', 'equalto', 'pending') | selectattr('requested_at') | list %}
+{% set silent = users | selectattr('status', 'equalto', 'pending') | rejectattr('requested_at') | list %}
+
+<h2>Access requests{% if requests %} ({{ requests|length }}){% endif %}</h2>
+{% if not mail_ready %}<p class="hint">Email notices are off (no outgoing mail server is set), so check
+  this page for new requests; the count beside <em>Users</em> in the menu shows how many are waiting.</p>{% endif %}
+{% for u in requests %}
+<article class="panel request-card">
+  <header>
+    <div>
+      <strong>{{ u.name or '—' }}</strong> &middot; {{ u.affiliation }}
+      <div class="hint">{{ u.email }} &middot; signed in with {{ via_names.get(u.identity_provider, 'an AI Law Lab account') }}
+        &middot; asked {{ u.requested_at.strftime('%Y-%m-%d %H:%M') }} for <strong>{{ u.requested_role }}</strong> access</div>
+      {% if u.identity_provider == 'microsoft' %}<div class="hint warn">Microsoft does not prove who owns an
+        email address: confirm this person is who they say before approving.</div>
+      {% elif not u.email_verified %}<div class="hint warn">This email address has not been verified.</div>{% endif %}
+    </div>
+  </header>
+  <blockquote class="request-reason">{{ u.request_reason }}</blockquote>
+  <div class="row-actions">
+    <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
+      <input type="hidden" name="action" value="approve">
+      <select name="role" aria-label="Approve {{ u.email }} as">{% for r in roles %}<option value="{{ r }}" {% if r == u.requested_role %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+      <button type="submit" class="small-btn">Approve</button>
+    </form>
+    <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
+      <input type="hidden" name="action" value="decline">
+      <input type="text" name="note" maxlength="1000" placeholder="Reason, shown to them (optional)" aria-label="Reason for declining {{ u.email }}">
+      <button type="submit" class="small-btn danger">Decline</button>
+    </form>
+  </div>
+</article>
+{% else %}
+<p class="empty-note">No requests waiting.</p>
+{% endfor %}
+
+{% if silent %}
+<details class="silent-pending">
+  <summary>Signed in but have not asked yet ({{ silent|length }})</summary>
+  <div class="panel">
   <div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Email</th><th>Signed in with</th><th>First seen</th><th>Approve as</th></tr></thead>
+    <thead><tr><th>Name</th><th>Email</th><th>Signed in with</th><th>First seen</th><th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>
-    {% for u in pending %}
+    {% for u in silent %}
     <tr>
       <td>{{ u.name or '—' }}</td>
-      <td>{{ u.email }}{% if not u.email_verified %} <span class="hint">(unverified)</span>{% endif %}</td>
-      <td>{{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
+      <td>{{ u.email }}{% if not u.email_verified or u.identity_provider == 'microsoft' %} <span class="hint">(not proven)</span>{% endif %}</td>
+      <td>{{ via_names.get(u.identity_provider, 'AI Law Lab account') }}</td>
       <td class="nowrap">{{ u.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
       <td class="actions-cell"><div class="row-actions">
         <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
@@ -31,15 +68,16 @@ curate; admins can also manage people and delete things for good.
           <button type="submit" class="small-btn">Approve</button>
         </form>
         <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}">
-          <input type="hidden" name="action" value="disable">
-          <button type="submit" class="small-btn danger">Refuse</button>
+          <input type="hidden" name="action" value="decline">
+          <button type="submit" class="small-btn danger">Decline</button>
         </form>
       </div></td>
     </tr>
     {% endfor %}
     </tbody>
   </table></div>
-</div>
+  </div>
+</details>
 {% endif %}
 
 <h2>Everyone</h2>
@@ -49,7 +87,7 @@ curate; admins can also manage people and delete things for good.
     <tbody>
     {% for u in users if u.status != 'pending' %}
     <tr>
-      <td>{{ u.name or '—' }}{% if user and u.id == user.id %} <span class="hint">(you)</span>{% endif %}</td>
+      <td>{{ u.name or '—' }}{% if user and u.id == user.id %} <span class="hint">(you)</span>{% endif %}{% if u.affiliation %}<div class="hint">{{ u.affiliation }}</div>{% endif %}</td>
       <td>{{ u.email }}</td>
       <td>{{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
       <td><span class="badge {{ 'succeeded' if u.status == 'active' else 'failed' }}">{{ u.status }}</span></td>
@@ -85,7 +123,7 @@ curate; admins can also manage people and delete things for good.
     <tbody>
     {% for a in audit %}
     <tr><td class="nowrap">{{ a.at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ a.user_name or a.user_email or '—' }}</td>
-        <td>{{ a.action }}</td><td>{{ a.target }}{% if a.detail.status %} <span class="hint">→ {{ a.detail.status }}, {{ a.detail.role }}</span>{% endif %}</td></tr>
+        <td>{{ a.action }}</td><td>{{ a.target }}{% if a.detail.status %} <span class="hint">→ {{ a.detail.status }}, {{ a.detail.role }}{% if a.detail.note %}: “{{ a.detail.note }}”{% endif %}</span>{% elif a.detail.role %} <span class="hint">asked for {{ a.detail.role }}</span>{% endif %}</td></tr>
     {% else %}
     <tr><td colspan="4" class="empty">Nothing yet.</td></tr>
     {% endfor %}

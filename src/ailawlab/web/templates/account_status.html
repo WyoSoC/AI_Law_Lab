@@ -3,16 +3,57 @@
 {% block content %}
 <div class="status-card panel">
   {% if state == 'pending' %}
-  <h1>Waiting for approval</h1>
-  <p>Thanks{% if user_name %}, {{ user_name }}{% endif %}. You are signed in as
-    <strong>{{ user.email or 'your account' }}</strong>, and an AI Law Lab administrator needs to
-    approve the account before you can use the lab. You will be able to sign in as soon as they do.</p>
+  {% set via = {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(user.identity_provider, 'an AI Law Lab account') %}
+  {% if user.requested_at %}
+  <h1>Request sent</h1>
+  {% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
+  <p>You asked for <strong>{{ user.requested_role }}</strong> access on
+    {{ user.requested_at.strftime('%B %-d, %Y') }}, signed in with {{ via }} as
+    <strong>{{ user.email or 'your account' }}</strong>. An AI Law Lab administrator will review it.
+    Once it is approved, sign in again the same way and the lab will open.</p>
+  {% else %}
+  <h1>Request access</h1>
+  <p>You are signed in with {{ via }} as <strong>{{ user.email or 'your account' }}</strong>.
+    An administrator approves each new account. Tell them who you are and what you would like
+    to use the lab for.</p>
+  {% endif %}
+  {% if error %}<p class="notice bad">{{ error }}</p>{% endif %}
+
+  {% if user.requested_at %}<details{% if error %} open{% endif %}><summary>Change your request</summary>{% endif %}
+  <form method="post" action="{{ prefix }}/auth/request" class="request-form">
+    <label for="rq-name">Your name</label>
+    <input type="text" id="rq-name" name="name" required maxlength="{{ limits.name }}" autocomplete="name"
+           value="{{ user.name }}">
+    <label for="rq-aff">Organization, firm or school</label>
+    <input type="text" id="rq-aff" name="affiliation" required maxlength="{{ limits.affiliation }}"
+           autocomplete="organization" value="{{ user.affiliation }}">
+    <label for="rq-reason">What you would like to use the lab for</label>
+    <textarea id="rq-reason" name="reason" class="short" required minlength="10" maxlength="{{ limits.reason }}"
+              placeholder="For example: a seminar on AI and contract drafting, or research on how models cite case law.">{{ user.request_reason }}</textarea>
+    <fieldset class="role-choice">
+      <legend>Access you need</legend>
+      <label class="check"><input type="radio" name="role" value="researcher"
+             {% if (user.requested_role or 'researcher') == 'researcher' %}checked{% endif %}>
+        <span><strong>Researcher</strong>: design and run experiments, add documents to libraries</span></label>
+      <label class="check"><input type="radio" name="role" value="viewer"
+             {% if user.requested_role == 'viewer' %}checked{% endif %}>
+        <span><strong>Viewer</strong>: read experiments and results, export reports, take part in role-plays</span></label>
+    </fieldset>
+    <div class="cta-row">
+      <button type="submit" class="btn primary">{{ 'Update request' if user.requested_at else 'Send request' }}</button>
+    </div>
+  </form>
+  {% if user.requested_at %}</details>{% endif %}
+
   <p class="hint">University of Wyoming addresses are approved automatically when you sign in with
     UW sign-on or Google. If you have one, sign out and sign in with it instead.</p>
   {% else %}
-  <h1>Account disabled</h1>
-  <p>The account <strong>{{ user.email or '' }}</strong> has been disabled by an administrator.
-    Contact the AI Law Lab if you think this is a mistake.</p>
+  <h1>{{ 'Request declined' if user.requested_at and not user.approved_at else 'Account disabled' }}</h1>
+  <p>The account <strong>{{ user.email or '' }}</strong>
+    {{ 'was not approved' if user.requested_at and not user.approved_at else 'has been disabled' }}
+    by an administrator.</p>
+  {% if user.decision_note %}<p class="notice">Note from the administrator: {{ user.decision_note }}</p>{% endif %}
+  <p>Contact the AI Law Lab if you think this is a mistake.</p>
   {% endif %}
   <a class="btn" href="{{ prefix }}/auth/logout">Sign out</a>
 </div>

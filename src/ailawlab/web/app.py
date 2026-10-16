@@ -23,6 +23,7 @@ from .. import (
     citations,
     crawler,
     experiments,
+    notify,
     rag,
     research,
     seats,
@@ -139,7 +140,27 @@ async def dashboard(request: Request):
 
 @app.get("/auth/pending", response_class=HTMLResponse)
 async def account_pending(request: Request):
-    return templates.TemplateResponse(request, "account_status.html", {"state": "pending"})
+    return templates.TemplateResponse(request, "account_status.html", {
+        "state": "pending", "msg": request.query_params.get("msg"),
+        "error": request.query_params.get("error"), "limits": accounts.LIMITS})
+
+
+@app.post("/auth/request")
+async def account_request(request: Request, name: str = Form(""), affiliation: str = Form(""),
+                          reason: str = Form(""), role: str = Form("researcher")):
+    """A pending person asks for access: who they are, and what they want it for."""
+    user = current_user(request)
+    if not user or user.get("dev"):
+        raise HTTPException(400, "Sign in first.")
+    try:
+        updated = await accounts.submit_request(user, name, affiliation, reason, role)
+    except accounts.AccountError as e:
+        return RedirectResponse(f"{P}/auth/pending?error=" + quote(str(e)), status_code=303)
+    if updated["first_request"]:
+        await notify.request_received(updated, await accounts.admin_emails())
+    return RedirectResponse(f"{P}/auth/pending?msg=" + quote(
+        "Your request has been sent." if updated["first_request"] else "Your request has been updated."),
+        status_code=303)
 
 
 @app.get("/auth/disabled", response_class=HTMLResponse)
@@ -155,19 +176,22 @@ async def admin_users(request: Request):
         "audit": await accounts.recent_audit(40),
         "roles": accounts.ROLES,
         "auto_domains": settings.auto_approve_domains,
+        "mail_ready": notify.mail_ready(),
     })
 
 
 @app.post("/admin/users/{account_id}")
 async def admin_user_update(request: Request, account_id: str, action: str = Form(...),
-                            role: str = Form("")):
-    """approve (with a role), role (change it), disable, enable."""
+                            role: str = Form(""), note: str = Form("")):
+    """approve (with a role), decline (with a note for the person), role (change it),
+    disable, enable."""
     actor = require(request, "admin")
     if not _is_uuid(account_id):
         raise HTTPException(404, "no such account")
-    changes = {"approve": {"status": "active", "role": role or "researcher"},
-               "role": {"role": role}, "disable": {"status": "disabled"},
-               "enable": {"status": "active"}}.get(action)
+    changes = {"approve": {"status": "active", "role": role or "researcher", "note": ""},
+               "decline": {"status": "disabled", "note": note},
+               "role": {"role": role}, "disable": {"status": "disabled", "note": note},
+               "enable": {"status": "active", "note": ""}}.get(action)
     if changes is None or ("role" in changes and changes["role"] not in accounts.ROLES):
         raise HTTPException(400, "unknown action or role")
     try:
@@ -176,7 +200,10 @@ async def admin_user_update(request: Request, account_id: str, action: str = For
         return RedirectResponse(f"{P}/admin/users?msg=" + quote(str(e)), status_code=303)
     who = accounts.display_name(user)
     done = {"approve": f"Approved {who} as {user['role']}.", "role": f"{who} is now {user['role']}.",
+            "decline": f"Declined {who}'s request.",
             "disable": f"Disabled {who}.", "enable": f"Re-enabled {who}."}[action]
+    if action in ("approve", "decline") and await notify.request_decided(user, action == "approve"):
+        done += f" An email has gone to {user['email']}."
     return RedirectResponse(f"{P}/admin/users?msg=" + quote(done), status_code=303)
 
 

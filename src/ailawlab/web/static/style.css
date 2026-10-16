@@ -896,3 +896,21 @@ th { font-size: .72rem; letter-spacing: .06em; }
 @media (min-width: 760px) { .feature-grid { grid-template-columns: repeat(2, 1fr); gap: 1.1rem; } }
 .stat a { text-decoration: none; }
 .stat a:hover { text-decoration: underline; }
+
+/* access requests (account_status.html, admin_users.html) */
+.request-form input[type=text], .request-form textarea { width: 100%; }
+.request-form textarea { min-height: 6rem; }
+.role-choice { border: 0; padding: 0; margin: 1rem 0 0; }
+.role-choice legend { font-size: .85rem; color: var(--muted); margin-bottom: .3rem; padding: 0; }
+.role-choice label.check { align-items: flex-start; margin: .35rem 0; color: var(--ink); font-size: .9rem; }
+.role-choice label.check input { margin-top: .25rem; }
+.status-card details summary { cursor: pointer; color: var(--accent); margin: .6rem 0; }
+.request-card { padding: 1rem 1.2rem; margin-bottom: .9rem; }
+.request-card header { display: flex; justify-content: space-between; gap: 1rem; }
+.request-reason { margin: .7rem 0; padding: .5rem .8rem; border-left: 3px solid var(--line); white-space: pre-wrap; font-size: .92rem; }
+.request-card .row-actions { flex-wrap: wrap; gap: .6rem; justify-content: flex-start; white-space: normal; }
+.request-card input[name=note] { width: 16rem; max-width: 100%; }
+.hint.warn { color: var(--bad); }
+.empty-note { color: var(--muted); font-style: italic; }
+.silent-pending { margin: .5rem 0 1.5rem; }
+.silent-pending summary { cursor: pointer; color: var(--muted); margin-bottom: .6rem; }

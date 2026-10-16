@@ -1,7 +1,7 @@
 """Runtime configuration, loaded from environment / .env."""
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -163,6 +163,15 @@ class Settings(BaseSettings):
     # verified addresses are approved as researchers without waiting for an admin.
     admin_emails: str = ""
     auto_approve_domains: str = "uwyo.edu"
+    # Outgoing mail for access-request notices: admins hear of new requests, people hear
+    # when theirs is decided. The same server Keycloak uses (KC_SMTP_*), or AILAWLAB_SMTP_*.
+    # With no host, nothing is sent and the Users page's badge is the only notice.
+    smtp_host: str = Field(default="", validation_alias=AliasChoices("AILAWLAB_SMTP_HOST", "KC_SMTP_HOST"))
+    smtp_port: int = Field(default=587, validation_alias=AliasChoices("AILAWLAB_SMTP_PORT", "KC_SMTP_PORT"))
+    smtp_from: str = Field(default="", validation_alias=AliasChoices("AILAWLAB_SMTP_FROM", "KC_SMTP_FROM"))
+    smtp_user: str = Field(default="", validation_alias=AliasChoices("AILAWLAB_SMTP_USER", "KC_SMTP_USER"))
+    smtp_password: str = Field(default="", validation_alias=AliasChoices("AILAWLAB_SMTP_PASSWORD", "KC_SMTP_PASSWORD"))
+    smtp_starttls: bool = Field(default=True, validation_alias=AliasChoices("AILAWLAB_SMTP_STARTTLS", "KC_SMTP_STARTTLS"))
 
     @field_validator("url_prefix")
     @classmethod

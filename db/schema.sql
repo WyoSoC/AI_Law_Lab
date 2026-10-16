@@ -273,6 +273,13 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at       TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+-- An access request: what someone who is not approved automatically tells the admins about
+-- themselves (accounts.submit_request), and the admin's note when declining one.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS affiliation    TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS request_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS requested_role TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS requested_at   TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS decision_note  TEXT NOT NULL DEFAULT '';
 
 -- Security-relevant actions: approvals, role changes, and anything deleted for good.
 CREATE TABLE IF NOT EXISTS audit_log (
