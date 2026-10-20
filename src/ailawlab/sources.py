@@ -181,6 +181,42 @@ class Provider:
 # ---------------------------------------------------------------- CourtListener
 
 
+def opinion_rank(kind: str | None) -> int:
+    """How well an opinion stands for its case: 0 is the opinion of the court.
+
+    CourtListener types a case's opinions two ways: "lead-opinion", "dissent" in search
+    results, "020lead", "040dissent" from the opinions endpoint. Either spelling ranks the
+    same. A case's sibling opinions are not ordered by authority, so taking the first one
+    (as search did) can ingest a dissent in place of the holding.
+    """
+    k = (kind or "").lower()
+    for rank, words in enumerate((
+            ("lead", "majority"),
+            ("combined", "unanim", "unamim", "per curiam", "percuriam"),  # sic: "015unamimous"
+            ("plurality",),
+            ("merits", "trial", "addendum", "remittitur", "rehearing"),
+            ("concur",),
+            ("dissent",))):
+        if any(w in k for w in words):
+            return rank
+    return 3   # untyped: below the court's opinion, above separate writings
+
+
+def pick_lead(opinions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The opinion that stands for the case among a cluster's siblings, or None.
+
+    Ties keep CourtListener's order (ordering_key, then position), so of two lead
+    opinions the one listed first wins.
+    """
+    usable = [o for o in opinions if o.get("id") is not None]
+    if not usable:
+        return None
+    return min(enumerate(usable), key=lambda io: (
+        opinion_rank(io[1].get("type")),
+        io[1].get("ordering_key") if io[1].get("ordering_key") is not None else 10**6,
+        io[0]))[1]
+
+
 class CourtListener(Provider):
     id = "courtlistener"
     name = "CourtListener"
@@ -214,17 +250,17 @@ class CourtListener(Provider):
 
         hits: list[SourceHit] = []
         for res in data.get("results", [])[:limit]:
-            ops = res.get("opinions") or [{}]
-            # Cluster-level results carry several sibling opinions (majority, dissents);
-            # the first is the one the search matched on.
-            op_id = ops[0].get("id")
-            if op_id is None:
+            # A case's result carries its sibling opinions (majority, concurrences,
+            # dissents) in no particular order of authority; ingest the court's opinion.
+            op = pick_lead(res.get("opinions") or [])
+            if op is None:
                 continue
+            op_id = op["id"]
             hits.append(SourceHit(
                 provider=self.id,
                 ref=str(op_id),
                 title=res.get("caseName") or res.get("caseNameFull") or f"Opinion {op_id}",
-                snippet=strip_markup(ops[0].get("snippet") or "")[:400],
+                snippet=strip_markup(op.get("snippet") or "")[:400],
                 url=f"https://www.courtlistener.com{res.get('absolute_url', '')}",
                 date=res.get("dateFiled") or "",
                 badge=res.get("court_citation_string") or res.get("court") or "",
@@ -255,12 +291,38 @@ class CourtListener(Provider):
                       "retrieved_at": datetime.now(UTC).isoformat()},
         )
 
+    @staticmethod
+    async def _get(c: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response:
+        """GET, waiting once for a 429. CourtListener rate-limits per token, and an ingest
+        of several hits makes its requests close together."""
+        r = await c.get(url, **kw)
+        if r.status_code == 429:
+            try:
+                wait = float(r.headers.get("Retry-After", ""))
+            except ValueError:
+                wait = 5.0
+            await asyncio.sleep(min(max(wait, 1.0), 15.0))
+            r = await c.get(url, **kw)
+        return r
+
+    @staticmethod
+    def _text(op: dict[str, Any]) -> str:
+        # Preference order runs cleanest-text first: the plain_text column is OCR'd
+        # or publisher-supplied, while the HTML variants carry markup we would strip
+        # anyway. Falling through all of them means the opinion simply has no text.
+        for key in ("plain_text", "html_with_citations", "html", "html_lawbox",
+                    "html_columbia", "xml_harvard"):
+            if op.get(key):
+                return op[key] if key == "plain_text" else strip_markup(op[key])
+        return ""
+
     async def fetch(self, ref: str, hit: dict[str, Any] | None = None) -> FetchedDoc:
         if not settings.courtlistener_token.strip():
             return self._from_snippet(ref, hit or {})
+        hit = hit or {}
 
         async with _client(self._headers()) as c:
-            r = await c.get(f"{self.API}/opinions/{ref}/")
+            r = await self._get(c, f"{self.API}/opinions/{ref}/")
             if r.status_code in (401, 403):
                 # A token that is present but rejected is a configuration error worth
                 # surfacing, not something to paper over with a snippet.
@@ -269,34 +331,54 @@ class CourtListener(Provider):
                     f"{r.status_code}). Check AILAWLAB_COURTLISTENER_TOKEN in .env.")
             r.raise_for_status()
             op = r.json()
+            text = self._text(op)
+            requested = str(op.get("id") or ref)
 
-            # Preference order runs cleanest-text first: the plain_text column is OCR'd
-            # or publisher-supplied, while the HTML variants carry markup we would strip
-            # anyway. Falling through all of them means the opinion simply has no text.
-            text = ""
-            for key in ("plain_text", "html_with_citations", "html", "html_lawbox",
-                        "html_columbia", "xml_harvard"):
-                if op.get(key):
-                    text = op[key] if key == "plain_text" else strip_markup(op[key])
-                    break
+            # A ref can name a dissent or concurrence (an older search hit, or an agent's
+            # pick), or an opinion with no text. Ingest the court's opinion instead, and
+            # say so in the metadata.
+            if op.get("cluster") and (opinion_rank(op.get("type")) > 2 or not text):
+                sr = await self._get(c, f"{self.API}/opinions/",
+                                     params={"cluster": op["cluster"].rstrip("/").rsplit("/", 1)[-1],
+                                             "fields": "id,type,ordering_key"})
+                if sr.status_code == 200:
+                    siblings = sr.json().get("results") or []
+                    # Best first. Stop at the first with text; once the candidates rank no
+                    # better than what we already hold (with text), keep what we hold.
+                    for cand in sorted(siblings, key=lambda o: opinion_rank(o.get("type"))):
+                        if str(cand.get("id")) == requested:
+                            continue
+                        if text and opinion_rank(cand.get("type")) >= opinion_rank(op.get("type")):
+                            break
+                        cr = await self._get(c, f"{self.API}/opinions/{cand['id']}/")
+                        if cr.status_code == 200 and self._text(cr.json()):
+                            op, text = cr.json(), self._text(cr.json())
+                            break
 
             cluster_name, filed = "", ""
             if op.get("cluster"):
-                cr = await c.get(op["cluster"])
+                cr = await self._get(c, op["cluster"])
                 if cr.status_code == 200:
                     cl = cr.json()
                     cluster_name = cl.get("case_name") or ""
                     filed = cl.get("date_filed") or ""
 
-        title = cluster_name or f"CourtListener opinion {ref}"
+        # The case name from the search hit stands in when the cluster cannot be read
+        # (a 429 that outlasts the retry, say), so a document is never left unnamed.
+        title = cluster_name or hit.get("title") or f"CourtListener opinion {ref}"
+        meta = {"provider": self.id, "opinion_id": str(op.get("id") or ref),
+                "opinion_type": op.get("type") or "",
+                "date_filed": filed or hit.get("date", ""),
+                "retrieved_at": datetime.now(UTC).isoformat()}
+        if meta["opinion_id"] != requested:
+            meta["requested_opinion_id"] = requested
         return FetchedDoc(
             title=title,
             text=text,
             source_uri=op.get("absolute_url") and
             f"https://www.courtlistener.com{op['absolute_url']}" or f"{self.API}/opinions/{ref}/",
             doc_type="opinion",
-            metadata={"provider": self.id, "opinion_id": ref, "date_filed": filed,
-                      "retrieved_at": datetime.now(UTC).isoformat()},
+            metadata=meta,
         )
 
 
