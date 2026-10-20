@@ -4,3 +4,4 @@
 *.aux
 *.log
 *.out
+!cslaw2027/main.pdf
