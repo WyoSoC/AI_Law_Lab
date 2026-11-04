@@ -1050,6 +1050,9 @@ async def api_sources_ingest(request: Request):
     return JSONResponse(report)
 
 
+UPLOAD_SUFFIXES = (".pdf", ".txt", ".md")
+
+
 @app.post("/corpus/upload")
 async def corpus_upload(request: Request,
                         files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI idiom
@@ -1057,9 +1060,13 @@ async def corpus_upload(request: Request,
     """Add one or more uploaded PDFs or text files to a corpus."""
     corpus = corpus.strip() or "default"
     store = Corpus(await get_router(), name=corpus, added_by=user_id(request))
-    added, refused = [], []
+    added, refused, unsupported = [], [], []
     for upload in files:
         name = upload.filename or "upload"
+        if not name.lower().endswith(UPLOAD_SUFFIXES):
+            # A Word file or an image would otherwise be stored as garbled "text".
+            unsupported.append(name)
+            continue
         raw = await upload.read()
         if name.lower().endswith(".pdf"):
             import tempfile
@@ -1084,6 +1091,9 @@ async def corpus_upload(request: Request,
     if refused:
         parts.append("Not added, because it has no readable text or the same text is already "
                      "in this library: " + ", ".join(f"“{n}”" for n in refused) + ".")
+    if unsupported:
+        parts.append("Not added, because only PDF, .txt and .md files can be uploaded: "
+                     + ", ".join(f"“{n}”" for n in unsupported) + ".")
     msg = quote(" ".join(parts))
     if not added:
         return RedirectResponse(f"{P}/sources?tab=upload&msg={msg}", status_code=303)

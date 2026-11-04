@@ -314,6 +314,14 @@ button:disabled { opacity: .55; cursor: progress; }
 .cast-drop { border: 1px dashed var(--line); border-radius: var(--radius); padding: .6rem .8rem; margin-top: .8rem; }
 .cast-drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
 .drop-hint { color: var(--muted); font-size: .82rem; margin: 0; }
+.file-drop { border: 1px dashed var(--line); border-radius: var(--radius); padding: .7rem .8rem; }
+.file-drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
+.file-drop .drop-hint { margin-top: .45rem; }
+.file-list { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .3rem; }
+.file-list li { display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+  padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: .88rem; }
+.file-list li span { overflow-wrap: anywhere; }
+.file-note { color: var(--bad); }
 .draft-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: .2rem 1rem 1rem; margin-top: .8rem; background: var(--bg); }
 .cast-toolbar label { margin: 0; }
 .draft-panel select { width: auto; }

@@ -137,7 +137,13 @@ expanding it over time. Each document is chunked, embedded and made citable.</p>
 <div class="panel">
   <form method="post" action="{{ prefix }}/corpus/upload" enctype="multipart/form-data" id="upload-form">
     <label for="file">Documents (PDF or plain text; you can choose several)</label>
-    <input type="file" id="file" name="files" required multiple accept=".pdf,.txt,.md">
+    <div class="file-drop" id="file-drop">
+      <input type="file" id="file" name="files" multiple accept=".pdf,.txt,.md">
+      <p class="drop-hint">Or drag files here. Each drop adds to the list; nothing is added to
+        the library until you click <b>Add to library</b>.</p>
+      <ul class="file-list" id="file-list" hidden></ul>
+      <p class="drop-hint file-note" id="file-note" hidden></p>
+    </div>
 
     <label>Add them to</label>
     <div class="corpus-picker" data-default="default"></div>
@@ -225,10 +231,91 @@ document.getElementById('links-add').addEventListener('click', async ev => {
   }
 });
 
+// ---------------------------------------------------------------- upload list
+//
+// The file box on its own replaces its selection on every drop or every "Choose Files",
+// so files dropped one after another were silently lost. The page keeps its own list
+// instead: each drop or choice adds to it, and the list goes into the box just before the
+// form is sent.
+
+const UPLOAD_TYPES = ['.pdf', '.txt', '.md'];
+const fileInput = document.getElementById('file');
+const fileDrop = document.getElementById('file-drop');
+let chosen = [];
+
+function fileKey(f) { return `${f.name}|${f.size}|${f.lastModified}`; }
+
+function addFiles(list) {
+  const skipped = [];
+  const have = new Set(chosen.map(fileKey));
+  for (const f of list) {
+    if (!UPLOAD_TYPES.some(t => f.name.toLowerCase().endsWith(t))) { skipped.push(f.name); continue; }
+    if (!have.has(fileKey(f))) { chosen.push(f); have.add(fileKey(f)); }
+  }
+  const note = document.getElementById('file-note');
+  note.hidden = !skipped.length;
+  note.textContent = skipped.length
+    ? `Not added (only PDF, .txt and .md files can be uploaded): ${skipped.join(', ')}` : '';
+  renderFiles();
+}
+
+function syncInput() {
+  const dt = new DataTransfer();
+  chosen.forEach(f => dt.items.add(f));
+  fileInput.files = dt.files;
+}
+
+function renderFiles() {
+  const ul = document.getElementById('file-list');
+  ul.hidden = !chosen.length;
+  ul.innerHTML = chosen.map((f, i) => `<li><span>${esc(f.name)}</span>
+    <button type="button" class="small-btn" data-i="${i}" aria-label="Remove ${esc(f.name)}">Remove</button></li>`).join('');
+  syncInput();
+}
+
+document.getElementById('file-list').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-i]');
+  if (!b) return;
+  chosen.splice(Number(b.dataset.i), 1);
+  renderFiles();
+});
+
+// "Choose Files" replaces the box's selection; fold the new picks into the list instead.
+fileInput.addEventListener('change', () => {
+  const picked = [...fileInput.files];
+  if (picked.length) addFiles(picked); else syncInput();
+});
+
+['dragenter', 'dragover'].forEach(type => fileDrop.addEventListener(type, e => {
+  e.preventDefault();
+  fileDrop.classList.add('dragging');
+}));
+['dragleave', 'drop'].forEach(type => fileDrop.addEventListener(type, e => {
+  e.preventDefault();
+  if (type === 'dragleave' && fileDrop.contains(e.relatedTarget)) return;
+  fileDrop.classList.remove('dragging');
+}));
+fileDrop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+// A file dropped just outside the box would otherwise make the browser open it and leave
+// the page, losing the list.
+['dragover', 'drop'].forEach(type => window.addEventListener(type, e => {
+  if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
+}));
+
 document.getElementById('upload-form').addEventListener('submit', ev => {
   const name = pickedCorpus(ev.target.querySelector('.corpus-picker'));
   if (!name) { ev.preventDefault(); alert('Name the new library first.'); return; }
-  ev.target.corpus.value = name;
+  if (!chosen.length) { ev.preventDefault(); alert('Choose or drop at least one file first.'); return; }
+  syncInput();
+  ev.target.querySelector('input[name=corpus]').value = name;
+  const btn = ev.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  btn.textContent = `Adding ${chosen.length} file${chosen.length === 1 ? '' : 's'}…`;
+});
+// Coming back to the page with the browser's Back button can restore a disabled button.
+window.addEventListener('pageshow', () => {
+  const btn = document.querySelector('#upload-form button[type=submit]');
+  btn.disabled = false; btn.textContent = 'Add to library';
 });
 
 // ---------------------------------------------------------------- crawling a page's links
