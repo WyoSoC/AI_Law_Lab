@@ -7,27 +7,62 @@
 {% set preset = ['default'] if libraries|selectattr('name', 'equalto', 'default')|list else [] %}
 
 <h1>New experiment</h1>
-<p class="sub">Configuration is snapshotted into every run, so later edits never rewrite
-past results. Fill in the fields below.</p>
+<p class="sub">An experiment is a question you can run as many times as you like. Each run
+records exactly what it used (settings, model, library versions), so you can compare runs
+and repeat them later. Editing the experiment afterwards never changes runs already made.</p>
 
 <form method="post" action="{{ prefix }}/experiments" id="exp-form" onsubmit="return finalize()">
+  <fieldset class="panel mode-choice">
+    <legend><span class="step-no">1</span> What kind of experiment?</legend>
+    <p class="hint">The kind decides what each run does and what you set up next. It cannot be
+       changed once the experiment is created.</p>
+    <div class="mode-cards">
+      <label class="mode-card">
+        <input type="radio" name="mode" value="document_analysis" required onchange="showMode()">
+        <span class="mode-card-icon" aria-hidden="true">📄</span>
+        <span class="mode-card-title">Document analysis</span>
+        <span class="mode-card-text">Ask a question and get an answer written from your
+          libraries, or from a document you give the run, with every citation traced to its
+          source.</span>
+        <span class="mode-card-meta"><b>Good for:</b> reviewing a contract or opinion, finding
+          what your sources say on a point.</span>
+        <span class="mode-card-meta"><b>You choose:</b> the libraries to search.</span>
+      </label>
+      <label class="mode-card">
+        <input type="radio" name="mode" value="agentic_workflow" onchange="showMode()">
+        <span class="mode-card-icon" aria-hidden="true">🛠️</span>
+        <span class="mode-card-title">Agentic research</span>
+        <span class="mode-card-text">Write a research brief. AI agents plan the research, you
+          review the plan, and they search in parallel and write a cited answer.</span>
+        <span class="mode-card-meta"><b>Good for:</b> open questions that need many sources,
+          comparisons across jurisdictions or periods.</span>
+        <span class="mode-card-meta"><b>You choose:</b> where agents may look (libraries, legal
+          databases, the web) and how long they may take.</span>
+      </label>
+      <label class="mode-card">
+        <input type="radio" name="mode" value="roleplay" onchange="showMode()">
+        <span class="mode-card-icon" aria-hidden="true">⚖️</span>
+        <span class="mode-card-title">Role-play</span>
+        <span class="mode-card-text">Stage a negotiation, mediation or hearing between AI
+          agents, each with its own goals, bottom line and private files. People can take a
+          seat too.</span>
+        <span class="mode-card-meta"><b>Good for:</b> teaching advocacy, studying how parties
+          bargain and what they disclose.</span>
+        <span class="mode-card-meta"><b>You choose:</b> the scenario, the cast and the
+          pacing.</span>
+      </label>
+    </div>
+  </fieldset>
+
+  <p class="mode-wait" id="mode-wait">Choose a kind of experiment above to continue.</p>
+
+  <div id="after-mode" hidden>
   <div class="panel">
+    <h2><span class="step-no">2</span> Name and describe it</h2>
     <label for="name">Name</label>
     <input type="text" id="name" name="name" required
            placeholder="A short name that says what this experiment studies">
-
-    <div class="two-col">
-      <div>
-        <label for="mode">Mode</label>
-        <select id="mode" name="mode" onchange="showMode()">
-          {% for m in modes %}<option value="{{ m }}">{{ m.replace('_', ' ')|title }}</option>{% endfor %}
-        </select>
-      </div>
-      <div>
-        <label>Created by</label>
-        <p class="static-field">{{ user_name or 'you' }}</p>
-      </div>
-    </div>
+    <p class="hint">Created by {{ user_name or 'you' }}.</p>
 
     <label for="description" id="description-label">Description</label>
     <textarea id="description" name="description" class="short"
@@ -39,7 +74,7 @@ past results. Fill in the fields below.</p>
 
   <!-- ───────────── document_analysis ───────────── -->
   <div class="panel mode-panel" data-mode="document_analysis">
-    <h2>Document analysis setup</h2>
+    <h2><span class="step-no">3</span> Choose the libraries</h2>
     <p class="hint">Each run asks a question. It is answered from the libraries chosen here, or, if
        the run is given a document, from that document with the libraries as supporting authority.</p>
     <label>Libraries to ask</label>
@@ -51,7 +86,7 @@ past results. Fill in the fields below.</p>
 
   <!-- ───────────── agentic_workflow ───────────── -->
   <div class="panel mode-panel" data-mode="agentic_workflow">
-    <h2>Agentic research setup</h2>
+    <h2><span class="step-no">3</span> Set up the research</h2>
     <p class="hint">The description above is the research brief. Each run starts with a plan drafted from
        it (the question, its sub-questions, where to look, what would be enough), which you review and
        may edit before running. One research agent per sub-question then works in parallel, and a lead
@@ -61,7 +96,7 @@ past results. Fill in the fields below.</p>
 
   <!-- ───────────── roleplay ───────────── -->
   <div class="panel mode-panel" data-mode="roleplay">
-    <h2>Role-play setup</h2>
+    <h2><span class="step-no">3</span> Set up the role-play</h2>
     <p class="hint">Build the scenario, pacing and cast here. Each agent keeps its own memory,
        private notes, and bottom line, so opposing parties never see each other's thinking.
        <a href="{{ prefix }}/static/docs/roleplay-moderation.pdf" target="_blank" rel="noopener">How the moderator works (PDF)</a></p>
@@ -185,6 +220,8 @@ past results. Fill in the fields below.</p>
   </div>
 
   <button type="submit" class="primary">Create experiment</button>
+  <p class="hint">Creating the experiment doesn't start it. You start runs from its page.</p>
+  </div>
 </form>
 
 {% endblock %}
@@ -225,6 +262,10 @@ const ROLE_PRESETS = [
 ];
 
 function val(id){ return document.getElementById(id).value; }
+function currentMode() {
+  const r = document.querySelector('input[name=mode]:checked');
+  return r ? r.value : '';
+}
 function checkedLibraries(id) {
   return [...document.querySelectorAll(`#${id} input[type=checkbox]:checked`)].map(i => i.value);
 }
@@ -236,7 +277,7 @@ function toggleDraftPanel() {
 }
 
 function buildConfig() {
-  const mode = document.getElementById('mode').value;
+  const mode = currentMode();
   if (mode === 'document_analysis') {
     return {libraries: checkedLibraries('da_libs')};
   }
@@ -267,7 +308,12 @@ function syncJSON() {
 }
 
 function showMode() {
-  const mode = document.getElementById('mode').value;
+  const mode = currentMode();
+  document.getElementById('after-mode').hidden = !mode;
+  document.getElementById('mode-wait').hidden = !!mode;
+  document.querySelectorAll('.mode-card').forEach(c =>
+    c.classList.toggle('selected', c.querySelector('input').checked));
+  if (!mode) return;
   const brief = mode === 'agentic_workflow';
   document.getElementById('description-label').textContent = brief ? 'Research brief' : 'Description';
   document.getElementById('description-hint').hidden = !brief;
@@ -286,7 +332,7 @@ function showMode() {
 function finalize() {
   const ta = document.getElementById('config_json');
   if (!rawEdited) {
-    if (document.getElementById('mode').value === 'agentic_workflow'
+    if (currentMode() === 'agentic_workflow'
         && !document.getElementById('description').value.trim()) {
       const d = document.getElementById('description');
       d.focus();
@@ -295,7 +341,7 @@ function finalize() {
       d.addEventListener('input', () => d.setCustomValidity(''), {once: true});
       return false;
     }
-    if (document.getElementById('mode').value === 'roleplay') {
+    if (currentMode() === 'roleplay') {
       const errors = castErrors();
       if (errors.length) {
         showMessages(errors.map(message => ({level: 'error', message})),
@@ -318,6 +364,12 @@ function finalize() {
 }
 
 enableDropZone();
+// A link can preselect a kind (…/experiments/new?mode=roleplay); otherwise none is chosen.
+{
+  const wanted = new URLSearchParams(location.search).get('mode');
+  const radio = wanted && document.querySelector(`input[name=mode][value="${CSS.escape(wanted)}"]`);
+  if (radio) radio.checked = true;
+}
 showMode();
 resShow("aw");
 </script>

@@ -50,7 +50,7 @@
         {% for e in experiments %}
         <tr>
           <td><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a></td>
-          <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
+          <td><span class="mode">{{ mode_label(e.mode) }}</span></td>
           <td>{{ e.run_count }}</td>
           <td>{{ e.last_run.strftime('%Y-%m-%d %H:%M') if e.last_run else '—' }}</td>
           <td class="actions-cell"><div class="row-actions">
@@ -82,7 +82,7 @@
         <tr>
           <td><a href="{{ prefix }}/runs/{{ r.id }}"><code>{{ r.id.hex[:8] if r.id.hex is defined else (r.id|string)[:8] }}</code></a></td>
           <td>{{ r.experiment_name }}</td>
-          <td><span class="mode">{{ r.mode.replace('_', ' ') }}</span></td>
+          <td><span class="mode">{{ mode_label(r.mode) }}</span></td>
           <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
           <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}</td>
         </tr>

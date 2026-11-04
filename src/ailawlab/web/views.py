@@ -21,7 +21,7 @@ from ..research import research_settings
 
 MODE_LABELS = {
     "document_analysis": "Document analysis",
-    "agentic_workflow": "Agentic workflow",
+    "agentic_workflow": "Agentic research",
     "roleplay": "Role-play",
 }
 

@@ -104,6 +104,8 @@ def _asset_version() -> str:
 
 
 templates = Jinja2Templates(directory=BASE / "templates", context_processors=[_prefix])
+# A mode's name as people read it (the stored value stays "agentic_workflow" etc.).
+templates.env.globals["mode_label"] = lambda m: views.MODE_LABELS.get(m, (m or "").replace("_", " "))
 P = settings.url_prefix
 
 

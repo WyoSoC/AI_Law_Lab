@@ -12,7 +12,7 @@ Users ──▶ Web interface ──▶ Experiment manager
                                   │
               ┌───────────────────┼───────────────────┐
               ▼                   ▼                   ▼
-     Document analysis    Agentic workflow    Role-play simulation
+     Document analysis    Agentic research    Role-play simulation
               └───────────────────┼───────────────────┘
                                   ▼
                     LLM router (bounded queue)

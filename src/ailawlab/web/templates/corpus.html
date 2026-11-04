@@ -73,7 +73,7 @@
   <ul class="plain-list">
     {% for e in experiments %}
     <li><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a>
-        <span class="mode">{{ e.mode.replace('_', ' ') }}</span></li>
+        <span class="mode">{{ mode_label(e.mode) }}</span></li>
     {% endfor %}
   </ul>
   {% else %}

@@ -33,7 +33,7 @@ at any time. Deleting one for good removes all of that and cannot be undone.</p>
         {% for e in experiments %}
         <tr>
           <td><a href="{{ prefix }}/experiments/{{ e.id }}">{{ e.name }}</a></td>
-          <td><span class="mode">{{ e.mode.replace('_', ' ') }}</span></td>
+          <td><span class="mode">{{ mode_label(e.mode) }}</span></td>
           <td>{{ e.run_count }}</td>
           <td class="nowrap">{{ e.deleted_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td class="actions-cell"><div class="row-actions">
