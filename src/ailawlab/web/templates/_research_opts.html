@@ -4,7 +4,9 @@
     starting values (views.experiment_view's launch_defaults). -#}
 {% from "_library_picker.html" import library_picker %}
 {% macro research_opts(p, libraries, on_change, d, run_only=False, web_ready=True) %}
-<label>Libraries</label>
+<section class="opt-group" aria-labelledby="{{ p }}_h_libs">
+<h3 class="opt-head" id="{{ p }}_h_libs">Libraries</h3>
+<p class="opt-lead">Which of the lab's libraries the agents search first.</p>
 <label class="check"><input type="radio" name="{{ p }}_libmode" value="choose" {% if d.choose_libraries %}checked{% endif %}
        onchange="resShow('{{ p }}'); {{ on_change }}">
   Let the planner choose from all libraries <span class="hint-inline">(recommended)</span></label>
@@ -17,8 +19,11 @@
 <p class="hint">The planner profiles each library (what it holds, and how closely its passages match the
    brief) and picks the ones worth searching; the plan shows its choice and why, and you can change it
    before the run.{% if run_only %} Starts as the experiment's setting; changes apply to this run only.{% endif %}</p>
+</section>
 
-<label>Outside the libraries</label>
+<section class="opt-group" aria-labelledby="{{ p }}_h_out">
+<h3 class="opt-head" id="{{ p }}_h_out">Outside the libraries <span class="opt-tag">optional</span></h3>
+<p class="opt-lead">Whether the agents may also look beyond the libraries. Both are off unless you tick them.</p>
 <label class="check"><input type="checkbox" id="{{ p }}_db" {% if d.use_databases %}checked{% endif %}
        onchange="resShow('{{ p }}'); {{ on_change }}">
   Search legal databases <span class="hint-inline">CourtListener, the Federal Register, the eCFR, govinfo, SEC EDGAR</span></label>
@@ -26,7 +31,7 @@
        onchange="resShow('{{ p }}'); {{ on_change }}">
   Search the open web <span class="hint-inline">a search engine (Brave), and any public page</span></label>
 <p class="hint">{% if not web_ready %}Open-web search is not set up on this server (it needs a search key).
-   {% endif %}Off by default: a study of model reasoning shouldn't silently reach outside sources. The
+   {% endif %}A study of model reasoning shouldn't silently reach outside sources, so both start off. The
    legal databases are official sources with their own interfaces. The open web reaches much more
    (agency guidance, scholarship, foreign law, news) and its search queries go to an outside search
    service. Web addresses written in the brief are read before research starts.</p>
@@ -58,13 +63,18 @@
   </datalist>
   <p class="hint" id="{{ p }}_fetch_status" aria-live="polite"></p>
 </div>
+</section>
 
-<label for="{{ p }}_minutes">Time limit</label>
+<section class="opt-group" aria-labelledby="{{ p }}_h_time">
+<h3 class="opt-head" id="{{ p }}_h_time">Time limit</h3>
+<p class="opt-lead">How long the agents may research before they must write up what they found.</p>
+<label for="{{ p }}_minutes" class="sr-only">Time limit in minutes</label>
 <div class="inline-field"><input type="number" id="{{ p }}_minutes" value="{{ d.time_limit_minutes }}" min="5" max="1440"
        oninput="{{ on_change }}" style="max-width:8rem"> <span class="hint-inline">minutes</span></div>
 <p class="hint">Research has no limit on sources or steps: each agent reads what its sub-question needs. The
    time limit is the safety net: when it is reached, or when you press Stop on the run page, the agents
    report what they have found and the answer is written from that.</p>
+</section>
 {% set docs = {} %}{% for lib in libraries %}{% set _ = docs.update({lib.name: lib.documents}) %}{% endfor %}
 <script>window.NET_LIBS = Object.assign(window.NET_LIBS || {}, {{ docs|tojson }});</script>
 {% endmacro %}

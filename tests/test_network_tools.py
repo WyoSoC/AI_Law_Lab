@@ -235,7 +235,7 @@ def test_the_experiment_page_shows_what_a_study_may_use():
     facts = {f["label"]: f["value"] for f in v["facts"]}
     assert facts == {"Libraries": "the planner chooses", "Legal databases": "allowed",
                      "Open web": "not allowed", "Time limit": "45 minutes",
-                     "Saves what it reads to": "“Fetched: Study”"}
+                     "Keeps copies in": "“Fetched: Study”"}
     assert v["launch_defaults"]["choose_libraries"] and v["launch_defaults"]["own_library"] == "Fetched: Study"
     old = experiment_view({"mode": "agentic_workflow", "name": "Old",
                            "config": {"libraries": ["case_law"], "allow_network": True}}, [])

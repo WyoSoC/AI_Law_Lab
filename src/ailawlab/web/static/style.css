@@ -959,3 +959,13 @@ th { font-size: .72rem; letter-spacing: .06em; }
   border-radius: var(--radius); background: var(--bg); font-size: .86rem; line-height: 1.5; }
 .keep-policy-title { margin: 0 0 .3rem; font-weight: 600; }
 .keep-policy ol { margin: 0; padding-left: 1.2rem; display: grid; gap: .3rem; }
+
+/* Research setup: each choice is its own subsection with a clear heading */
+.opt-group { padding-top: 1.1rem; margin-top: 1.1rem; border-top: 1px solid var(--line); }
+.opt-group:first-of-type { border-top: none; margin-top: .4rem; padding-top: 0; }
+.opt-head { margin: 0; font-family: inherit; font-size: 1rem; font-weight: 600; color: var(--ink); letter-spacing: 0; }
+.opt-tag { margin-left: .4rem; padding: .05rem .45rem; border-radius: 999px; background: var(--accent-soft);
+  color: var(--accent); font-size: .72rem; font-weight: 600; vertical-align: .1em; }
+.opt-lead { margin: .2rem 0 .5rem; color: var(--ink); font-size: .9rem; }
+.opt-group label[for$="_fetch"] { color: var(--ink); font-weight: 600; font-size: .88rem; }
+.opt-group label.check { color: var(--ink); font-size: .92rem; }

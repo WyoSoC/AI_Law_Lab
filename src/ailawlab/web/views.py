@@ -278,8 +278,8 @@ def experiment_view(exp: dict, runs: list[dict], progress: dict[str, int] | None
             _fact("Time limit", f"{d['time_limit_minutes']} minutes", "no limit on sources or steps"),
         ]
         if d["use_databases"] or d["use_web"]:
-            facts.append(_fact("Saves what it reads to", f"“{d['fetch_library'] or d['own_library']}”",
-                               "each document read becomes a new version of that library"))
+            facts.append(_fact("Keeps copies in", f"“{d['fetch_library'] or d['own_library']}”",
+                               "only sources the agents choose to keep and whose rights allow it"))
         view.update(facts=facts, libraries=libraries, launch_defaults={**d, "libraries": d["libraries"]})
         return view
     facts = [libraries_fact(libraries, library_documents,
