@@ -347,6 +347,10 @@ def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
 
     def link(m: re.Match) -> str:
         src = by_marker.get(m.group(1))
+        if src and src.get("kept") is False and safe_url(src.get("url")):
+            title = (str(src.get("label", "")) + " — read online, not kept").replace('"', "&quot;")
+            return (f'<a class="cite" href="{safe_url(src["url"])}" target="_blank" rel="noopener" '
+                    f'title="{title}">[{m.group(1)}]</a>')
         if not src or not src.get("document_id"):
             return m.group(0)
         where = library_text(src)
@@ -357,6 +361,15 @@ def _link_sources(html: str, sources: list[dict], prefix: str) -> str:
     return re.sub(r'<span class="cite">\[([SE]?\d+)\]</span>', link, html)
 
 
+def _read_record(f: dict) -> dict:
+    """A document a research run read online. Runs from before reading and keeping were
+    separate kept everything they read, with no rights check: say so rather than show one."""
+    if "kept" in f:
+        return f
+    return {**f, "kept": bool(f.get("document_id")), "keep_allowed": None, "keep_reason": "",
+            "legacy": True}
+
+
 def cited_references(rows: list[dict], documents: dict[int, dict]) -> dict[str, Any]:
     """A run's citations gathered by the document they point to, for its References.
 
@@ -364,12 +377,28 @@ def cited_references(rows: list[dict], documents: dict[int, dict]) -> dict[str, 
     for records from before citations kept them, and `library_version`); `documents` the
     cited documents by id. Each reference carries the document's full citation (citations.py),
     the library and version it was searched in, and every place it was cited, in order of
-    first citation. Unsupported markers are listed apart. Pure.
+    first citation. Unsupported markers are listed apart. A page read online but not kept in a
+    library is a reference too, by its address and when it was read (`read_online`). Pure.
     """
-    refs: dict[int, dict[str, Any]] = {}
+    refs: dict[Any, dict[str, Any]] = {}
     unsupported: list[dict[str, str]] = []
     for r in rows:
         where = {"marker": r.get("quoted_text") or "", "context": r.get("context") or ""}
+        if r.get("verdict") == "grounded" and not r.get("doc_id") and r.get("source_url"):
+            key = ("url", r["source_url"])
+            ref = refs.get(key)
+            if ref is None:
+                read = r.get("retrieved_at")
+                ref = refs[key] = {
+                    "document_id": None, "text": r.get("source_label") or r["source_url"],
+                    "url": safe_url(r["source_url"]), "available": False, "read_online": True,
+                    "retrieved": f"{read:%B} {read.day}, {read:%Y}" if hasattr(read, "year")
+                    else str(read or "")[:10],
+                    "fingerprint": r.get("fingerprint") or "", "library": "", "version": None,
+                    "uses": []}
+            ref["uses"].append({**where, "label": r.get("source_label") or "",
+                                "excerpt": r.get("excerpt") or ""})
+            continue
         if r.get("verdict") != "grounded" or not r.get("doc_id"):
             if r.get("verdict") == "unsupported":
                 unsupported.append(where)
@@ -390,7 +419,7 @@ def cited_references(rows: list[dict], documents: dict[int, dict]) -> dict[str, 
         ref["library_text"] = library_text({"library": ref["library"], "version": ref["version"]})
     by_library: dict[str, int] = {}
     for ref in out:
-        key = ref["library_text"] or "no library"
+        key = "read online, not kept" if ref.get("read_online") else (ref["library_text"] or "no library")
         by_library[key] = by_library.get(key, 0) + 1
     return {"references": out, "unsupported": unsupported,
             "by_library": [{"library": k, "documents": n} for k, n in by_library.items()]}
@@ -404,7 +433,11 @@ def references_text(run: dict, refs: dict[str, Any]) -> str:
     for ref in refs["references"]:
         uses = "; ".join(f"{u['marker']} {u['context']}".strip() for u in ref["uses"])
         lines.append(f"{ref['n']}. {ref['text']}" + (f" {ref['url']}" if ref["url"] else ""))
-        lines.append(f"   Searched in library {ref['library_text'] or '(unknown)'}. Cited: {uses}.")
+        if ref.get("read_online"):
+            lines.append(f"   Read online{' on ' + ref['retrieved'] if ref['retrieved'] else ''}; no copy kept "
+                         f"(the page may have changed since). Cited: {uses}.")
+        else:
+            lines.append(f"   Searched in library {ref['library_text'] or '(unknown)'}. Cited: {uses}.")
     if refs["unsupported"]:
         lines += ["", "Markers that name no passage the model was given (unsupported):",
                   "; ".join(f"{u['marker']} {u['context']}".strip() for u in refs["unsupported"])]
@@ -434,7 +467,8 @@ def run_view(run: dict, prefix: str = "") -> dict[str, Any]:
         # Every passage the answer could cite, by marker (document analysis and agents).
         "sources": [src for src in result.get("sources") or [] if isinstance(src, dict)],
         # Documents an agent read online, each saved to a library.
-        "fetched": [{**f, "url": safe_url(f.get("url"))} for f in result.get("fetched") or []
+        "fetched": [{**_read_record(f), "url": safe_url(f.get("url")),
+                     "license_url": safe_url(f.get("license_url"))} for f in result.get("fetched") or []
                     if isinstance(f, dict)],
         # Pages an agent wanted but whose site does not let AI agents read them.
         "refused": [{**r, "url": safe_url(r.get("url"))} for r in result.get("refused") or []

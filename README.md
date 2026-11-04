@@ -116,8 +116,14 @@ while their own notes stay whole, so they can keep reading. The run's time limit
 set per run) and a Stop button end research early; the answer is still written from what was
 found. Two permissions, both off by default: **legal databases** (CourtListener, Federal Register,
 eCFR, govinfo, EDGAR) and **the open web** (Brave Search, and any public page; set
-`AILAWLAB_BRAVE_API_KEY`). Everything read is saved into a library first, recording a version, so a
-citation names a fixed copy; every search is stored with the results it returned. A web page is
+`AILAWLAB_BRAVE_API_KEY`). Reading and keeping are separate (`keep_rules.py`): an agent may read
+and cite anything below, but a full copy goes into a library (recording a version) only when the
+agent calls `keep` and the rights check is positive: the legal databases (court opinions, the
+Federal Register, the eCFR, govinfo, EDGAR filings), US federal sites listed in
+`AILAWLAB_KEEP_SITES`, or a page marking a Creative Commons license or public-domain tool
+(`rel="license"` or JSON-LD). Unclear means not kept. A citation of a page not kept stores its
+address, the time it was read, a SHA-256 of the text and the cited passage only. Every search is
+stored with the results it returned. A web page is
 read only if its site lets AI agents read it (`site_rules.py`): robots.txt is obeyed for the
 agents' own name, `AILawLab-agent` (`agent_user_agent`), and a page it closes to well-known AI
 agents (GPTBot, ClaudeBot, ChatGPT-User, ...) is not read either; nor is one marked `noai` or

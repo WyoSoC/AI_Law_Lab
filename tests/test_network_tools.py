@@ -6,7 +6,7 @@ import asyncio
 from ailawlab import sources
 from ailawlab.grounding import SourceLedger
 from ailawlab.network_tools import OnlineReader, fetch_library_name
-from ailawlab.rag import Libraries, Passage, default_hidden, library_hidden
+from ailawlab.rag import Libraries, default_hidden, library_hidden
 from ailawlab.tools import default_registry
 
 
@@ -109,8 +109,18 @@ def test_search_lists_leads_numbered_across_searches(monkeypatch):
     assert asyncio.run(r.search("x", "nope")).startswith("ERROR: unknown database")
 
 
-def test_reading_saves_first_and_hands_back_citable_passages(monkeypatch):
-    r = reader()
+class WordRouter:
+    """Embeds a text as counts of a few words, so a passage about the query ranks first."""
+    async def embed(self, texts):
+        return [[t.lower().count(w) + 0.01 for w in ("notice", "days", "cure")] for t in texts]
+
+    async def embed_one(self, text):
+        return (await self.embed([text]))[0]
+
+
+def test_reading_hands_back_citable_passages_and_keeping_is_separate(monkeypatch):
+    r = OnlineReader(WordRouter(), Libraries(None, []), SourceLedger(), Notes(), "run-1",
+                     "Fetched: Test")
     r.hits = [("federal_register", {"ref": "2026-1", "title": "Notice rule"})]
 
     class Fed:
@@ -125,29 +135,32 @@ def test_reading_saves_first_and_hands_back_citable_passages(monkeypatch):
         saved.append(doc)
         return 77, 3, False
 
-    async def fake_passages(self, doc_id, version, query):
-        return [Passage(chunk_id=5, document_id=doc_id, title="Notice rule", content="Thirty days.",
-                        page_start=None, page_end=None, similarity=0.8, corpus=self.library,
-                        version=version)]
+    async def no_chunks(*a, **k):
+        return [{"id": 501, "ordinal": 0}]
 
     monkeypatch.setattr(sources, "get_provider", lambda pid: Fed())
     monkeypatch.setattr(OnlineReader, "_save", fake_save)
-    monkeypatch.setattr(OnlineReader, "_passages", fake_passages)
+    monkeypatch.setattr("ailawlab.network_tools.fetch_all", no_chunks)
     out = asyncio.run(r.read("W1", "notice period"))
-    assert saved[0]["source_uri"] == "https://www.federalregister.gov/d/2026-1"
-    assert "saved it to the library “Fetched: Test” (version 3)" in out
-    assert "[1] Notice rule (library “Fetched: Test” v3)\nThirty days." in out
-    assert r.ledger.get(1).document_id == 77                  # citable like any passage
-    assert r.fetched == [{"source": "W1", "title": "Notice rule",
-                          "url": "https://www.federalregister.gov/d/2026-1",
-                          "provider": "federal_register", "document_id": 77,
-                          "corpus": "Fetched: Test", "version": 3}]
+    assert not saved                                   # reading keeps nothing
+    assert "Rights check: positive (a Federal Register document" in out
+    assert "[1] Notice rule (read online, not kept)\nThirty days' notice is required." in out
+    assert r.ledger.get(1).kept is False               # citable all the same
+    record = r.fetched[0]
+    assert (record["kept"], record["keep_allowed"], record["provider"]) == (False, True, "federal_register")
     assert asyncio.run(r.read("W9")).startswith("ERROR: there is no search result W9")
     assert asyncio.run(r.read("file:///etc/passwd")).startswith("ERROR: give a search result")
-    # Read again (by another agent, say), the same document is not fetched or saved twice.
-    saved.clear()
+    # Read again (by another agent, say), the same document is not fetched twice.
     again = asyncio.run(r.read("W1", "cure period"))
-    assert not saved and "was already read in this run" in again and len(r.fetched) == 1
+    assert "was already read in this run" in again and len(r.fetched) == 1
+    # Keeping it saves the copy once, and passage [1] now points to the library copy.
+    kept = asyncio.run(r.keep("W1", "the rule itself"))
+    assert "Kept “Notice rule” in the library “Fetched: Test” (version 3)" in kept
+    assert saved[0]["source_uri"] == "https://www.federalregister.gov/d/2026-1"
+    p = r.ledger.get(1)
+    assert (p.kept, p.document_id, p.chunk_id, p.version) == (True, 77, 501, 3)
+    assert r.fetched[0]["kept_because"] == "the rule itself"
+    assert "already kept" in asyncio.run(r.keep("W1", "again")) and len(saved) == 1
 
 
 def test_a_private_address_is_refused():
@@ -209,8 +222,9 @@ def test_several_results_are_read_in_one_call(monkeypatch):
 def test_the_agent_is_asked_for_several_sources_and_never_a_w_number():
     from ailawlab.tools import online_tools
 
-    [_, read_tool] = online_tools(reader())
+    [_, read_tool, keep_tool] = online_tools(reader())
     assert "W1, W3, W4" in read_tool.description and "never cite a W number" in read_tool.description
+    assert keep_tool.name == "keep" and "rights check" in keep_tool.description
 
 
 def test_the_experiment_page_shows_what_a_study_may_use():
@@ -415,13 +429,22 @@ def test_pages_named_in_the_brief_are_read_first_and_marked():
     async def fake_read(source, look_for=""):
         if "broken" in source:
             return f"ERROR: could not read {source}"
-        r.fetched.append({"source": source})
+        r.fetched.append({"source": source, "keep_allowed": "a.gov/x" in source})
         return f"Read “{source}”"
 
+    kept = []
+
+    async def fake_keep(source, why):
+        kept.append(source)
+        return f"Kept “{source}”"
+
     r._read_one = fake_read
+    r._keep_one = fake_keep
     text = asyncio.run(r.read_given(["https://a.gov/x", "https://broken.example/", "https://a.gov/y"], "q"))
     assert "ERROR: could not read https://broken.example/" in text and text.count("Read “") == 2
     assert all(f.get("given") for f in r.fetched) and len(r.fetched) == 2
+    # Pages the researcher named are kept, but only when their rights allow it.
+    assert kept == ["https://a.gov/x"]
 
 
 def test_a_database_that_limits_requests_is_left_alone_for_a_while(monkeypatch):

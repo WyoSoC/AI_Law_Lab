@@ -1,14 +1,18 @@
-"""Outside sources for research agents: the legal databases, the open web, and reading.
+"""Outside sources for research agents: the legal databases, the open web, reading, keeping.
 
 Two permissions, each the researcher's to grant: the public legal databases (CourtListener,
 the Federal Register, the eCFR, govinfo, SEC EDGAR, through their own interfaces) and the open
-web (Brave Search, and reading any public page). An agent that reads the web mid-run would
-normally leave nothing to check: the page can change or vanish. So reading here is ingesting.
-Every document an agent reads is saved into a library (by default "Fetched: <experiment>"),
-which records a new version, and the passages handed back are that library's passages,
-numbered in the run's ledger like any other. A citation to something read online therefore
-names a document, a library and a version, and the document stays readable after the page
-changes. A document is read once per run, however many agents ask for it.
+web (Brave Search, and reading any public page).
+
+Reading and keeping are separate. An agent may read anything its permissions and the site's
+AI rules allow; the passages it gets back come from a copy held in memory for the run, and it
+may cite them. Keeping saves a full copy into a library (by default "Fetched: <experiment>"),
+so the document stays readable after the page changes. An agent asks to keep a source when it
+judges it reliable and useful, and keep_rules decides whether the source's rights allow it:
+public legal databases, listed federal sites and openly licensed pages pass; anything else is
+not kept. A passage of a page that was not kept is cited by its address, the time it was read
+and a fingerprint of the text, and only the passages actually cited are stored, as quotations.
+A document is read once per run, however many agents ask for it.
 
 Searching is not reading: a search returns candidates ([W1], [W2], ...) with snippets, which
 are leads, not sources, and cannot be cited. Every search is kept with the results it gave.
@@ -26,16 +30,26 @@ import html
 import logging
 import re
 import time
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from . import site_rules, source_material, sources
+from . import keep_rules, site_rules, source_material, sources
 from .config import settings
-from .db import fetch_one, get_pool
+from .db import fetch_all, fetch_one, get_pool
 from .grounding import SourceLedger
-from .rag import Corpus, Libraries, LibraryPin, Passage, format_passages, record_version
+from .rag import (
+    Corpus,
+    Libraries,
+    LibraryPin,
+    Passage,
+    _page_for_offset,
+    chunk_text,
+    format_passages,
+    record_version,
+)
 from .router import LLMRouter
 
 log = logging.getLogger(__name__)
@@ -199,10 +213,11 @@ class OnlineReader:
 
     Two permissions, each the researcher's to grant: `databases` (the public legal databases
     with their own APIs) and `web` (open-web search, and reading any public page). Reading is
-    not budgeted: an agent reads what the question needs. `libraries` is the run's own set:
-    once something is saved, the fetch library is pinned to its new version there, so later
-    library searches by any of the run's agents cover it too. Agents work in parallel, so
-    saving (which records a library version) is serialized.
+    not budgeted: an agent reads what the question needs. Reading keeps nothing; `keep` saves
+    a source the agent chose, if keep_rules allows it. `libraries` is the run's own set: once
+    something is kept, the fetch library is pinned to its new version there, so later library
+    searches by any of the run's agents cover it too. Agents work in parallel, so saving
+    (which records a library version) is serialized.
     """
 
     def __init__(self, router: LLMRouter, libraries: Libraries, ledger: SourceLedger, tracer,
@@ -218,6 +233,9 @@ class OnlineReader:
         self.refused: list[dict[str, Any]] = []               # pages whose site does not allow it
         self._save_lock = asyncio.Lock()
         self._read_urls: dict[str, int] = {}                  # address -> its index in fetched
+        # Per document read (same index as fetched): its text, passages and their embeddings,
+        # held for the run only; and, once kept, its passages' chunk ids in the library.
+        self._docs: list[dict[str, Any]] = []
 
     async def read_given(self, urls: list[str], look_for: str = "") -> str:
         """Read pages named in the brief, before the agents start, and say what came of each:
@@ -225,9 +243,14 @@ class OnlineReader:
         out = []
         for url in urls:
             before = len(self.fetched)
-            out.append(await self._read_one(url, look_for))
+            text = await self._read_one(url, look_for)
             if len(self.fetched) > before:
-                self.fetched[-1]["given"] = True
+                record = self.fetched[-1]
+                record["given"] = True
+                # The researcher chose these pages, so they are kept whenever their rights allow.
+                if record["keep_allowed"]:
+                    text += "\n\n" + await self._keep_one(url, "given with the research brief")
+            out.append(text)
         return "\n\n".join(out)
 
     @staticmethod
@@ -310,7 +333,7 @@ class OnlineReader:
             lines.insert(0, "No results.")
         return ("\n\n".join(lines) + "\n\nThese are search results, not sources: do not cite "
                 "them. To use one, call read with its [W] number (several at once: W1, W3, W4); "
-                "what you read is saved and handed back as numbered passages you can cite.")
+                "what you read comes back as numbered passages you can cite.")
 
     # ------------------------------------------------------------------ reading
 
@@ -344,19 +367,19 @@ class OnlineReader:
         return source.strip()
 
     async def _read_one(self, source: str, look_for: str = "") -> str:
-        # Several agents may want the same document: it is read and saved once, and each gets
-        # the passages that fit what it is looking for.
+        # Several agents may want the same document: it is read once, and each gets the
+        # passages that fit what it is looking for.
         key = self._key(source)
         if key in self._read_urls:
-            record = self.fetched[self._read_urls[key]]
-            passages = await self._passages(record["document_id"], record["version"],
-                                            look_for or record["title"])
+            index = self._read_urls[key]
+            record = self.fetched[index]
+            passages = await self._best_passages(index, look_for or record["title"])
             numbers = self.ledger.number(passages)
             if m := _HIT.match(source):
                 self.read_hits[int(m.group(1))] = numbers
-            return (f"“{record['title']}” was already read in this run (library “{self.library}” "
-                    f"v{record['version']}). The passages most relevant to “{look_for or record['title']}”:"
-                    "\n\n" + format_passages(passages, numbers))
+            return (f"“{record['title']}” was already read in this run. {self._status(record)} "
+                    f"The passages most relevant to “{look_for or record['title']}”:\n\n"
+                    + format_passages(passages, numbers))
         refused = len(self.refused)
         try:
             doc = await self._fetch(source)
@@ -369,32 +392,138 @@ class OnlineReader:
         except Exception as e:  # noqa: BLE001 - a failed read is information for the agent
             log.warning("run %s could not read %s: %s", self.run_id, source, e)
             return f"ERROR: could not read {source}: {e}"
+        doc["text"] = doc["text"].replace("\x00", "")
         if not doc["text"].strip():
             return f"ERROR: {source} has no readable text."
-
         try:
-            doc_id, version, reused = await self._save(doc)
-        except Exception as e:  # noqa: BLE001 - one failed save must not sink the others
-            log.warning("run %s could not save %s: %s", self.run_id, source, e)
-            return f"ERROR: {source} was read but could not be saved ({type(e).__name__})."
-        passages = await self._passages(doc_id, version, look_for or doc["title"])
+            held = await self._hold(doc)
+        except Exception as e:  # noqa: BLE001 - one failed read must not sink the others
+            log.warning("run %s could not prepare %s: %s", self.run_id, source, e)
+            return f"ERROR: {source} was read but its passages could not be prepared ({type(e).__name__})."
+
+        rights: keep_rules.KeepCheck = doc.pop("keep")
         record = {"source": source, "title": doc["title"], "url": doc["source_uri"],
-                  "provider": doc["metadata"].get("provider") or "web", "document_id": doc_id,
-                  "corpus": self.library, "version": version}
+                  "provider": doc["metadata"].get("provider") or "web",
+                  "retrieved_at": held["retrieved_at"], "fingerprint": held["fingerprint"],
+                  "keep_allowed": rights.allowed, "keep_reason": rights.reason,
+                  "license_url": rights.license_url, "kept": False,
+                  "document_id": None, "corpus": None, "version": None, "kept_because": ""}
         self.fetched.append(record)
-        self._read_urls[key] = len(self.fetched) - 1
+        self._docs.append({**held, "doc": doc})
+        index = len(self.fetched) - 1
+        self._read_urls[key] = index
+        passages = await self._best_passages(index, look_for or doc["title"])
         numbers = self.ledger.number(passages)
         if m := _HIT.match(source):
             self.read_hits[int(m.group(1))] = numbers
-        await self.tracer.note(f"read “{doc['title']}” online; "
-                               + (f"the same text was already in “{self.library}”, so that copy "
-                                  f"is used (v{version})" if reused
-                                  else f"saved it to “{self.library}” v{version}"), node="act",
-                               agent_id=current_agent.get())
-        return (f"Read “{doc['title']}” and saved it to the library “{self.library}” "
-                f"(version {version}). The passages most relevant to "
+        await self.tracer.note(f"read “{doc['title']}” online (not kept; rights check "
+                               f"{'positive' if rights.allowed else 'not positive'}: {rights.reason})",
+                               node="act", agent_id=current_agent.get())
+        return (f"Read “{doc['title']}”. {self._status(record)} The passages most relevant to "
                 f"“{look_for or doc['title']}”, which you can cite by number:\n\n"
                 + format_passages(passages, numbers))
+
+    def _status(self, record: dict[str, Any]) -> str:
+        """What the agent is told about keeping a document it read."""
+        if record["kept"]:
+            return f"A copy is kept in the library “{record['corpus']}” (version {record['version']})."
+        if record["keep_allowed"]:
+            return (f"No copy is kept yet. Rights check: positive ({record['keep_reason']}). If it "
+                    "is reliable and useful for the study, call keep with "
+                    f"“{record['source']}” to save a copy to the library.")
+        return (f"No copy will be kept: {record['keep_reason']}. You may still cite its passages; "
+                "they are recorded as read online, with the address and the time it was read.")
+
+    async def _hold(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """The document's passages and their embeddings, in memory: the same passages a library
+        would make of it, so keeping it later gives the same text."""
+        chunks = chunk_text(doc["text"])
+        vectors: list[list[float]] = []
+        for i in range(0, len(chunks), 16):
+            vectors.extend(await self.router.embed(chunks[i:i + 16]))
+        pages, offset = [], 0
+        for content in chunks:
+            page_map = doc.get("page_map")
+            pages.append((_page_for_offset(page_map, offset), _page_for_offset(page_map, offset + len(content)))
+                         if page_map else (None, None))
+            offset += len(content)
+        return {"chunks": chunks, "vectors": vectors, "pages": pages, "chunk_ids": {},
+                "retrieved_at": doc["metadata"].get("retrieved_at")
+                or datetime.now(UTC).isoformat(timespec="seconds"),
+                "fingerprint": hashlib.sha256(doc["text"].encode()).hexdigest()}
+
+    def _passage(self, index: int, i: int, similarity: float) -> Passage:
+        """Passage i of document `index` read in this run: its library chunk once kept, else a
+        run-only id (negative, so it can never collide with a library chunk)."""
+        record, held = self.fetched[index], self._docs[index]
+        start, end = held["pages"][i]
+        if record["kept"] and i in held["chunk_ids"]:
+            return Passage(chunk_id=held["chunk_ids"][i], document_id=record["document_id"],
+                           title=record["title"], content=held["chunks"][i], page_start=start,
+                           page_end=end, similarity=similarity, corpus=record["corpus"],
+                           version=record["version"])
+        return Passage(chunk_id=-(index * 100_000 + i + 1), document_id=0, title=record["title"],
+                       content=held["chunks"][i], page_start=start, page_end=end,
+                       similarity=similarity, kept=False, url=record["url"] or "",
+                       retrieved_at=record["retrieved_at"], fingerprint=record["fingerprint"])
+
+    async def _best_passages(self, index: int, query: str, top_k: int = 4) -> list[Passage]:
+        """The document's passages closest to what the agent is looking for."""
+        held = self._docs[index]
+        q = await self.router.embed_one(query)
+        scored = sorted(((_cosine(q, v), i) for i, v in enumerate(held["vectors"])), reverse=True)
+        return [self._passage(index, i, sim) for sim, i in scored[:top_k]]
+
+    # ------------------------------------------------------------------ keeping
+
+    async def keep(self, source: str, why: str = "") -> str:
+        """Keep a copy of one or several documents read in this run, as the rights allow."""
+        refs = ([source.strip()] if source.strip().lower().startswith(("http://", "https://"))
+                else [r for r in re.split(r"[\s,;]+", source or "") if r])
+        if not refs:
+            return "ERROR: give the source as you read it: a result number like W2, or its address."
+        return "\n\n".join([await self._keep_one(ref, why) for ref in refs[:self.PER_CALL]])
+
+    async def _keep_one(self, source: str, why: str) -> str:
+        key = self._key(source)
+        if key not in self._read_urls:
+            return f"ERROR: {source} has not been read in this run; read it first."
+        index = self._read_urls[key]
+        record, held = self.fetched[index], self._docs[index]
+        if record["kept"]:
+            return f"“{record['title']}” is already kept in “{record['corpus']}” (version {record['version']})."
+        if not record["keep_allowed"]:
+            await self.tracer.note(f"asked to keep “{record['title']}”; not kept: {record['keep_reason']}",
+                                   node="act", agent_id=current_agent.get())
+            return (f"Not kept: {record['keep_reason']}. Its passages you read can still be cited; "
+                    "they are recorded as read online.")
+        try:
+            doc_id, version, reused = await self._save(held["doc"])
+        except Exception as e:  # noqa: BLE001 - a failed save is information for the agent
+            log.warning("run %s could not keep %s: %s", self.run_id, source, e)
+            return f"ERROR: {source} could not be kept ({type(e).__name__})."
+        rows = await fetch_all("SELECT id, ordinal FROM chunks WHERE document_id=%s", (doc_id,))
+        held["chunk_ids"] = {r["ordinal"]: r["id"] for r in rows
+                             if r["ordinal"] < len(held["chunks"])}
+        record.update({"kept": True, "document_id": doc_id, "corpus": self.library,
+                       "version": version, "kept_because": why.strip()})
+        # Passages already handed out keep their numbers, and now point to the library copy.
+        for p in self.ledger.passages:
+            if not p.kept and p.fingerprint == record["fingerprint"]:
+                i = -p.chunk_id - 1 - index * 100_000
+                if i in held["chunk_ids"]:
+                    self.ledger.rekey(p.chunk_id, held["chunk_ids"][i])
+                    p.chunk_id = held["chunk_ids"][i]
+                p.document_id, p.corpus, p.version, p.kept = doc_id, self.library, version, True
+        await self.tracer.note(f"kept “{record['title']}”"
+                               + (f" ({why.strip()})" if why.strip() else "")
+                               + (f": the same text was already in “{self.library}”, so that copy "
+                                  f"is used (v{version})" if reused
+                                  else f": saved to “{self.library}” v{version}")
+                               + f"; rights: {record['keep_reason']}", node="act",
+                               agent_id=current_agent.get())
+        return (f"Kept “{record['title']}” in the library “{self.library}” (version {version}); "
+                f"rights: {record['keep_reason']}. Its passages keep their numbers.")
 
     async def _fetch(self, source: str) -> dict[str, Any]:
         """The document behind a [W] search result or a public address."""
@@ -412,7 +541,8 @@ class OnlineReader:
                                   f"again in {wait:.0f} s, or read another result meanwhile.")
             fetched = await paced(pid, lambda: sources.get_provider(pid).fetch(hit["ref"], hit))
             return {"title": fetched.title, "text": fetched.text, "source_uri": fetched.source_uri,
-                    "doc_type": fetched.doc_type, "metadata": dict(fetched.metadata)}
+                    "doc_type": fetched.doc_type, "metadata": dict(fetched.metadata),
+                    "keep": keep_rules.check(pid, fetched.source_uri or "")}
         if not source.lower().startswith(("http://", "https://")):
             raise LookupError("give a search result's number, like W2, or a web address "
                               "starting with https://.")
@@ -429,13 +559,17 @@ class OnlineReader:
         page = await asyncio.to_thread(source_material.from_bytes, body,
                                        content_type=headers.get("content-type", ""), url=final,
                                        max_words=settings.web_link_max_words)
+        rights = keep_rules.check("web", final, body, headers.get("content-type", ""),
+                                  sites=settings.keep_sites)
         return {"title": page.title, "text": page.text, "source_uri": page.url or source,
-                "doc_type": page.kind, "page_map": page.page_map or None,
+                "doc_type": page.kind, "page_map": page.page_map or None, "keep": rights,
                 "metadata": {"link": source, "site": page.site, "published": page.published,
                              "words": page.words, "truncated": page.truncated,
                              "retrieved_at": page.retrieved_at,
                              "permission": "The site's robots.txt allows AI agents to read it, and "
-                                           "it carries no AI or text-and-data-mining opt-out."}}
+                                           "it carries no AI or text-and-data-mining opt-out.",
+                             "keep_reason": rights.reason,
+                             **({"license": rights.license_url} if rights.license_url else {})}}
 
     async def _check_site(self, url: str) -> None:
         """Raise LookupError, and note the page as turned away, if its site's robots.txt or
@@ -482,19 +616,9 @@ class OnlineReader:
                 (self.run_id, position, self.library, pin.version, len(pin.document_ids)))
         return doc_id, pin.version, reused
 
-    async def _passages(self, doc_id: int, version: int, query: str) -> list[Passage]:
-        """The document's passages closest to what the agent is looking for; its opening
-        passages if nothing matches closely."""
-        only = Libraries(self.router, [LibraryPin(self.library, version, [doc_id])])
-        found = await only.search(query, top_k=4)
-        if found:
-            return found
-        rows = await fetch_one(
-            "SELECT json_agg(x ORDER BY x.ordinal) AS rows FROM (SELECT c.id AS chunk_id, "
-            "c.document_id, d.title, c.content, c.page_start, c.page_end, c.ordinal "
-            "FROM chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id=%s "
-            "ORDER BY c.ordinal LIMIT 2) x", (doc_id,))
-        return [Passage(chunk_id=r["chunk_id"], document_id=r["document_id"], title=r["title"],
-                        content=r["content"], page_start=r["page_start"], page_end=r["page_end"],
-                        similarity=0.0, corpus=self.library, version=version)
-                for r in (rows or {}).get("rows") or []]
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0

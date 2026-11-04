@@ -329,6 +329,9 @@ def run_report(run: dict[str, Any], view: dict[str, Any], include_private: bool 
             if len(ref["uses"]) > 20:
                 uses += f"; and {len(ref['uses']) - 20} more"
             where = f"Searched in library {ref['library_text']}. " if ref.get("library_text") else ""
+            if ref.get("read_online"):
+                where = (f"Read online{' on ' + ref['retrieved'] if ref.get('retrieved') else ''}; "
+                         "no copy kept, so the page may have changed since. ")
             story.append(Paragraph(
                 f"{ref['n']}. {_plain(ref['text'])}" + (f" {_plain(ref['url'])}" if ref.get("url") else "")
                 + f'<br/><font color="{MUTED}" size="8">{_plain(where)}Cited: {_plain(uses)}.</font>',

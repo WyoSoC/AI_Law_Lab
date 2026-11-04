@@ -129,12 +129,14 @@ class Tracer:
             for c in citations:
                 await cur.execute(
                     "INSERT INTO citations (run_id, event_id, quoted_text, source_label, "
-                    "chunk_id, document_id, corpus, corpus_version, context, similarity, verdict) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "chunk_id, document_id, corpus, corpus_version, context, similarity, verdict, "
+                    "source_url, retrieved_at, fingerprint, excerpt) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (self.run_id, event_id, c.get("quoted_text", ""), c.get("source_label"),
                      c.get("chunk_id"), c.get("document_id"), c.get("corpus"),
                      c.get("corpus_version"), c.get("context") or "", c.get("similarity"),
-                     c.get("verdict", "unchecked")),
+                     c.get("verdict", "unchecked"), c.get("source_url"), c.get("retrieved_at"),
+                     c.get("fingerprint"), c.get("excerpt")),
                 )
 
 

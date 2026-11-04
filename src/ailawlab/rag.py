@@ -31,6 +31,13 @@ class Passage:
     similarity: float
     corpus: str = ""                # the library the document sits in
     version: int | None = None      # the version of it the run searched, when pinned
+    # A passage of a page read online but not kept in a library (keep_rules): no library or
+    # version, so it is traced by its address, when it was read, and a fingerprint (SHA-256)
+    # of the text as read.
+    kept: bool = True
+    url: str = ""
+    retrieved_at: str = ""
+    fingerprint: str = ""
 
     def cite_label(self) -> str:
         if self.page_start and self.page_end and self.page_start != self.page_end:
@@ -48,10 +55,24 @@ class Passage:
     def source(self, marker: str, cited: bool = False) -> dict[str, Any]:
         """What a run keeps about a passage it was given, enough to find it again: the
         document, its library and version, and the passage itself."""
-        return {"marker": marker, "label": self.cite_label(), "corpus": self.corpus,
-                "version": self.version, "document_id": self.document_id,
-                "chunk_id": self.chunk_id, "similarity": round(self.similarity, 3),
-                "cited": cited}
+        out = {"marker": marker, "label": self.cite_label(), "corpus": self.corpus,
+               "version": self.version, "document_id": self.document_id,
+               "chunk_id": self.chunk_id, "similarity": round(self.similarity, 3),
+               "cited": cited}
+        if not self.kept:
+            # No copy was kept, so a cited passage is stored as a quotation; an uncited one
+            # only by where it came from.
+            out.update({"kept": False, "document_id": None, "chunk_id": None, "url": self.url,
+                        "retrieved_at": self.retrieved_at, "fingerprint": self.fingerprint})
+            if cited:
+                out["excerpt"] = self.excerpt()
+        return out
+
+    def excerpt(self) -> str:
+        """The passage as a quotation, cut to settings.unkept_excerpt_chars."""
+        limit = settings.unkept_excerpt_chars
+        text = self.content.strip()
+        return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
 
 
 def chunk_text(text: str, size: int | None = None, overlap: int | None = None) -> list[str]:
@@ -390,6 +411,7 @@ def format_passages(passages: list[Passage], numbers: list[int] | None = None) -
     numbers = numbers or list(range(1, len(passages) + 1))
     return "\n\n".join(
         f"[{n}] {p.cite_label()}" + (f" (library {p.library_label()})" if p.corpus else "")
+        + ("" if p.kept else " (read online, not kept)")
         + f"\n{p.content}" for n, p in zip(numbers, passages)
     )
 

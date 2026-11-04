@@ -25,7 +25,7 @@ TITLE = "Outside Data Access and Agent Web Reading in the AI Law Lab"
 SUBTITLE = "Which services the lab calls, when its agents go online, and how a site's wishes are honoured"
 AUTHOR = "Jian Gong"
 AFFILIATION = "AI Law Lab, University of Wyoming"
-DATELINE = "Data access note, October 2026. Describes the software at commit fa0be1c."
+DATELINE = "Data access note, November 2026. Describes reading and keeping as of that month."
 FOOTER = "AI Law Lab · Data access note · Outside data access and agent web reading"
 
 
@@ -39,8 +39,9 @@ The AI Law Lab runs its language models on university hardware and answers quest
 own versioned libraries, but a research run may also search public legal databases and the
 open web, and read what it finds. This note sets out every service the lab's server connects
 to, what is sent to each, and the exact points at which a run goes online. It describes the
-five legal-database interfaces the lab uses and how agents' calls to them are paced; how every
-document read is saved into a library before it can be cited; and the checks a web page must
+five legal-database interfaces the lab uses and how agents' calls to them are paced; how
+reading a document is kept apart from keeping a copy of it, which happens only when the agent
+judges the source worth keeping and a rights check is positive; and the checks a web page must
 pass before a research agent or a crawl may read it. A page is read only if its site permits
 it: robots.txt is obeyed for the lab's own name and for well-known AI agents, and pages marked
 "noai" or carrying a text-and-data-mining reservation are left alone. Refusals are reported to
@@ -62,9 +63,10 @@ vanish after it is read, and a search sends part of the researcher's question to
     ("p", t("""
 Outside access is nonetheless useful. Agency guidance, recent opinions and scholarship are
 often not yet in any library. The lab allows it under three conditions. A person must allow
-it, for each run. Whatever is read is saved into a library first, so that a citation to it
-names a fixed copy. And a page is read only if its website has not said that it does not want
-AI systems reading it. Section 2 lists every outside connection; Section 3 describes the legal
+it, for each run. A copy of what is read is kept in a library only when its rights allow it, so
+that the lab does not accumulate copies of copyrighted material; anything else is cited by its
+address and the time it was read. And a page is read only if its website has not said that it
+does not want AI systems reading it. Section 2 lists every outside connection; Section 3 describes the legal
 databases; Section 4 the points at which a research run goes online; Section 5 what people add
 by hand; Section 6 the checks on a site's wishes; Section 7 the safeguards on every fetch; and
 Section 9 the limitations.
@@ -172,21 +174,43 @@ With either permission on, network access happens at these points and no others:
            in the brief is read once, before any agent starts, so that every agent has it. These
            reads pass the same checks as an agent's own (Section 6)."""),
         t("""**During research: the agents' tools.** Each research agent, up to four at once,
-           decides for itself when to call `search_databases`, `search_web` and `read`. Reading is
+           decides for itself when to call `search_databases`, `search_web`, `read` and `keep`. Reading is
            not budgeted; the run's time limit (two hours by default) and the researcher's Stop
            button end it. A document is read once per run, however many agents ask for it."""),
         t("""**Write-up: none.** The lead agent writes the answer from the findings and the passages
            already read."""),
     ]),
-    ("h2", "4.3  How a read becomes a source"),
+    ("h2", "4.3  Reading, keeping and citing"),
     ("p", t("""
-Everything read is saved into a library, by default "Fetched: <experiment name>", which records
-a new version; the run is then pinned to that version, so later library searches by any agent
-cover the new document. The passages handed back to the agent are numbered in the run's ledger
-like any other, so a citation to something read online names a document, a library and a
-version, and stays readable after the page changes. The run's page lists every search with the
-results it gave, every document read with the library version it was saved to, and every page
-that was not read because its site does not allow it.
+Reading and keeping are separate. When an agent reads a document, its passages are prepared in
+memory for the run only, and those most relevant to what the agent is looking for are handed
+back, numbered in the run's ledger like any other, so the agent may use and cite them. Nothing
+is saved. With them the agent is told the result of a rights check, which decides whether a
+full copy may be kept.
+""")),
+    ("p", t("""
+The rights check is a fixed rule in the code (`keep_rules.py`), not a judgment of the model. It
+is positive only for: documents from the legal databases (court opinions, which carry no
+copyright; the Federal Register, the eCFR and govinfo, which are works of the US government; and
+filings on SEC EDGAR, which are public records); pages on a list of US federal sites, whose
+content is generally a government work (17 U.S.C. § 105), editable by an administrator; and
+pages that mark a Creative Commons license or public-domain dedication in a machine-readable
+way. State and local government sites are not listed, since their works can be copyrighted, and
+a page that merely mentions a license in its text does not pass. When the check cannot confirm
+the rights, the answer is no.
+""")),
+    ("p", t("""
+An agent that judges a document reliable and useful calls `keep`. If the rights check was
+positive, the document is saved into a library, by default "Fetched: <experiment name>", which
+records a new version; the run is pinned to it, so later library searches by any agent cover
+the new document, and the passages already handed out keep their numbers. If it was not, nothing
+is saved. A citation of a document that was not kept records the page's address, when it was
+read, a SHA-256 fingerprint of the text as read, and the cited passage only, as a quotation; the
+run page marks it "read online, not kept", since the page may change. Web pages named in the
+research brief are kept whenever their rights allow it, since the researcher chose them. The
+run's page lists every search with the results it gave, every document read with the outcome
+of its rights check and whether it was kept, and every page that was not read because its site
+does not allow it.
 """)),
 
     ("h1", "5  What a person adds"),

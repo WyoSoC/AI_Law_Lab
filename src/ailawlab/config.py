@@ -79,6 +79,17 @@ class Settings(BaseSettings):
     web_link_max_words: int = 100_000
     web_link_max_per_request: int = 20
 
+    # --- keeping what research agents read online -------------------------
+    # Agents may read any page whose site allows AI agents, but a full copy goes into a library
+    # only when the rights check in keep_rules.py is positive. These US federal sites pass it
+    # (with their subdomains); state and local sites are left off, since their works can be
+    # copyrighted. A cited passage of a page that was not kept is stored with the citation, up
+    # to this many characters.
+    keep_sites: list[str] = Field(default=["supremecourt.gov", "uscourts.gov", "congress.gov",
+                                           "govinfo.gov", "federalregister.gov", "ecfr.gov",
+                                           "uscode.house.gov", "justice.gov"])
+    unkept_excerpt_chars: int = 1500
+
     # --- crawling a page's links into a library ---------------------------
     # "Add everything linked from this page": the rules in crawler.py. Pages are fetched one
     # at a time at least crawl_delay_s apart (longer if robots.txt asks, up to

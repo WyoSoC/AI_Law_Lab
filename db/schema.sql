@@ -296,3 +296,11 @@ ALTER TABLE experiments     ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES
 ALTER TABLE runs            ADD COLUMN IF NOT EXISTS launched_by UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE documents       ADD COLUMN IF NOT EXISTS added_by    UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE corpus_versions ADD COLUMN IF NOT EXISTS changed_by  UUID REFERENCES users(id) ON DELETE SET NULL;
+
+-- A citation of a page read online but not kept in a library (keep_rules.py): no document or
+-- library to point to, so it keeps the page's address, when it was read, a SHA-256 fingerprint
+-- of the text as read, and the cited passage as a quotation.
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS source_url   TEXT;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS retrieved_at TIMESTAMPTZ;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS fingerprint  TEXT;
+ALTER TABLE citations ADD COLUMN IF NOT EXISTS excerpt      TEXT;

@@ -49,6 +49,7 @@ How to work:
 - There is no limit on how much you search or read. Keep going until the evidence for your sub-question is strong, and stop when new searches stop turning up relevant material.
 - After each search or read, write a short note in your reply: what you learned, with the passage numbers [n] that support it. Older tool results are shortened to save room, but your notes are kept whole, so note everything you will need.
 - Cite a passage as [n] with the number a search or read gave it. Never cite a search result's W number; read it first.
+- Reading a source online keeps no copy. When a source you read is reliable and useful for the study, call keep. A copy is saved only if the read result says its rights check is positive. Whether kept or not, you may cite the passages you read.
 
 When you are done, reply without calling a tool: your findings for this sub-question, each claim with its [n] citations, then what you could not establish."""
 
@@ -97,6 +98,9 @@ def _places(ctx, sub: dict[str, Any], registry) -> str:
                      "the eCFR, govinfo, SEC EDGAR.")
     if "search_web" in tools:
         lines.append("The open web (search_web), and any public page by address (read).")
+    if "keep" in tools:
+        lines.append("Keep (keep) a copy of a source you read when it is worth keeping; a copy "
+                     "is saved only if its rights check is positive.")
     if not lines:
         lines.append("You have no sources to search: say what the answer would need.")
     if sub.get("look_in"):

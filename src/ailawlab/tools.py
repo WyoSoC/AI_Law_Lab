@@ -208,8 +208,8 @@ def calculator_tool() -> Tool:
 
 
 def online_tools(reader: OnlineReader) -> list[Tool]:
-    """Outside sources, as the run allows: the legal databases, the open web, and reading
-    what either finds. Everything read is saved to a library first (network_tools)."""
+    """Outside sources, as the run allows: the legal databases, the open web, reading what
+    either finds, and keeping a copy of what is worth it, as its rights allow (network_tools)."""
     tools: list[Tool] = []
     if reader.allow_databases:
         dbs = reader.databases()
@@ -252,9 +252,10 @@ def online_tools(reader: OnlineReader) -> list[Tool]:
                  + (" or a public web address" if reader.allow_web else ""))
         tools.append(Tool(
             name="read",
-            description=(f"Read {where}. Each document is saved to the library “{reader.library}” "
-                         "and the passages most relevant to `look_for` come back numbered, to "
-                         f"cite as [n] (never cite a W number). Up to {reader.PER_CALL} per call."),
+            description=(f"Read {where}. The passages most relevant to `look_for` come back "
+                         "numbered, to cite as [n] (never cite a W number), with the result of "
+                         "the rights check that says whether a copy may be kept. Reading keeps "
+                         f"no copy. Up to {reader.PER_CALL} per call."),
             parameters={"type": "object", "properties": {
                 "source": {"type": "string",
                            "description": "Result numbers such as W2 or W1, W3, W4"
@@ -263,6 +264,25 @@ def online_tools(reader: OnlineReader) -> list[Tool]:
                              "description": "What you want from it, to pick the passages handed back."}},
                 "required": ["source"]},
             fn=read, requires_network=True))
+
+        async def keep(source: str, why: str = "") -> str:
+            return await reader.keep(source, why)
+
+        tools.append(Tool(
+            name="keep",
+            description=(f"Keep a copy of a document you have read in the library “{reader.library}”, "
+                         "so it stays available after the page changes and other agents can "
+                         "search it. Keep only sources that are reliable and useful for the "
+                         "study. A copy is saved only if the document's rights check was positive "
+                         "(the read result says); otherwise nothing is saved, and you may still "
+                         "cite what you read."),
+            parameters={"type": "object", "properties": {
+                "source": {"type": "string",
+                           "description": "The source as you read it: W2, several (W1, W3), or its address."},
+                "why": {"type": "string",
+                        "description": "In a few words, why it is worth keeping (e.g. the controlling opinion)."}},
+                "required": ["source", "why"]},
+            fn=keep, requires_network=True))
     return tools
 
 

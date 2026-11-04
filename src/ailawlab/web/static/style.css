@@ -949,3 +949,13 @@ th { font-size: .72rem; letter-spacing: .06em; }
 
 /* New experiment: a step heading opens its panel */
 .panel > h2:first-child { margin-top: 0; }
+
+/* Pages read online but not kept in a library */
+.lib-tag.not-kept { font-style: italic; }
+.ref-excerpts { margin-top: .35rem; font-size: .86rem; }
+.ref-excerpts summary { cursor: pointer; color: var(--accent); }
+.ref-excerpts blockquote { margin: .4rem 0 .4rem .2rem; padding-left: .7rem; border-left: 3px solid var(--line); color: var(--muted); }
+.keep-policy { margin-top: .8rem; padding: .7rem .9rem; border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius); background: var(--bg); font-size: .86rem; line-height: 1.5; }
+.keep-policy-title { margin: 0 0 .3rem; font-weight: 600; }
+.keep-policy ol { margin: 0; padding-left: 1.2rem; display: grid; gap: .3rem; }

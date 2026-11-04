@@ -280,7 +280,9 @@
   <ul class="source-list">
     {% for src in v.sources %}
     <li class="{{ 'cited' if src.cited }}"><span class="cite">[{{ src.marker }}]</span>
-      <a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>
+      {% if src.kept is sameas false %}{% if src.url %}<a href="{{ src.url }}" target="_blank" rel="noopener">{{ src.label }}</a>{% else %}{{ src.label }}{% endif %}
+      <span class="lib-tag not-kept">read online, not kept</span>
+      {% else %}<a href="{{ prefix }}/sources/documents/{{ src.document_id }}">{{ src.label }}</a>{% endif %}
       {% if src.corpus %}<span class="lib-tag">in <a href="{{ prefix }}/sources/corpora/{{ src.corpus|urlencode }}{% if src.version %}/versions/{{ src.version }}{% endif %}">{{ src.corpus }}{% if src.version %} v{{ src.version }}{% endif %}</a></span>{% endif %}
       <span class="hint">{{ '%.2f'|format(src.similarity or 0) }} match{% if src.cited %} &middot; <strong>cited</strong>{% endif %}</span></li>
     {% endfor %}
@@ -292,18 +294,28 @@
 <h2 id="fetched">Read online</h2>
 <div class="panel">
   {% if v.fetched %}
-  {% set given = v.fetched|selectattr('given')|list|length %}
-  <p class="lib-summary">{% if given %}{{ given }} web page{{ '' if given == 1 else 's' }} given with the task
-    {{ 'was' if given == 1 else 'were' }} read before the agent started{% if v.fetched|length > given %}, and the agent
-    read {{ v.fetched|length - given }} more document{{ '' if v.fetched|length - given == 1 else 's' }} itself{% endif %}.
-    {% else %}The agent read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} online.{% endif %}
-    Each was saved to a library first, so the passages it cites from them point to a fixed copy.</p>
-  <ul class="source-list">
+  {% set kept = v.fetched|selectattr('kept')|list %}
+  {% if v.fetched|selectattr('legacy')|list %}
+  <p class="lib-summary">The agents read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} outside the libraries.
+    This run predates the rights check: everything read was saved to a library, so the passages cited from them point to a fixed copy.</p>
+  {% else %}
+  <p class="lib-summary">The agents read {{ v.fetched|length }} document{{ '' if v.fetched|length == 1 else 's' }} outside the libraries
+    and kept a copy of {{ kept|length }}.
+    Reading and keeping are separate: an agent may read and cite any page its site lets AI agents read, but a copy
+    is kept only when the agent judges the source worth keeping <em>and</em> its rights check is positive (a public
+    legal database, a listed US federal site, or a page marking an open license). Anything else is not kept: it is
+    cited by its address and the time it was read, and only the cited passages are stored.</p>
+  {% endif %}
+  <ul class="source-list fetched-list">
     {% for f in v.fetched %}
-    <li class="cited"><a href="{{ prefix }}/sources/documents/{{ f.document_id }}">{{ f.title }}</a>
-      <span class="lib-tag">saved to <a href="{{ prefix }}/sources/corpora/{{ f.corpus|urlencode }}/versions/{{ f.version }}">{{ f.corpus }} v{{ f.version }}</a></span>
+    <li class="{{ 'cited' if f.kept }}">
+      {% if f.kept %}<a href="{{ prefix }}/sources/documents/{{ f.document_id }}">{{ f.title }}</a>
+      <span class="lib-tag">kept in <a href="{{ prefix }}/sources/corpora/{{ f.corpus|urlencode }}/versions/{{ f.version }}">{{ f.corpus }} v{{ f.version }}</a></span>
+      {% else %}{{ f.title }} <span class="lib-tag not-kept">not kept</span>{% endif %}
       {% if f.url %}<a class="hint" href="{{ f.url }}" target="_blank" rel="noopener">original</a>{% endif %}
-      <span class="hint">{% if f.given %}given with the task{% else %}from {{ f.provider }} &middot; read as {{ f.source }}{% endif %}</span></li>
+      <span class="hint">{% if f.given %}given with the task{% else %}from {{ f.provider }}{% endif %}
+        {% if f.legacy %}&middot; kept automatically (this run predates rights checks){% else %}&middot; rights check {{ 'positive' if f.keep_allowed else 'not positive' }}: {{ f.keep_reason }}{% if f.license_url %} (<a href="{{ f.license_url }}" target="_blank" rel="noopener">license</a>){% endif %}{% endif %}
+        {% if f.kept and f.kept_because %}&middot; kept because: {{ f.kept_because }}{% elif f.keep_allowed and not f.kept %}&middot; the agents did not ask to keep it{% endif %}</span></li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -334,13 +346,18 @@
   <ol class="citation-list ref-list">
     {% for ref in refs.references %}
     <li>
-      {% if ref.available %}<a href="{{ prefix }}/sources/documents/{{ ref.document_id }}" class="cite-title">{{ ref.text }}</a>{% else %}{{ ref.text }} <span class="hint-inline">(no longer stored)</span>{% endif %}
+      {% if ref.read_online %}{{ ref.text }} <span class="lib-tag not-kept">read online, not kept</span>
+      {% elif ref.available %}<a href="{{ prefix }}/sources/documents/{{ ref.document_id }}" class="cite-title">{{ ref.text }}</a>{% else %}{{ ref.text }} <span class="hint-inline">(no longer stored)</span>{% endif %}
       {% if ref.url %}<a class="cite-url" href="{{ ref.url }}" target="_blank" rel="noopener">{{ ref.url }}</a>{% endif %}
       <div class="ref-uses">
+        {% if ref.read_online %}Read{% if ref.retrieved %} on {{ ref.retrieved }}{% endif %}; no copy was kept, so the page may have changed since. Only the cited passages are stored.{% endif %}
         {% if ref.library %}Searched in <a href="{{ prefix }}/sources/corpora/{{ ref.library|urlencode }}{% if ref.version %}/versions/{{ ref.version }}{% endif %}">{{ ref.library }}{% if ref.version %} v{{ ref.version }}{% endif %}</a>.{% endif %}
         Cited {{ ref.uses|length }} time{{ '' if ref.uses|length == 1 else 's' }}:
         {% for u in ref.uses[:12] %}<span class="cite">{{ u.marker }}</span> {{ u.context }}{% if u.label and not ref.text.startswith(u.label) %} ({{ u.label }}){% endif %}{{ '; ' if not loop.last }}{% endfor %}{% if ref.uses|length > 12 %}; and {{ ref.uses|length - 12 }} more{% endif %}
       </div>
+      {% if ref.read_online %}{% for u in ref.uses if u.excerpt %}{% if loop.first %}<details class="ref-excerpts"><summary>Cited passage{{ 's' if loop.length > 1 }}</summary>{% endif %}
+        <blockquote><span class="cite">{{ u.marker }}</span> {{ u.excerpt }}</blockquote>
+      {% if loop.last %}</details>{% endif %}{% endfor %}{% endif %}
     </li>
     {% endfor %}
   </ol>

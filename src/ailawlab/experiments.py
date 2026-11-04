@@ -484,9 +484,10 @@ async def _research_tools(run: dict, ctx: RunContext, config: dict, inputs: dict
                               "WHERE corpus=%s AND removed_at IS NULL", (save_to,))
         held = int(row["n"]) if row else 0
         await ctx.tracer.note(
-            "what is read outside the libraries is added to "
+            "sources read outside the libraries are kept, when the agents choose to and their "
+            "rights allow, in "
             + (f"“{save_to}” ({held} document{'' if held == 1 else 's'} already)" if held
-               else f"a new library, “{save_to}”, created with the first document read"))
+               else f"a new library, “{save_to}”, created with the first document kept"))
     run_id = str(run["id"])
     await ctx.tracer.note(f"time limit: {rs['time_limit_minutes']} minutes")
     ctx.config = {**config, "ledger": ledger, "reader": reader,

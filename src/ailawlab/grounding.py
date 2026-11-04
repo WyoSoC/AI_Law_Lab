@@ -48,6 +48,15 @@ def link_citations(text: str, lookup: Callable[[int], Passage | None], *,
             out.append({"quoted_text": f"[{prefix}{n}]", "source_label": None, "chunk_id": None,
                         "document_id": None, "corpus": None, "corpus_version": None,
                         "similarity": None, "verdict": "unsupported", "context": context})
+        elif not p.kept:
+            # Read online but not kept: traced by address, time and fingerprint, with the
+            # cited passage stored as a quotation.
+            out.append({"quoted_text": f"[{prefix}{n}]", "source_label": p.cite_label(),
+                        "chunk_id": None, "document_id": None, "corpus": None,
+                        "corpus_version": None, "similarity": p.similarity,
+                        "verdict": "grounded", "context": context, "source_url": p.url,
+                        "retrieved_at": p.retrieved_at or None, "fingerprint": p.fingerprint,
+                        "excerpt": p.excerpt()})
         else:
             out.append({"quoted_text": f"[{prefix}{n}]", "source_label": p.cite_label(),
                         "chunk_id": p.chunk_id, "document_id": p.document_id,
@@ -83,6 +92,12 @@ class SourceLedger:
                 self._numbers[p.chunk_id] = len(self.passages)
             out.append(self._numbers[p.chunk_id])
         return out
+
+    def rekey(self, old: int, new: int) -> None:
+        """A passage now also known by chunk id `new` (a page read online, then kept: its
+        passages have real chunks now) keeps its number under both ids."""
+        if old in self._numbers and new not in self._numbers:
+            self._numbers[new] = self._numbers[old]
 
     def get(self, n: int) -> Passage | None:
         return self.passages[n - 1] if 1 <= n <= len(self.passages) else None

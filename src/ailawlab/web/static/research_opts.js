@@ -6,6 +6,8 @@ function resShow(p) {
   document.getElementById(`${p}_libs_box`).hidden = !only;
   const outside = document.getElementById(`${p}_db`).checked || document.getElementById(`${p}_web`).checked;
   document.getElementById(`${p}_save`).hidden = !outside;
+  const policy = document.getElementById(`${p}_keep_policy`);
+  if (policy) policy.hidden = !outside;
   netStatus(p);
 }
 
@@ -22,10 +24,10 @@ function netStatus(p) {
   const docs = libs[name];
   if (!name) note.textContent = "Left empty, it gets a library of its own, named for the experiment.";
   else if (docs !== undefined)
-    note.textContent = `Adds to the existing library “${name}” (${docs} document${docs === 1 ? "" : "s"}).`;
+    note.textContent = `Copies are kept in the existing library “${name}” (${docs} document${docs === 1 ? "" : "s"}).`;
   else
     note.textContent = (typed ? "Starts" : "Left empty, it starts")
-      + ` a new library, “${name}”, with the first document it reads.`;
+      + ` a new library, “${name}”, with the first document kept.`;
 }
 
 // {choose_libraries, libraries, use_databases, use_web, fetch_library, time_limit_minutes}
