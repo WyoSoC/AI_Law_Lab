@@ -74,14 +74,24 @@ and repeat them later. Editing the experiment afterwards never changes runs alre
 
   <!-- ───────────── document_analysis ───────────── -->
   <div class="panel mode-panel" data-mode="document_analysis">
-    <h2><span class="step-no">3</span> Choose the libraries</h2>
+    <h2><span class="step-no">3</span> Set up the analysis</h2>
     <p class="hint">Each run asks a question. It is answered from the libraries chosen here, or, if
        the run is given a document, from that document with the libraries as supporting authority.</p>
-    <label>Libraries to ask</label>
-    {{ library_picker('da_libs', libraries, preset, 'syncJSON()') }}
-    <p class="hint">Every library ticked is searched together, and passages are ranked by how closely
-       they match, whichever library they come from. Each citation records the library and
-       version it came from. With no library ticked, every run needs a document.</p>
+
+    <section class="opt-group" aria-labelledby="da_h_libs">
+      <h3 class="opt-head" id="da_h_libs">Libraries</h3>
+      <p class="opt-lead">Which libraries each run's question is answered from.</p>
+      {{ library_picker('da_libs', libraries, preset, 'syncJSON()') }}
+      <p class="hint">Every library ticked is searched together, and passages are ranked by how closely
+         they match, whichever library they come from. Each citation records the library and
+         version it came from. With no library ticked, every run needs a document.</p>
+    </section>
+
+    <section class="opt-group" aria-labelledby="da_h_runs">
+      <h3 class="opt-head" id="da_h_runs">Each run</h3>
+      <p class="opt-lead">You write the question when you launch a run, and may add a document to it then
+         (a contract, an opinion, a statute). Nothing more to set here.</p>
+    </section>
   </div>
 
   <!-- ───────────── agentic_workflow ───────────── -->
@@ -101,12 +111,19 @@ and repeat them later. Editing the experiment afterwards never changes runs alre
        private notes, and bottom line, so opposing parties never see each other's thinking.
        <a href="{{ prefix }}/static/docs/roleplay-moderation.pdf" target="_blank" rel="noopener">How the moderator works (PDF)</a></p>
 
-    <label for="rp_scenario">Scenario</label>
+    <section class="opt-group" aria-labelledby="rp_h_scenario">
+    <h3 class="opt-head" id="rp_h_scenario">Scenario</h3>
+    <p class="opt-lead">What the exchange is about: the parties, the dispute, the setting and what this session should settle.</p>
+    <label for="rp_scenario" class="sr-only">Scenario</label>
     <textarea id="rp_scenario" class="short" oninput="syncJSON()"
               placeholder="Who the parties are, what is in dispute, the setting and governing law, and what this session is meant to settle."></textarea>
-    <p class="hint">What the exchange is about. This is the default for every run (a run can
-       still use a different one), and the AI tools below generate and validate the cast against it.</p>
+    <p class="hint">This is the default for every run (a run can still use a different one), and the
+       AI tools under Cast generate and validate the cast against it.</p>
+    </section>
 
+    <section class="opt-group" aria-labelledby="rp_h_pacing">
+    <h3 class="opt-head" id="rp_h_pacing">Pacing</h3>
+    <p class="opt-lead">How long the scene may run and how much each person may say in a turn.</p>
     <div class="two-col">
       <div>
         <label for="rp_turns">Max turns</label>
@@ -123,22 +140,29 @@ and repeat them later. Editing the experiment afterwards never changes runs alre
         <p class="hint">Upper bound on each agent's reply length.</p>
       </div>
     </div>
+    </section>
 
-    <label>Shared legal sources (every participant can cite these)</label>
+    <section class="opt-group" aria-labelledby="rp_h_libs">
+    <h3 class="opt-head" id="rp_h_libs">Shared legal sources <span class="opt-tag">optional</span></h3>
+    <p class="opt-lead">Libraries every participant can search and cite. Tick none and the cast argues from the scenario alone.</p>
     {{ library_picker('rp_libs', libraries, [], 'syncJSON()') }}
     <p class="hint">Shared: every participant can draw on these. Each agent can also hold its own
        <strong>case files</strong> (set on its card below), which only that agent sees until it
        cites a passage, disclosing it to everyone as an exhibit, [E1], [E2].
-       Tick none and the cast argues from the scenario alone. Otherwise, before each
+       Otherwise, before each
        turn the speaker is shown the passages closest to their objective and to what was just
        said, from all the libraries ticked, and can cite them as [S1], [S2]. The run page shows
        which sources each turn was given, from which library, and which it cited. Manage
        libraries under <a href="{{ prefix }}/sources">Legal Sources</a>.</p>
+    </section>
 
+    <section class="opt-group" aria-labelledby="rp_h_cast">
     <div class="agents-head">
-      <h3>Cast</h3>
+      <h3 class="opt-head" id="rp_h_cast">Cast</h3>
       <button type="button" class="add-agent" onclick="addAgent()">+ Add agent</button>
     </div>
+    <p class="opt-lead">The people in the scene: each one's role, goal, bottom line and private files. Write them
+       below, upload agent files, or have the AI draft a cast.</p>
 
     <div class="cast-drop" id="cast-drop">
       <p class="drop-hint">Agent files are plain text (.md or .txt): a line with <code>#</code>
@@ -205,6 +229,7 @@ and repeat them later. Editing the experiment afterwards never changes runs alre
 
     <div class="cast-messages" id="cast-messages" hidden></div>
     <div id="agents"></div>
+    </section>
   </div>
 
   <!-- ───────────── advanced / raw ───────────── -->

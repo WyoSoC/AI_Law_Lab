@@ -969,3 +969,9 @@ th { font-size: .72rem; letter-spacing: .06em; }
 .opt-lead { margin: .2rem 0 .5rem; color: var(--ink); font-size: .9rem; }
 .opt-group label[for$="_fetch"] { color: var(--ink); font-weight: 600; font-size: .88rem; }
 .opt-group label.check { color: var(--ink); font-size: .92rem; }
+.opt-sub { color: var(--ink); font-weight: 600; font-size: .88rem; }
+.opt-group > .pacing:first-of-type, .opt-group > .doc-optional { margin-top: .3rem; }
+.plan-head.opt-head { margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+.agents-head .opt-head { margin: 0; }
+.opt-group > .agents-head { margin-top: 0; }
+.research-launch > .opt-group:first-of-type { margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }

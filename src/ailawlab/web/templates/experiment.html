@@ -152,10 +152,16 @@
 <form class="panel" id="launch-form" method="post" action="{{ prefix }}/experiments/{{ exp.id }}/launch"
       onsubmit="return finalizeLaunch()">
   {% if exp.mode == 'roleplay' %}
-    <label for="in_scenario">Scenario for this run</label>
+  <section class="opt-group" aria-labelledby="h_scenario">
+    <h3 class="opt-head" id="h_scenario">Scenario for this run</h3>
+    <p class="opt-lead">What the exchange is about. Starts as the experiment's scenario; changes apply to this run only.</p>
+    <label for="in_scenario" class="sr-only">Scenario for this run</label>
     <textarea id="in_scenario" class="short tall" oninput="syncInputs()"
               placeholder="What the exchange is about.">{{ v.scenario }}</textarea>
-    <p class="hint">Starts as the experiment's scenario. Changes apply to this run only.</p>
+  </section>
+  <section class="opt-group" aria-labelledby="h_pacing">
+    <h3 class="opt-head" id="h_pacing">Pacing and who plays each role</h3>
+    <p class="opt-lead">How long the scene may run, and whether each role is played by a model or a person. Open a line to change it.</p>
     <details class="pacing">
       <summary>Pacing for this run: up to <span id="pace-turns">{{ v.launch_defaults.max_turns }}</span> turns,
         <span id="pace-words">{{ v.launch_defaults.word_limit }}</span> words each</summary>
@@ -211,23 +217,28 @@
     </details>
     {% endif %}
     <p class="estimate" id="estimate"></p>
+  </section>
   {% elif exp.mode == 'document_analysis' %}
-    <label for="in_question">Question</label>
+  <section class="opt-group" aria-labelledby="h_question">
+    <h3 class="opt-head" id="h_question">Question</h3>
+    <p class="opt-lead">What this run should answer. It is asked of the libraries below, or of a document if you add one.</p>
+    <label for="in_question" class="sr-only">Question</label>
     <textarea id="in_question" class="short" oninput="syncInputs()"
               placeholder="e.g. How do these sources treat restraint, and where do they disagree?"></textarea>
-    <p class="hint">Asked of the libraries below. Add a document to have the question answered
-      from it instead, with the libraries as supporting authority.</p>
+  </section>
   {% else %}
     <p class="hint">Each run researches the brief above. Choose what it may use, draft the plan,
       review and edit it, then run it.</p>
   {% endif %}
 
   {% if exp.mode != 'roleplay' %}
+  <section class="opt-group" aria-labelledby="h_document">
+  <h3 class="opt-head" id="h_document">Document <span class="opt-tag">optional</span></h3>
+  <p class="opt-lead">{% if exp.mode == 'document_analysis' %}A contract, opinion or statute for this run to answer the
+    question from, with the libraries as supporting authority.{% else %}A document every research agent is given
+    with the brief; the planner sees its opening.{% endif %}</p>
   <details class="doc-optional" id="doc-optional">
-    <summary>Add a document <span class="hint-inline">(optional)</span></summary>
-    <p class="hint">{% if exp.mode == 'document_analysis' %}With a document, each part of the question is
-      answered from it, and the libraries supply supporting authority.{% else %}The planner sees its
-      opening, and every research agent is given the document with the brief.{% endif %}</p>
+    <summary>Add a document</summary>
     <label for="in_title">Document title</label>
     <input type="text" id="in_title" placeholder="Master Services Agreement" oninput="syncInputs()">
     <label for="in_text">Document text</label>
@@ -241,6 +252,7 @@
     <textarea id="in_text" class="doc-text" placeholder="Or paste the document here." oninput="syncInputs()"></textarea>
     <p class="hint" id="load-status"></p>
   </details>
+  </section>
   {% endif %}
 
   {% if exp.mode == 'agentic_workflow' %}
@@ -249,7 +261,7 @@
     {{ research_opts("net", libraries, "planStale(); syncInputs()", v.launch_defaults, run_only=True, web_ready=web_ready) }}
   </div>
 
-  <h3 class="plan-head">The plan</h3>
+  <h3 class="plan-head opt-head">The plan</h3>
   <div class="plan-area" id="plan-area">
     <div class="plan-actions">
       <button type="button" class="primary" id="draft-btn" onclick="draftPlan()" {% if exp.deleted_at %}disabled{% endif %}>Draft the plan</button>
@@ -283,9 +295,12 @@
   {% endif %}
 
   {% set doc_counts = {} %}{% for lib in libraries %}{% set _ = doc_counts.update({lib.name: lib.documents}) %}{% endfor %}
-  <div class="library-launch" {% if exp.mode == 'agentic_workflow' %}hidden{% endif %}>
+  <section class="opt-group library-launch" aria-labelledby="h_libs" {% if exp.mode == 'agentic_workflow' %}hidden{% endif %}>
+    <h3 class="opt-head" id="h_libs">{{ 'Legal sources' if exp.mode == 'roleplay' else 'Libraries' }}{% if exp.mode == 'roleplay' and not v.case_files %} <span class="opt-tag">optional</span>{% endif %}</h3>
+    <p class="opt-lead">{% if exp.mode == 'roleplay' %}What the participants can search and cite in this run.{% else %}Which
+      libraries this run searches, and which version of each.{% endif %}</p>
     {% if v.case_files %}
-    <label>Case files</label>
+    <label class="opt-sub">Case files</label>
     <div class="lib-rows">
       {% for cf in v.case_files %}
       <div class="lib-row case-file" data-name="{{ cf.name }}" data-kind="case">
@@ -300,9 +315,8 @@
     <p class="hint">Each person searches only their own case files (and the shared sources). What
       they cite from a case file is disclosed to everyone as an exhibit, [E1], [E2]. Change who
       holds what in the cast; here you can choose which version of each is searched.</p>
-    <label>Shared legal sources</label>
+    <label class="opt-sub">Shared legal sources</label>
     {% endif %}
-    {% if not v.case_files %}<label>{{ 'Legal sources for this run' if exp.mode == 'roleplay' else 'Libraries for this run' }}</label>{% endif %}
     <div class="lib-rows" id="lib-rows">
       {% for name in v.libraries %}
       <div class="lib-row" data-name="{{ name }}">
@@ -354,7 +368,7 @@
       {% elif exp.mode == 'document_analysis' %}With a document, you may untick all for a run without retrieved authority.{% endif %}
       Each library is searched as it is now unless you choose an earlier version, which repeats an
       earlier result exactly. <a href="{{ prefix }}/sources">Manage legal sources</a>.</p>
-  </div>
+  </section>
 
   <p class="launch-error" id="launch-error" hidden></p>
   <div class="launch-row">
