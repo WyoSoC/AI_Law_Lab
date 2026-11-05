@@ -1,65 +1,154 @@
-/* The AI Law Lab's sign-in pages (login.ftl, footer.ftl). */
+/* The AI Law Lab's sign-in pages (login.ftl, footer.ftl).
 
-/* UW sign-on: the main way in, first and full width. */
-.ailawlab-uw { margin-bottom: 0.25rem; }
-.ailawlab-uw-button { font-weight: 600; }
+   One vertical rhythm throughout, on an 8px scale: 8 between a thing and its own note, 16
+   between fields, 24 between groups, 32 around the dividers that separate sections. */
+
+:root {
+  --ailawlab-muted: var(--pf-v5-global--Color--200, #6a6e73);
+  --ailawlab-rule: var(--pf-v5-global--BorderColor--100, #d2d2d2);
+  --ailawlab-s1: 0.5rem;   /*  8px */
+  --ailawlab-s2: 1rem;     /* 16px */
+  --ailawlab-s3: 1.5rem;   /* 24px */
+  --ailawlab-s4: 2rem;     /* 32px */
+}
+
+/* The card: even padding on every side, and the title clear of what follows. */
+.pf-v5-c-login__main-header {
+  padding: 2.5rem 3rem 0;
+}
+.pf-v5-c-login__main-header .pf-v5-c-title,
+#kc-page-title {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.pf-v5-c-login__main-body {
+  padding: var(--ailawlab-s3) 3rem 0;
+}
+
+/* Fields: 16px apart instead of PatternFly's 32px, with "Remember me" close under the password. */
+.pf-v5-c-login__main-body .pf-v5-c-form {
+  --pf-v5-c-form--GridGap: var(--ailawlab-s2);
+  gap: var(--ailawlab-s2);
+}
+.pf-v5-c-login__main-body .pf-v5-c-check {
+  margin-top: var(--ailawlab-s1);
+}
+/* The button row: PatternFly adds its own top margins and padding here; one 8px step instead. */
+.pf-v5-c-login__main-body .pf-v5-c-form__actions {
+  --pf-v5-c-form__actions--child--MarginTop: 0;
+  margin: 0;
+  padding-top: var(--ailawlab-s1);
+}
+.pf-v5-c-login__main-body .pf-v5-c-form__actions > * {
+  margin: 0;
+}
+
+/* UW sign-on: the main way in, first and full width, its note just under it. */
+.ailawlab-uw-button {
+  font-weight: 600;
+  padding-block: 0.65rem;
+}
 .ailawlab-uw-note {
-  margin: 0.5rem 0 0;
-  font-size: 0.8rem;
-  color: var(--pf-v5-global--Color--200, #6a6e73);
+  margin: var(--ailawlab-s1) 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--ailawlab-muted);
 }
 
-/* "Or sign in with an AI Law Lab account", a rule on either side. */
+/* "Or sign in with an AI Law Lab account", a rule on either side, equal room above and below. */
 .ailawlab-divider {
-  display: flex; align-items: center; gap: 0.75rem;
-  margin: 2.25rem 0 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: var(--ailawlab-s4) 0 var(--ailawlab-s3);
   font-size: 0.8rem;
-  color: var(--pf-v5-global--Color--200, #6a6e73);
+  color: var(--ailawlab-muted);
+  white-space: nowrap;
 }
-.ailawlab-divider::before, .ailawlab-divider::after {
-  content: ""; flex: 1; border-top: 1px solid var(--pf-v5-global--BorderColor--100, #d2d2d2);
+.ailawlab-divider::before,
+.ailawlab-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ailawlab-rule);
 }
 
-.ailawlab-other-providers { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+.ailawlab-other-providers {
+  list-style: none;
+  margin: var(--ailawlab-s2) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ailawlab-s1);
+}
 
-/* For people outside UW. */
+/* For people outside UW: its own band, set apart by a rule. */
 .ailawlab-request {
-  margin: 1.25rem 0 0;
-  padding-top: 1rem;
-  border-top: 1px solid var(--pf-v5-global--BorderColor--100, #d2d2d2);
-  font-size: 0.85rem;
-  color: var(--pf-v5-global--Color--200, #6a6e73);
+  margin: var(--ailawlab-s4) 0 0;
+  padding-top: var(--ailawlab-s3);
+  border-top: 1px solid var(--ailawlab-rule);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ailawlab-muted);
 }
-.ailawlab-request a { font-weight: 600; }
+.ailawlab-request a {
+  font-weight: 600;
+}
 
+/* The page where someone outside UW requests an account: what happens next, above the form. */
 .ailawlab-register-note {
-  margin: 0 3rem 1rem;
+  margin: 0 3rem var(--ailawlab-s2);
   padding: 0.75rem 1rem;
   border-left: 3px solid var(--pf-v5-global--primary-color--100, #0066cc);
+  border-radius: 0 4px 4px 0;
   background: var(--pf-v5-global--BackgroundColor--200, #f0f0f0);
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   line-height: 1.5;
 }
-.ailawlab-register-note.above-form { margin: 0 0 1.25rem; }
-.ailawlab-register-note p { margin: 0; }
-.ailawlab-register-note p + p { margin-top: 0.4rem; }
-
-/* The terms acknowledgement under the sign-in box, inset to line up with the form, close to it. */
-.ailawlab-ack {
-  font-size: 0.72rem;
-  line-height: 1.5;
-  color: var(--pf-v5-global--Color--200, #6a6e73);
+.ailawlab-register-note.above-form {
+  margin: 0 0 var(--ailawlab-s3);
+}
+.ailawlab-register-note p {
   margin: 0;
-  padding: 0 3rem 2rem;
 }
-.ailawlab-ack a { color: inherit; text-decoration: underline; }
+.ailawlab-register-note p + p {
+  margin-top: var(--ailawlab-s1);
+}
 
-/* Keycloak's footer bands sit below the form with their own padding; with the providers moved
-   into the form, the first band is empty, so take its space away. */
-.pf-v5-c-login__main-footer:not(:has(*)) { display: none; }
-.pf-v5-c-login__main-body { padding-bottom: 1rem; }
+/* The terms acknowledgement: small print at the foot of the card, a clear step below the rest. */
+.ailawlab-ack {
+  margin: 0;
+  padding: var(--ailawlab-s3) 3rem 2.5rem;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--ailawlab-muted);
+}
+.ailawlab-ack a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Keycloak's footer bands below the form keep their own padding even when empty (the
+   providers now sit inside the form), so collapse them; the band holding the acknowledgement
+   keeps only what .ailawlab-ack sets. */
+.pf-v5-c-login__main-footer:not(:has(*)) {
+  display: none;
+}
+.pf-v5-c-login__main-footer:has(.ailawlab-ack),
+.pf-v5-c-login__main-footer:has(.ailawlab-register-note) {
+  padding: 0;
+  margin: 0;
+}
+/* The "Back to Login" band on the request page. */
+.pf-v5-c-login__main-footer-band {
+  margin-block-start: var(--ailawlab-s3);
+  padding-block: var(--ailawlab-s2) 0;
+}
 
 @media (max-width: 576px) {
-  .ailawlab-ack { padding: 0 1.5rem 1.5rem; }
-  .ailawlab-register-note { margin: 0 1.5rem 1rem; }
+  .pf-v5-c-login__main-header { padding: var(--ailawlab-s4) 1.5rem 0; }
+  .pf-v5-c-login__main-body { padding: var(--ailawlab-s3) 1.5rem 0; }
+  .ailawlab-ack { padding: var(--ailawlab-s3) 1.5rem var(--ailawlab-s4); }
+  .ailawlab-register-note { margin: 0 1.5rem var(--ailawlab-s2); }
 }
