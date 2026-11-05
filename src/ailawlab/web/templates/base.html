@@ -44,7 +44,7 @@
       <div class="user-menu-body">
         <div class="user-menu-who"><strong>{{ user_name }}</strong><br><span class="hint">{{ user.email }}</span></div>
         <div class="hint">{{ user.role|capitalize }}{% if user.status != 'active' %} &middot; {{ user.status }}{% endif %}
-          &middot; signed in with {{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(user.identity_provider, 'an AI Law Lab account') }}</div>
+          &middot; signed in with {{ {'uwyo': 'UW sign-on'}.get(user.identity_provider, 'an AI Law Lab account') }}</div>
         <a class="small-btn quiet" href="{{ prefix }}/auth/logout">Sign out</a>
       </div>
     </details>

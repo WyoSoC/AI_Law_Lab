@@ -7,16 +7,17 @@ admin: KC_ADMIN_USERNAME from .env (asking for the password at the terminal, whi
 stored), or else the temporary bootstrap admin while it still exists.
 It creates or updates:
 
-* the `ailawlab` realm: its sign-in pages' theme (keycloak/themes/ailawlab), sign-in by email, brute-force lockout, a password policy, and
-  self-registration only when an outgoing mail server is configured (registration needs
-  email verification, and password resets need email);
+* the `ailawlab` realm: its sign-in pages' theme (keycloak/themes/ailawlab), sign-in by email,
+  brute-force lockout, a password policy, and self-registration ("Request an account", for
+  people outside UW, approved by an admin); email verification and password resets only when
+  an outgoing mail server is configured;
 * the `ai-law-lab` client the web app signs people in through, and its secret, which is
   written to .env as AILAWLAB_OIDC_CLIENT_SECRET if not already there;
 * a token claim naming the identity provider someone signed in with;
-* each identity provider turned on in .env (see docs/keycloak.md):
-    UW sign-on   KC_UWYO_SAML=hidden or on   (SAML, UW's Shibboleth via InCommon metadata)
-    Google       KC_GOOGLE_CLIENT_ID, KC_GOOGLE_CLIENT_SECRET
-    Microsoft    KC_MICROSOFT_CLIENT_ID, KC_MICROSOFT_CLIENT_SECRET
+* UW sign-on, the one identity provider, when .env turns it on (see docs/keycloak.md):
+    KC_UWYO_SAML=hidden or on   (SAML, UW's Shibboleth via InCommon metadata)
+  Google and Microsoft sign-in are no longer offered; if either is still in the realm, it is
+  removed;
 * outgoing mail, when KC_SMTP_HOST is set (with KC_SMTP_PORT, KC_SMTP_FROM, KC_SMTP_USER,
   KC_SMTP_PASSWORD, KC_SMTP_STARTTLS).
 
@@ -95,6 +96,9 @@ class Admin:
         r.raise_for_status()
         return r
 
+    def delete(self, path: str) -> None:
+        self.http.delete(path).raise_for_status()
+
 
 def realm_settings(env: dict[str, str]) -> dict:
     smtp = env.get("KC_SMTP_HOST")
@@ -149,8 +153,8 @@ def ensure_client(kc: Admin) -> str:
         "attributes": {"pkce.code.challenge.method": "S256",
                        "post.logout.redirect.uris": f"{APP_URL}/*"},
         "protocolMappers": [{
-            # Which identity provider someone signed in through ("uwyo", "google",
-            # "microsoft"), or absent for a Keycloak account. The app uses it with the
+            # Which identity provider someone signed in through ("uwyo" for UW sign-on), or
+            # absent for a Keycloak account. The app uses it with the
             # verified email to decide who is approved automatically.
             "name": "identity provider", "protocol": "openid-connect",
             "protocolMapper": "oidc-usersessionmodel-note-mapper",
@@ -248,36 +252,17 @@ def kc_public_url(env: dict[str, str]) -> str:
     return env.get("KC_PUBLIC_URL", "https://datahive.uwyo.edu/sso").rstrip("/")
 
 
-PROVIDERS = [
-    # alias, Keycloak provider, display name, env prefix, trust the email it reports
-    ("google", "google", "Google", "KC_GOOGLE", True),
-    # A Microsoft work account's email address is set by whoever runs that tenant, so it
-    # proves nothing about ownership; people who sign in this way are approved by an admin.
-    ("microsoft", "microsoft", "Microsoft", "KC_MICROSOFT", False),
-]
+# Sign-in providers the lab used to offer and no longer does.
+RETIRED_PROVIDERS = ("google", "microsoft")
 
 
-def ensure_providers(kc: Admin, env: dict[str, str]) -> None:
-    for alias, provider, name, prefix, trust in PROVIDERS:
-        client_id, secret = env.get(f"{prefix}_CLIENT_ID"), env.get(f"{prefix}_CLIENT_SECRET")
-        if not (client_id and secret):
-            print(f"  {name}: not configured ({prefix}_CLIENT_ID / {prefix}_CLIENT_SECRET)")
-            continue
-        config = {"clientId": client_id, "clientSecret": secret, "syncMode": "IMPORT",
-                  "defaultScope": "openid email profile", "pkceEnabled": "true",
-                  "pkceMethod": "S256"}
-        if provider == "microsoft":
-            # "common": work or school accounts from any organization, and personal accounts.
-            config["tenantId"] = env.get(f"{prefix}_TENANT", "common")
-        body = {"alias": alias, "providerId": provider, "displayName": name, "enabled": True,
-                "trustEmail": trust, "storeToken": False, "firstBrokerLoginFlowAlias": "first broker login",
-                "config": config}
-        if kc.get(f"/{REALM}/identity-provider/instances/{alias}") is None:
-            kc.post(f"/{REALM}/identity-provider/instances", body)
-            print(f"  {name}: added")
-        else:
-            kc.put(f"/{REALM}/identity-provider/instances/{alias}", body)
-            print(f"  {name}: updated")
+def remove_retired_providers(kc: Admin) -> None:
+    """Google and Microsoft sign-in are no longer offered: take them out of the realm if they
+    are still there, so their buttons cannot come back."""
+    for alias in RETIRED_PROVIDERS:
+        if kc.get(f"/{REALM}/identity-provider/instances/{alias}") is not None:
+            kc.delete(f"/{REALM}/identity-provider/instances/{alias}")
+            print(f"  {alias}: removed (no longer offered)")
 
 
 def ensure_user(kc: Admin, email: str) -> None:
@@ -303,7 +288,7 @@ def main() -> None:
                "Secret of the ai-law-lab client in Keycloak (written by scripts/keycloak_setup.py)")
     print("identity providers:")
     ensure_uwyo(kc, env)
-    ensure_providers(kc, env)
+    remove_retired_providers(kc)
     if args.admin_email:
         ensure_user(kc, args.admin_email)
 

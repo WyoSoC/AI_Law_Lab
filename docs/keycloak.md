@@ -1,7 +1,7 @@
 # Accounts: Keycloak sign-in for AI Law Lab
 
-People sign in through **Keycloak**, a self-hosted sign-in service, with UW sign-on, Google,
-Microsoft, or an AI Law Lab account of their own. Keycloak proves who someone is; the app
+People sign in through **Keycloak**, a self-hosted sign-in service, with UW sign-on or an AI Law
+Lab account of their own (people outside UW request one on the sign-in page). Keycloak proves who someone is; the app
 decides what they may do (`src/ailawlab/accounts.py`).
 
 | | |
@@ -32,10 +32,10 @@ With an outgoing mail server (see *Email* below), admins are emailed when a requ
 person is emailed the decision (`src/ailawlab/notify.py`). Without one, nothing is sent: check the
 Users page.
 
-Addresses reported by **Microsoft are never trusted** for this: the address on a work or school
-account is set by whoever runs that organization's tenant, so it proves nothing (the "nOAuth"
-problem). Microsoft users are approved by an admin; UW people are auto-approved when they use UW
-sign-on or Google.
+Only UW sign-on and Keycloak's own accounts count as proof of an address
+(`accounts.TRUSTED_EMAIL_PROVIDERS`); UW people are auto-approved when they use UW sign-on. Google
+and Microsoft sign-in were offered once and are no longer: the setup script removes them from the
+realm if it finds them, and an address from any provider not on that list is never trusted.
 
 Roles: **viewer** reads and exports; **researcher** also creates experiments, runs them and curates
 libraries; **admin** also manages people, empties the trash, deletes libraries, and deletes any
@@ -67,24 +67,13 @@ role changes and deletions are written to `audit_log` and shown on the Users pag
    `KC_BOOTSTRAP_ADMIN_*` lines; the setup script will ask for your password when it runs.
 
 3. **Your lab account.** Set `AILAWLAB_ADMIN_EMAILS=you@uwyo.edu` in `.env`. Either sign in with
-   UW sign-on or Google once they are connected, or create a realm account now:
+   UW sign-on once it is connected, or create a realm account now:
    `.venv/bin/python scripts/keycloak_setup.py --admin-email you@uwyo.edu`, then in the console
    switch to the *ailawlab* realm → Users → that user → Credentials → Set password.
 
-## Connecting sign-in providers
+## Connecting UW sign-on
 
-Google and Microsoft each need an app registration with this **redirect URI**, then its
-credentials in `.env`, then `scripts/keycloak_setup.py` again. UW sign-on uses SAML instead (below).
-Nothing else changes: Keycloak shows a button for each connected provider on its sign-in page.
-On someone's first Google or Microsoft sign-in, Keycloak may ask them to confirm their name and
-email; if that address already belongs to an AI Law Lab account, it asks them to sign in to that
-account once, to link the two.
-
-| Provider | Redirect URI | `.env` |
-|---|---|---|
-| UW sign-on | (SAML, see below) | `KC_UWYO_SAML` |
-| Google | `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/google/endpoint` | `KC_GOOGLE_CLIENT_ID`, `KC_GOOGLE_CLIENT_SECRET` |
-| Microsoft | `https://datahive.uwyo.edu/sso/realms/ailawlab/broker/microsoft/endpoint` | `KC_MICROSOFT_CLIENT_ID`, `KC_MICROSOFT_CLIENT_SECRET` |
+UW sign-on is the one sign-in provider (`KC_UWYO_SAML` in `.env`).
 
 - **UW sign-on** is SAML with UW's Shibboleth (`https://shibboleth.uwyo.edu/idp/shibboleth`),
   which is what UW IT prefers. The setup script reads UW's metadata from InCommon
@@ -99,28 +88,6 @@ account once, to link the two.
   3. Once they confirm, set `KC_UWYO_SAML=on` and run the script again to show the button.
   Our signing and encryption keys are the realm's own; if they are ever rotated (Realm settings →
   Keys), tell UW IT, since they may have stored a copy of the metadata.
-- **Google**: Google Cloud Console (console.cloud.google.com) → create a project "AI Law Lab" →
-  *Google Auth Platform* (formerly APIs & Services → OAuth consent screen) → Get started: app name
-  "AI Law Lab", support email, audience **External**, contact email → Create. Then *Branding*: home
-  page `https://datahive.uwyo.edu/ai_law_lab/`, authorized domain `uwyo.edu`. *Data access*:
-  scopes `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile` only. *Audience*:
-  **Publish app** (in "Testing" only listed test users can sign in). *Clients* → Create client →
-  Web application, name "Keycloak", authorized redirect URI as in the table → copy the client ID
-  and secret into `.env`. These basic scopes need no Google verification review. A personal Gmail
-  or a Google Workspace account both work; a uwyo.edu address that Google has verified is
-  approved automatically, anyone else sends a request.
-- **Microsoft**: Microsoft Entra admin center (entra.microsoft.com) in a tenant you can register
-  apps in → Identity → Applications → App registrations → New registration: name "AI Law Lab",
-  supported account types **"Accounts in any organizational directory and personal Microsoft
-  accounts"**, redirect URI platform **Web** with the URI in the table → Register. Copy the
-  *Application (client) ID* into `KC_MICROSOFT_CLIENT_ID`. Certificates & secrets → New client
-  secret → copy its **Value** (not its ID) into `KC_MICROSOFT_CLIENT_SECRET`. API permissions:
-  the default `User.Read` is enough (Keycloak asks for openid, email and profile).
-  Secrets expire (at most two years): note the date and replace it before then. Students and
-  staff cannot usually register apps in UW's own tenant; UW IT can register it, or use any other
-  tenant (a free Azure account's directory works). Some organizations block their staff from
-  consenting to outside apps; their IT must allow it. Everyone who signs in with Microsoft sends
-  a request, including uwyo.edu addresses (see *Who gets in*).
 
 ## Email (for AI Law Lab accounts)
 

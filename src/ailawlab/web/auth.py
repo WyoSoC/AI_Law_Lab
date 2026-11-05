@@ -134,7 +134,7 @@ def _callback_url() -> str:
 
 @router.get("/auth/login")
 async def login(request: Request, next: str | None = None, provider: str | None = None):
-    """Send the browser to Keycloak. `provider` (uwyo, google, microsoft) skips Keycloak's
+    """Send the browser to Keycloak. `provider` ("uwyo", UW sign-on) skips Keycloak's
     own page and goes straight to that sign-in."""
     prefix = request.scope.get("root_path", "")
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
@@ -145,7 +145,7 @@ async def login(request: Request, next: str | None = None, provider: str | None 
               "scope": "openid email profile", "redirect_uri": _callback_url(),
               "state": state, "nonce": nonce, "code_challenge": challenge,
               "code_challenge_method": "S256"}
-    if provider in ("uwyo", "google", "microsoft"):
+    if provider == "uwyo":
         params["kc_idp_hint"] = provider
     return RedirectResponse(f"{settings.oidc_issuer}/protocol/openid-connect/auth?{urlencode(params)}",
                             status_code=303)

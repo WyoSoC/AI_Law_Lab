@@ -1,13 +1,12 @@
 """People who use the lab: who they are, whether they are approved, and in what role.
 
-Keycloak proves who someone is (with UW sign-on, Google, Microsoft, or an account of its
-own); this module decides what that person may do. On a first sign-in:
+Keycloak proves who someone is (with UW sign-on, or an AI Law Lab account of its own, which
+people outside UW request on the sign-in page); this module decides what that person may do.
+On a first sign-in:
 
 * an address listed in settings.admin_emails, if the provider vouches for it, becomes an
   active admin -- how the first admin exists without anyone to approve them;
-* a verified address in an auto-approve domain (uwyo.edu) becomes an active researcher,
-  unless it came through Microsoft, whose work-account addresses are set by whoever runs
-  each organization's tenant and so prove nothing (Keycloak is told not to trust them);
+* a verified address in an auto-approve domain (uwyo.edu) becomes an active researcher;
 * everyone else is pending. They tell the admins who they are and why they want access
   (submit_request), and an admin approves the request, with a role, or declines it.
 
@@ -24,8 +23,10 @@ from .db import fetch_all, fetch_one, jsonb
 ROLES = ("admin", "researcher", "viewer")
 STATUSES = ("pending", "active", "disabled")
 
-# Providers whose "email_verified" is not proof that the person owns the address.
-UNTRUSTED_EMAIL_PROVIDERS = frozenset({"microsoft"})
+# Where a verified address counts as proof that the person owns it: UW sign-on, and Keycloak's
+# own accounts (which verify an address by email). Anything else, such as a provider added
+# later, is not trusted until it is listed here.
+TRUSTED_EMAIL_PROVIDERS = frozenset({"uwyo", ""})
 
 
 def _listed(value: str) -> set[str]:
@@ -33,7 +34,7 @@ def _listed(value: str) -> set[str]:
 
 
 def email_is_proven(email: str, verified: bool, provider: str) -> bool:
-    return bool(email) and verified and provider not in UNTRUSTED_EMAIL_PROVIDERS
+    return bool(email) and verified and provider in TRUSTED_EMAIL_PROVIDERS
 
 
 def initial_access(email: str, verified: bool, provider: str,

@@ -15,15 +15,16 @@ ADMINS, DOMAINS = "gojian@uwyo.edu, other@uwyo.edu", "uwyo.edu"
 def test_first_sign_in_decides_status_and_role():
     assert initial_access("GoJian@UWYO.edu", True, "uwyo", ADMINS, DOMAINS) == ("active", "admin")
     assert initial_access("student@uwyo.edu", True, "uwyo", ADMINS, DOMAINS) == ("active", "researcher")
-    assert initial_access("student@uwyo.edu", True, "google", ADMINS, DOMAINS) == ("active", "researcher")
     assert initial_access("student@uwyo.edu", True, "", ADMINS, DOMAINS) == ("active", "researcher")
-    # Unverified addresses, other domains, and Microsoft-reported addresses wait for an admin.
+    # Unverified addresses and other domains wait for an admin.
     assert initial_access("student@uwyo.edu", False, "uwyo", ADMINS, DOMAINS) == ("pending", "researcher")
-    assert initial_access("lawyer@firm.com", True, "google", ADMINS, DOMAINS) == ("pending", "researcher")
+    assert initial_access("student@uwyo.edu", False, "", ADMINS, DOMAINS) == ("pending", "researcher")
+    assert initial_access("lawyer@firm.com", True, "", ADMINS, DOMAINS) == ("pending", "researcher")
+    assert initial_access("x@evil-uwyo.edu", True, "uwyo", ADMINS, DOMAINS) == ("pending", "researcher")
+    # A provider the lab does not use (or one added later and not yet trusted) proves nothing.
+    assert initial_access("gojian@uwyo.edu", True, "google", ADMINS, DOMAINS) == ("pending", "researcher")
     assert initial_access("student@uwyo.edu", True, "microsoft", ADMINS, DOMAINS) == ("pending", "researcher")
-    assert initial_access("gojian@uwyo.edu", True, "microsoft", ADMINS, DOMAINS) == ("pending", "researcher")
-    assert initial_access("x@evil-uwyo.edu", True, "google", ADMINS, DOMAINS) == ("pending", "researcher")
-    assert not email_is_proven("", True, "google")
+    assert not email_is_proven("", True, "uwyo")
 
 
 def test_after_sign_in_only_this_site_is_a_destination():

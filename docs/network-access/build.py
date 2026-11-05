@@ -95,8 +95,8 @@ leaves the server is a search term or an address, never a document a researcher 
             ["Any public website", "A request for one address",
              "An agent reads a page; a page named in the brief is read; a crawl; a person adds "
              "or re-checks a link, or drafts a cast from one"],
-            ["UW Shibboleth, InCommon metadata service, Google, Microsoft",
-             "Sign-in exchanges, through Keycloak", "Someone signs in with that provider"],
+            ["UW Shibboleth, InCommon metadata service",
+             "Sign-in exchanges, through Keycloak", "Someone signs in with UW sign-on"],
         ],
         "widths": [0.30, 0.27, 0.43],
     }),

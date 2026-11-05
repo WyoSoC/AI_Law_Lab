@@ -290,9 +290,8 @@ are included only when asked for.
 ## Accounts
 
 Everything but the About page needs a sign-in, through a self-hosted Keycloak at `/sso/`
-(UW sign-on, Google, Microsoft, or an AI Law Lab account). Verified `@uwyo.edu` addresses are
-approved automatically as researchers. Anyone else (a Google or Microsoft account from outside
-the university, say) is asked for their name, organization, what they want to use the lab for and
+(UW sign-on, or an AI Law Lab account, which people outside UW request on the sign-in page).
+Verified `@uwyo.edu` addresses are approved automatically as researchers. Anyone else is asked for their name, organization, what they want to use the lab for and
 whether they need viewer or researcher access; the request waits on the Users page, where an admin
 approves it with a role or declines it with a note the person sees. With an outgoing mail server
 set (`KC_SMTP_*`), admins are emailed about each new request and the person about the decision

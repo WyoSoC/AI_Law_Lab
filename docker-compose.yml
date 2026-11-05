@@ -19,8 +19,8 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # Sign-in service. Keycloak holds accounts (its own, and those brokered from UW sign-on,
-  # Google and Microsoft) in its own database, `keycloak`, in the same Postgres; the app
+  # Sign-in service. Keycloak holds accounts (its own, and those brokered from UW sign-on)
+  # in its own database, `keycloak`, in the same Postgres; the app
   # keeps only who is approved and in what role. Served at https://datahive.uwyo.edu/sso/
   # through Apache (/auth and /admin belong to Open WebUI on this host). See docs/keycloak.md.
   keycloak:

@@ -51,7 +51,7 @@ def _users_url() -> str:
 
 
 async def request_received(user: dict, admins: list[str]) -> bool:
-    via = {"uwyo": "UW sign-on", "google": "Google", "microsoft": "Microsoft"}.get(
+    via = {"uwyo": "UW sign-on"}.get(
         user.get("identity_provider") or "", "an AI Law Lab account")
     body = (f"{user['name']} <{user['email']}> has asked for {user['requested_role']} access "
             f"to the AI Law Lab.\n\n"

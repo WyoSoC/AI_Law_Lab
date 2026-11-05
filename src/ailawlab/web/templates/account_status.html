@@ -3,7 +3,7 @@
 {% block content %}
 <div class="status-card panel">
   {% if state == 'pending' %}
-  {% set via = {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(user.identity_provider, 'an AI Law Lab account') %}
+  {% set via = {'uwyo': 'UW sign-on'}.get(user.identity_provider, 'an AI Law Lab account') %}
   {% if user.requested_at %}
   <h1>Request sent</h1>
   {% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
@@ -45,8 +45,8 @@
   </form>
   {% if user.requested_at %}</details>{% endif %}
 
-  <p class="hint">University of Wyoming addresses are approved automatically when you sign in with
-    UW sign-on or Google. If you have one, sign out and sign in with it instead.</p>
+  <p class="hint">University of Wyoming faculty, staff and students are approved automatically when
+    they sign in with UW sign-on. If you are at UW, sign out and sign in with UW sign-on instead.</p>
   {% else %}
   <h1>{{ 'Request declined' if user.requested_at and not user.approved_at else 'Account disabled' }}</h1>
   <p>The account <strong>{{ user.email or '' }}</strong>

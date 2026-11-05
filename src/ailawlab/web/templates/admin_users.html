@@ -3,7 +3,7 @@
 {% block title %}Users · AI Law Lab{% endblock %}
 {% block content %}
 <h1>Users</h1>
-<p class="sub">People sign in through UW sign-on, Google, Microsoft or an AI Law Lab account.
+<p class="sub">People sign in with UW sign-on or with an AI Law Lab account (people outside UW request one on the sign-in page).
 Verified addresses at {{ auto_domains }} are approved automatically as researchers; everyone else
 asks for access, and their request waits here for an administrator. Viewers can read and export;
 researchers can also create, run and curate; admins can also manage people and delete things for good.
@@ -11,7 +11,7 @@ researchers can also create, run and curate; admins can also manage people and d
 
 {% if request.query_params.get('msg') %}<p class="notice">{{ request.query_params.get('msg') }}</p>{% endif %}
 
-{% set via_names = {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'} %}
+{% set via_names = {'uwyo': 'UW sign-on'} %}
 {% set requests = users | selectattr('status', 'equalto', 'pending') | selectattr('requested_at') | list %}
 {% set silent = users | selectattr('status', 'equalto', 'pending') | rejectattr('requested_at') | list %}
 
@@ -25,9 +25,7 @@ researchers can also create, run and curate; admins can also manage people and d
       <strong>{{ u.name or '—' }}</strong> &middot; {{ u.affiliation }}
       <div class="hint">{{ u.email }} &middot; signed in with {{ via_names.get(u.identity_provider, 'an AI Law Lab account') }}
         &middot; asked {{ u.requested_at.strftime('%Y-%m-%d %H:%M') }} for <strong>{{ u.requested_role }}</strong> access</div>
-      {% if u.identity_provider == 'microsoft' %}<div class="hint warn">Microsoft does not prove who owns an
-        email address: confirm this person is who they say before approving.</div>
-      {% elif not u.email_verified %}<div class="hint warn">This email address has not been verified.</div>{% endif %}
+      {% if not u.email_verified %}<div class="hint warn">This email address has not been verified.</div>{% endif %}
     </div>
   </header>
   <blockquote class="request-reason">{{ u.request_reason }}</blockquote>
@@ -58,7 +56,7 @@ researchers can also create, run and curate; admins can also manage people and d
     {% for u in silent %}
     <tr>
       <td>{{ u.name or '—' }}</td>
-      <td>{{ u.email }}{% if not u.email_verified or u.identity_provider == 'microsoft' %} <span class="hint">(not proven)</span>{% endif %}</td>
+      <td>{{ u.email }}{% if not u.email_verified %} <span class="hint">(not proven)</span>{% endif %}</td>
       <td>{{ via_names.get(u.identity_provider, 'AI Law Lab account') }}</td>
       <td class="nowrap">{{ u.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
       <td class="actions-cell"><div class="row-actions">
@@ -89,7 +87,7 @@ researchers can also create, run and curate; admins can also manage people and d
     <tr>
       <td>{{ u.name or '—' }}{% if user and u.id == user.id %} <span class="hint">(you)</span>{% endif %}{% if u.affiliation %}<div class="hint">{{ u.affiliation }}</div>{% endif %}</td>
       <td>{{ u.email }}</td>
-      <td>{{ {'uwyo': 'UW sign-on', 'google': 'Google', 'microsoft': 'Microsoft'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
+      <td>{{ {'uwyo': 'UW sign-on'}.get(u.identity_provider, 'AI Law Lab account') }}</td>
       <td><span class="badge {{ 'succeeded' if u.status == 'active' else 'failed' }}">{{ u.status }}</span></td>
       <td>
         <form method="post" action="{{ prefix }}/admin/users/{{ u.id }}" class="inline-form">
@@ -112,7 +110,7 @@ researchers can also create, run and curate; admins can also manage people and d
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="hint">Accounts themselves (names, passwords, linked Google or Microsoft identities, two-factor)
+  <p class="hint">Accounts themselves (names, passwords, linked UW sign-on identities, two-factor)
     live in Keycloak: <a href="/sso/admin/master/console/#/ailawlab/users" target="_blank" rel="noopener">open the Keycloak console</a>.</p>
 </div>
 
