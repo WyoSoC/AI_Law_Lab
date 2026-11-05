@@ -52,7 +52,7 @@
 }
 .ailawlab-uw-note {
   margin: var(--ailawlab-s1) 0 0;
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   line-height: 1.45;
   color: var(--ailawlab-muted);
 }
@@ -62,7 +62,7 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin: var(--ailawlab-s4) 0 var(--ailawlab-s3);
+  margin: 2.5rem 0 var(--ailawlab-s4);
   font-size: 0.8rem;
   color: var(--ailawlab-muted);
   white-space: nowrap;
@@ -84,7 +84,7 @@
 
 /* For people outside UW: its own band, set apart by a rule. */
 .ailawlab-request {
-  margin: var(--ailawlab-s4) 0 0;
+  margin: 2.5rem 0 0;
   padding-top: var(--ailawlab-s3);
   border-top: 1px solid var(--ailawlab-rule);
   font-size: 0.875rem;
