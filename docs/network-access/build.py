@@ -106,8 +106,10 @@ leaves the server is a search term or an address, never a document a researcher 
     ("p", t("""
 Five public repositories are reached through the interfaces their publishers provide for
 programs to use (Table 2). Each is a staging step rather than a live oracle: a search returns
-candidates, and nothing is relied on until it has been fetched, divided into passages, embedded
-and saved into a library with its canonical address and the time it was retrieved. Credentials
+candidates, and nothing is relied on until it has been fetched, divided into passages and
+embedded, with its canonical address and the time it was retrieved. A person who adds a result
+saves it into a library; an agent reads it for the run and keeps a copy only as Section 4.3
+describes. Credentials
 are kept in the server's environment, never in the code or the browser, and a database whose
 credential is missing reports itself unavailable instead of failing.
 """)),
@@ -158,7 +160,7 @@ theirs.
     ("h1", "4  When a research run goes online"),
     ("h2", "4.1  Two permissions"),
     ("p", t("""
-An agentic-workflow run has two permissions, each the researcher's to grant on the plan before
+An agentic research run has two permissions, each the researcher's to grant on the plan before
 the run starts and both off by default: *search the legal databases*, and *search the open web*,
 which includes reading any public page. With both off the run is entirely local. Role-play and
 document-analysis runs never go online.
@@ -186,7 +188,9 @@ Reading and keeping are separate. When an agent reads a document, its passages a
 memory for the run only, and those most relevant to what the agent is looking for are handed
 back, numbered in the run's ledger like any other, so the agent may use and cite them. Nothing
 is saved. With them the agent is told the result of a rights check, which decides whether a
-full copy may be kept.
+full copy may be kept. Reading in this way is much like a person browsing the web while
+researching for relevant information: the agent may consult and cite whatever the site lets AI
+agents read, and keeps nothing of it.
 """)),
     ("p", t("""
 The rights check is a fixed rule in the code (`keep_rules.py`), not a judgment of the model. It
@@ -204,7 +208,11 @@ An agent that judges a document reliable and useful calls `keep`. If the rights 
 positive, the document is saved into a library, by default "Fetched: <experiment name>", which
 records a new version; the run is pinned to it, so later library searches by any agent cover
 the new document, and the passages already handed out keep their numbers. If it was not, nothing
-is saved. A citation of a document that was not kept records the page's address, when it was
+is saved. Keeping full copies only of public-domain, government and openly licensed material,
+and of nothing else, is designed to be consistent with the four-factor fair use test of
+17 U.S.C. § 107 [12]: the purpose is non-commercial research, the works copied in full are
+largely factual or free to copy, and no copy is made of anything whose rights are unclear, so
+the lab's use cannot stand in for a market for the original. A citation of a document that was not kept records the page's address, when it was
 read, a SHA-256 fingerprint of the text as read, and the cited passage only, as a quotation; the
 run page marks it "read online, not kept", since the page may change. Web pages named in the
 research brief are kept whenever their rights allow it, since the researcher chose them. The
@@ -230,7 +238,7 @@ site has published about automated and AI use, and obeys it. Procedure 1 gives t
 an agent; a crawl asks the same questions under its own name.
 """)),
     ("algo", {
-        "caption": t("""Procedure 1. How a research agent's request to read a page is decided. Each
+        "caption": t("""Procedure 1. How a research agent's request to read a page, and then to keep it, is decided. Each
             refusal is returned to the agent with its reason, recorded in the trace and listed on
             the run's page."""),
         "lines": [
@@ -245,7 +253,11 @@ an agent; a crawl asks the same questions under its own name.
             "  if the page moved to another site, check that site's rules too",
             "  if page headers or <meta> say noai,",
             "     or tdm-reservation: 1                        -> refuse  (fetched, not kept)",
-            "  save page to the run's library; return its passages, numbered for citation",
+            "  return the passages closest to what the agent asked for, numbered for citation,",
+            "     with the result of the rights check; nothing is saved",
+            "keep(address):   (the agent judged it reliable and useful)",
+            "  if the rights check was positive                -> save a copy to the run's library",
+            "  else                                            -> keep nothing; it may still be cited",
         ],
     }),
     ("h2", "6.1  robots.txt, for the lab"),
@@ -308,8 +320,8 @@ time rather than remembered.
            university network, so a link is fetched only if it uses `http` or `https` and its host
            resolves exclusively to public addresses. Every redirect, up to five, is checked
            again."""),
-        t("""**Bounded.** A response is cut off at 8 MB and 45 seconds. A page kept in a library
-           keeps up to 100,000 words; a source for a cast, 12,000."""),
+        t("""**Bounded.** A response is cut off at 8 MB and 45 seconds. A page read or kept keeps
+           up to 100,000 words; a source for a cast, 12,000."""),
         t("""**Named.** Requests say who is asking: `AILawLab-agent/1.0` for agents and
            `AILawLab-crawler/1.0` for crawls, each with the lab's address and a contact, so that a
            site owner can see who is reading and how to reach the lab."""),
@@ -318,9 +330,11 @@ time rather than remembered.
            takes at most 100 pages, stops on HTTP 429 or 503 or after three failures in a row, and
            runs one at a time per site. It stores the licence or copyright notice it finds with
            every document."""),
-        t("""**Recorded.** Searches with their results, documents read with their library versions,
-           pages refused with their reasons, and every crawl with the rules it ran under and the
-           outcome for each link are kept in the lab's database."""),
+        t("""**Recorded.** Searches with their results; documents read, with the outcome of their
+           rights check and, if kept, the library version; citations of pages not kept, with the
+           address, time, fingerprint and cited passage; pages refused with their reasons; and every
+           crawl with the rules it ran under and the outcome for each link are kept in the lab's
+           database."""),
     ]),
 
     ("h1", "8  The lab's own interface"),
@@ -344,6 +358,12 @@ database search and ingest (`/api/sources/search`, `/api/sources/ingest`), web l
         t("""**Permission to read is not a licence to reuse.** The licence notice a crawl records,
            and the address and retrieval time kept with every document, let a researcher check
            before relying on, quoting or publishing what was collected."""),
+        t("""**The rights check sees only machine-readable licences.** A site that states an open
+           licence only in its visible text (a footer reading "CC BY", say) is not recognized, so
+           its pages are read and cited but not kept. This errs on the side of keeping nothing."""),
+        t("""**A page that was not kept may change.** Its citation stores the address, the time it
+           was read, a fingerprint of the text and the cited passage, so a reader can tell whether
+           the page still says what was cited, but the rest of the page as read is not kept."""),
         t("""**Pages a person adds by hand are not checked** (Section 5). If the lab's practice
            should be stricter, the same check can be applied there."""),
     ]),
@@ -353,18 +373,19 @@ database search and ingest (`/api/sources/search`, `/api/sources/ingest`), web l
         "caption": t("""Table 4. Source files, under `src/ailawlab/`. Settings quoted in this note are
             defaults from `config.py`, each overridable by an `AILAWLAB_` environment variable.
             Tests: `tests/test_site_rules.py`, `tests/test_network_tools.py`,
-            `tests/test_crawler.py`."""),
+            `tests/test_keep_rules.py`, `tests/test_crawler.py`."""),
         "header": ["File", "What it does"],
         "mono_first": True,
         "rows": [
             ["sources.py", "The five legal databases: search and fetch"],
-            ["network_tools.py, tools.py", "Agents' searching and reading; pacing; the fetch library"],
+            ["network_tools.py, tools.py", "Agents' searching, reading and keeping; pacing"],
+            ["keep_rules.py", "The rights check: whether a copy of what was read may be kept"],
             ["research.py, experiments.py", "Run permissions; pages named in the brief"],
             ["site_rules.py", "robots.txt, AI agents, TDMRep and noai checks"],
             ["source_material.py", "Fetching, the public-address guard, size and time limits"],
             ["web_links.py", "Web pages kept in a library, and checking them again"],
             ["crawler.py", "Crawling a page's links into a library"],
-            ["web/views.py, web/templates/run.html", "The run page: read online, and refused"],
+            ["web/views.py, web/templates/run.html", "The run page: read online, kept or not, and refused"],
         ],
         "widths": [0.42, 0.58],
     }),
@@ -387,6 +408,7 @@ database search and ingest (`/api/sources/search`, `/api/sources/ingest`), web l
         "https://www.sec.gov/os/accessing-edgar-data",
         "Brave Software. *Brave Search API*. https://api.search.brave.com/app/documentation",
         "17 U.S.C. § 105, Subject matter of copyright: United States Government works.",
+        "17 U.S.C. § 107, Limitations on exclusive rights: Fair use. https://www.govinfo.gov/link/uscode/17/107",
     ]),
 ]
 
