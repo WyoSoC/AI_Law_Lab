@@ -1,4 +1,50 @@
-/* The terms acknowledgement under the sign-in box (footer.ftl), inset to line up with the form. */
+/* The AI Law Lab's sign-in pages (login.ftl, footer.ftl). */
+
+/* UW sign-on: the main way in, first and full width. */
+.ailawlab-uw { margin-bottom: 0.25rem; }
+.ailawlab-uw-button { font-weight: 600; }
+.ailawlab-uw-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--pf-v5-global--Color--200, #6a6e73);
+}
+
+/* "Or sign in with an AI Law Lab account", a rule on either side. */
+.ailawlab-divider {
+  display: flex; align-items: center; gap: 0.75rem;
+  margin: 1.5rem 0 1rem;
+  font-size: 0.8rem;
+  color: var(--pf-v5-global--Color--200, #6a6e73);
+}
+.ailawlab-divider::before, .ailawlab-divider::after {
+  content: ""; flex: 1; border-top: 1px solid var(--pf-v5-global--BorderColor--100, #d2d2d2);
+}
+
+.ailawlab-other-providers { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+
+/* For people outside UW. */
+.ailawlab-request {
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--pf-v5-global--BorderColor--100, #d2d2d2);
+  font-size: 0.85rem;
+  color: var(--pf-v5-global--Color--200, #6a6e73);
+}
+.ailawlab-request a { font-weight: 600; }
+
+.ailawlab-register-note {
+  margin: 0 3rem 1rem;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--pf-v5-global--primary-color--100, #0066cc);
+  background: var(--pf-v5-global--BackgroundColor--200, #f0f0f0);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.ailawlab-register-note.above-form { margin: 0 0 1.25rem; }
+.ailawlab-register-note p { margin: 0; }
+.ailawlab-register-note p + p { margin-top: 0.4rem; }
+
+/* The terms acknowledgement under the sign-in box, inset to line up with the form, close to it. */
 .ailawlab-ack {
   font-size: 0.72rem;
   line-height: 1.5;
@@ -7,6 +53,13 @@
   padding: 0 3rem 2rem;
 }
 .ailawlab-ack a { color: inherit; text-decoration: underline; }
+
+/* Keycloak's footer bands sit below the form with their own padding; with the providers moved
+   into the form, the first band is empty, so take its space away. */
+.pf-v5-c-login__main-footer:not(:has(*)) { display: none; }
+.pf-v5-c-login__main-body { padding-bottom: 1rem; }
+
 @media (max-width: 576px) {
   .ailawlab-ack { padding: 0 1.5rem 1.5rem; }
+  .ailawlab-register-note { margin: 0 1.5rem 1rem; }
 }

@@ -105,8 +105,10 @@ def realm_settings(env: dict[str, str]) -> dict:
         "loginTheme": "ailawlab",
         "loginWithEmailAllowed": True, "duplicateEmailsAllowed": False,
         "registrationEmailAsUsername": True, "rememberMe": True, "editUsernameAllowed": False,
-        # Self-service accounts need email: to verify the address, and to reset a password.
-        "registrationAllowed": bool(smtp), "verifyEmail": bool(smtp),
+        # People outside UW request an account by registering ("Request an account" on the
+        # sign-in page); they arrive pending, and an admin approves them. Verifying the address
+        # and resetting a password need email, so those wait for a mail server.
+        "registrationAllowed": True, "verifyEmail": bool(smtp),
         "resetPasswordAllowed": bool(smtp),
         "bruteForceProtected": True, "failureFactor": 8, "permanentLockout": False,
         "maxFailureWaitSeconds": 900, "waitIncrementSeconds": 60,

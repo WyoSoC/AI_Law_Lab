@@ -11,7 +11,7 @@ decides what they may do (`src/ailawlab/accounts.py`).
 | Realm / client | `ailawlab` / `ai-law-lab` |
 | Keycloak's data | database `keycloak` in the `ailawlab-db` Postgres |
 | Configuration | `scripts/keycloak_setup.py`, re-runnable, reads `.env` |
-| Sign-in theme | `keycloak/themes/ailawlab` (Keycloak's own pages plus the terms acknowledgement) |
+| Sign-in theme | `keycloak/themes/ailawlab` (UW sign-on first, then an AI Law Lab account, a link to request an account, and the terms acknowledgement) |
 | Console | `https://datahive.uwyo.edu/sso/admin/` |
 
 ## Who gets in
@@ -124,9 +124,13 @@ account once, to link the two.
 
 ## Email (for AI Law Lab accounts)
 
-Self-registration, email verification and password resets are **off** until Keycloak can send
-mail, and so are the app's access-request emails (it uses the same `KC_SMTP_*` settings; restart
-the app after setting them). To turn them on, set `KC_SMTP_HOST`, `KC_SMTP_PORT` (587), `KC_SMTP_FROM`, and if the
+People outside UW request an account from the sign-in page ("Not at UW? Request an account"),
+which is Keycloak's registration form: email, password, name. They arrive **pending** and fill in
+the access request; nothing works until an admin approves it. A `@uwyo.edu` address is turned
+away on that form and sent to UW sign-on, since an account made there would block that person's
+own UW sign-on later (the Users page also flags any unverified address). Email verification and
+password resets stay **off** until Keycloak can send mail, and so do the app's access-request
+emails (it uses the same `KC_SMTP_*` settings; restart the app after setting them). To turn them on, set `KC_SMTP_HOST`, `KC_SMTP_PORT` (587), `KC_SMTP_FROM`, and if the
 server needs a login `KC_SMTP_USER` / `KC_SMTP_PASSWORD` (UW's relay, or a lab mailbox with an app
 password), then run the setup script. Until then, admins can create accounts in the console.
 
@@ -138,8 +142,10 @@ password), then run the setup script. Until then, admins can create accounts in 
   `environment` (with values), start it, replace that admin as in step 2, then remove both lines
   again. Keycloak refuses to start if the username is set but the password is empty.
 - Sign-in pages: the realm's login theme is `ailawlab`, Keycloak's own `keycloak.v2` with the
-  Terms of Use acknowledgement in small print under the sign-in box (`footer.ftl`; styles in
-  `resources/css/ailawlab.css`). `docker-compose.yml` mounts it read-only. Keycloak caches
+  sign-in page reordered (`login.ftl`: UW sign-on first, then the AI Law Lab account form, then
+  "Request an account"), its wording in `messages/messages_en.properties`, and the Terms of Use
+  acknowledgement under the box, "By signing in…" or "By creating an account…" (`footer.ftl`;
+  styles in `resources/css/ailawlab.css`). `docker-compose.yml` mounts it read-only. Keycloak caches
   themes, so after editing it run `docker compose -p ai_law_lab up -d --force-recreate keycloak`.
 - Logs: `docker logs ailawlab-keycloak`.
 - Backups: Keycloak's data is the `keycloak` database in the same Postgres volume as the lab;
