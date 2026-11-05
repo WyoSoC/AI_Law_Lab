@@ -114,6 +114,8 @@ password), then run the setup script. Until then, admins can create accounts in 
   acknowledgement under the box, "By signing in…" or "By creating an account…" (`footer.ftl`;
   styles in `resources/css/ailawlab.css`). `docker-compose.yml` mounts it read-only. Keycloak caches
   themes, so after editing it run `docker compose -p ai_law_lab up -d --force-recreate keycloak`.
+  Browsers keep the theme's files for 30 days at an address that does not change, so after
+  editing `ailawlab.css` also change its `?v=` tag in `theme.properties`.
 - Logs: `docker logs ailawlab-keycloak`.
 - Backups: Keycloak's data is the `keycloak` database in the same Postgres volume as the lab;
   back up both, e.g. `docker exec ailawlab-db pg_dump -U ailawlab keycloak > keycloak.sql`.
